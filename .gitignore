@@ -30,3 +30,11 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local development data (never commit; see docs/adr/0001)
+/data/
+*.db
+*.db-wal
+*.db-shm
+/backups/
+/coverage.html
