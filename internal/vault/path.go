@@ -64,11 +64,22 @@ const (
 )
 
 // reservedDirs are the first-segment names the application owns. A page path
-// that starts with one of them is a page pretending to be something else.
+// that starts with one of them is a page pretending to be something else: a
+// page inside _attachments would shadow an attachment, and a page inside
+// _history would be a revision that looks editable.
 var reservedDirs = map[string]bool{
 	attachmentsDir: true,
 	historyDir:     true,
 	obsidianDir:    true,
+}
+
+// unreadableDirs are the directories a page may not reach into with a
+// reference. _attachments is deliberately absent: `![[_attachments/map.png]]`
+// is the reference this project exists to support, and a page that may not
+// point at an attachment may not have one.
+var unreadableDirs = map[string]bool{
+	historyDir:  true,
+	obsidianDir: true,
 }
 
 // deviceNames are the names Windows treats as devices rather than files.

@@ -81,6 +81,18 @@ House rules:
   Sweeping at the start of every write instead would delete a live write's
   temporary file out from under it, which is an error the caller did nothing to
   deserve.
+- Revisions are archived to `_history/<path>/<n>-<rfc3339>.md`, close enough to
+  Obsidian's File Recovery layout to be recognised. The timestamp has no colons
+  in it, because a colon is a forbidden character in a filename on Windows and a
+  revision a DM cannot open on the machine they wrote it on is not a revision.
+  The number comes from the store, not from this package, so the files and
+  `page_revisions` cannot disagree about the order of a page's history, and a
+  page's history is a whole file rather than a diff. Revisions can be listed,
+  restored, and are never listed as pages.
+- Attachments live in `_attachments/` and are referred to by vault-relative
+  path, so a vault stays portable when it is zipped or put in git. A page may
+  point into the attachments directory — that is the case the whole thing is for —
+  but not into `_history` or `.obsidian`, whatever case it spells them in.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
