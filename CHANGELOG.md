@@ -92,6 +92,17 @@ House rules:
 - Unique and primary key violations come back as `store.ErrConflict`, a missing
   row as `store.ErrNotFound`, and a driver result code is read through a small
   interface rather than by matching on message text.
+- A store contract suite in `internal/store/testsuite`, run against the SQLite
+  store as `testsuite.Store(t, factory)`. It is where the properties a second
+  implementation would have to match live: a value written comes back unchanged,
+  blank ids and timestamps are filled in, writing the same value twice changes
+  nothing, lists are ordered and complete, an archived row is invisible but
+  still there, a path in two campaigns is two pages, a taken slug is a
+  conflict, a missing row is not found, a row that references nothing is
+  refused, revision numbers start at one per page, replacing links is all or
+  nothing, and the graph holds links to pages that do not exist yet. The suite
+  declares the interface it needs itself, so a second implementation is pointed
+  at it rather than trusted.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
