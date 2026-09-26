@@ -703,16 +703,22 @@ docs(adr): record the migration runner, and correct the spec
 chore: record where the project actually is
 build: measure coverage across the module, not per package
 build: make the fuzz target actually run
+build: take the newest pure-Go SQLite and the Go it needs
+feat(cli): add a manual wiki migrate
+docs(adr): correct a false claim in ADR 0012
 ```
 
-Two of those are not postscripts. Choosing a migration runner meant
-departing from §3, because golang-migrate's only SQLite driver is a cgo
-binding and ADR 0004 rules that out; the departure needed recording and the
-spec correcting in the same milestone that made it. And the two `build:`
-commits fix tools that the first two code commits made insufficient: the
+Four of those are not postscripts. Choosing a migration runner departed
+from §3 and needed recording; the two `build:`
+commits fix tools that the first code commits made insufficient — the
 coverage gate was measuring each package with its own test binary, which
-reports 0% for a package that only runs inside another package's tests, and
-`make fuzz` was exiting zero having fuzzed nothing.
+reports 0% for a package that only runs inside another package's tests,
+and `make fuzz` was exiting zero having fuzzed nothing; the driver bump
+is the Go version the pure-Go SQLite translation needs. And the last
+commit corrects ADR 0012, which had claimed the library had no pure-Go
+SQLite driver. It has one. The decision to keep an in-repo runner stands
+on the corrected, weaker grounds the ADR now gives, and §3 says so rather
+than repeating the error.
 
 ### Definition of Done
 
