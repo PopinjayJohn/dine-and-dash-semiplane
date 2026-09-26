@@ -27,6 +27,10 @@ GOBIN ?= $(shell go env GOPATH)/bin
 TEST_FLAGS := -race -shuffle=on
 SHORT_FUZZ_TIME := 10s
 
+# The fuzz target name `make fuzz` looks for. Override it to fuzz one of them:
+# make fuzz FUZZ=FuzzNewSlug
+FUZZ ?= Fuzz
+
 .PHONY: help
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -79,7 +83,18 @@ cover: ## Report coverage and fail below $(COVERAGE_MIN)%
 
 .PHONY: fuzz
 fuzz: ## Run every fuzz target for $(SHORT_FUZZ_TIME)
-	go test -run=^$$ -fuzz=$$FUZZ -fuzztime=$(SHORT_FUZZ_TIME) ./...
+	@# `go test -fuzz` refuses more than one package, so each target is fuzzed
+	@# on its own. A package with no fuzz target is skipped rather than
+	@# reported as "no tests to run", which is what a silently empty run
+	@# looks like from the outside.
+	@failed=0; \
+	for pkg in $$(go list ./...); do \
+		if go test -list='^$(FUZZ)' "$$pkg" 2>/dev/null | grep -q '^$(FUZZ)'; then \
+			echo "fuzzing $$pkg"; \
+			go test -run='^$$' -fuzz='$(FUZZ)' -fuzztime=$(SHORT_FUZZ_TIME) "$$pkg" || failed=1; \
+		fi; \
+	done; \
+	exit $$failed
 
 .PHONY: spike
 spike: ## Run the Datastar spike, a separate module under spike/
