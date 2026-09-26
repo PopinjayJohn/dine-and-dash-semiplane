@@ -56,6 +56,18 @@ House rules:
   edit rather than three.
 - `make cover` fails below the 80% coverage floor. The floor is one
   `COVERAGE_MIN` assignment, not a number typed into a workflow.
+- GitHub Actions workflow with six jobs: `lint` (gofmt, vet,
+  golangci-lint), `test` (Linux, macOS and Windows, which is what keeps
+  "no CGO" true), `coverage` (the 80% floor), `build` (compile, run
+  `wiki version`, and check the binary is static), `changelog` and
+  `spike`. Every job runs a `make` target, so CI and a local machine
+  execute the same command. Actions are pinned to commit SHAs.
+- `.gitmessage` commit template, documenting the types, the scopes and
+  the changelog rule.
+- `scripts/check-changelog.sh`, which fails a push that changed
+  `internal/`, `cmd/`, `plugins/`, `migrations/` or `web/` without
+  changing `CHANGELOG.md` in the same commit. It reports the offending
+  commits by short SHA and subject rather than just saying no.
 
 ## [0.1.0] - TBD
 
