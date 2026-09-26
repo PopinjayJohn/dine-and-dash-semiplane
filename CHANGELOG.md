@@ -22,7 +22,19 @@ House rules:
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- `wiki` command with `version` and `help` subcommands. The usage text is
+  generated from the subcommand table, so a subcommand cannot exist without
+  appearing in `wiki help`.
+- `internal/version`, which reports the build version, commit, build date and
+  Go toolchain. Every field is set with `-ldflags` at link time and defaults to
+  `dev` and `unknown` so an unlinked build never claims to be a release.
+- `wiki version` and `/healthz` report the same `version.Info` struct, so a
+  bug report from a DM names the exact build.
+- `.golangci.yml`, pinning the linter set: `errcheck`, `gosec` and
+  `errorlint` for the access-control and error-handling invariants, plus
+  formatting checks on `gofmt` and `goimports`.
 
 ## [0.1.0] - TBD
 

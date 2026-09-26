@@ -1,0 +1,108 @@
+# golangci-lint configuration.
+#
+# The linters here are chosen for this project's stated invariants rather than
+# for general taste: a wiki where players author markdown needs errcheck and
+# gosec, an index that must be rebuildable needs errorlint, and a codebase
+# whose output has to be deterministic for golden files needs a lint that
+# catches anything ambient.
+#
+# `make lint` is the only supported way to run this. CI runs the same command
+# with the version pinned in the Makefile.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dupl
+    - errorlint
+    - exhaustive
+    - exptostd
+    - forcetypeassert
+    - gocritic
+    - godot
+    - gosec
+    - misspell
+    - nakedret
+    - nilerr
+    - noctx
+    - predeclared
+    - reassign
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - testifylint
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    dupl:
+      threshold: 150
+    exhaustive:
+      default-signifies-exhaustive: true
+    govet:
+      enable:
+        - nilness
+        - shadow
+      disable:
+        # Field alignment is a micro-optimisation that fights readability,
+        # and this project stores whole pages in memory anyway.
+        - fieldalignment
+    godot:
+      scope: declarations
+    misspell:
+      locale: UK
+    nakedret:
+      max-func-lines: 30
+    revive:
+      rules:
+        - name: max-public-structs
+          arguments: [2]
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Tests read files they just wrote, assert on panics deliberately and
+      # duplicate setup across table cases. None of that is a finding.
+      - path: _test\.go
+        linters:
+          - dupl
+          - gosec
+          - max-public-structs
+      # Generated templ code is not ours to lint.
+      - path: _templ\.go
+        linters:
+          - all
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/popinjayjohn/dine-and-dash-semiplane
+
+issues:
+  # No truncation. A run that reports only the first three findings is worse
+  # than no run at all, because it looks clean.
+  max-issues-per-linter: 0
+  max-same-issues: 0
