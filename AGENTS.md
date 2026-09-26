@@ -18,13 +18,36 @@ re-litigate one without a new ADR that supersedes it.
 
 ## Current state
 
-- `README.md` and `LICENSE` (MIT, © 2026 Johan Englund) only.
-- **No `go.mod`, no `cmd/`, no `migrations/`, no production code, no tests.**
+- **M0 — Foundation is landed on `m0-foundation`.** `go.mod`, `Makefile`,
+  `.golangci.yml`, GitHub Actions, `.gitmessage`,
+  `scripts/check-changelog.sh` and the Datastar spike all exist and CI is
+  wired to run them.
+- **M1 — Domain and store is on `m1-domain-store`.** `internal/domain`
+  describes the world, `internal/clock` and `internal/idgen` are the injected
+  sources of time and identity, `migrations/` holds the base schema and the
+  runner that applies it, and `internal/store` projects campaigns, pages,
+  revisions and the link graph into SQLite. There is **no `internal/http`, no
+  plugins, no front end, no search and no access control.**
+- **The store has no access control yet, and says so.** There is no
+  `visibility` column, no `owner_character_page_id` and no principal, so
+  every page-returning method is campaign-scoped and unfiltered. That is
+  correct for a schema that has nothing to filter on and it is *not* correct
+  for a served application: M7 adds the columns and every one of those methods
+  gains a principal and routes through `page_acl_read`, per invariant 3. Until
+  then the store is reachable only from tests and from code that already knows
+  the answer. A commit that adds a page query to the store must not ship with
+  that comment removed and nothing in its place.
+- `spike/datastar/` is a separate Go module. `go test ./...` at the root does
+  not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
-  of that file.
+  of that file, and each shipped milestone's commit sequence is recorded there
+  too.
 
-Next milestone: **M0 — Foundation**. Its commit sequence is in
-`docs/spec.md` § Milestones.
+Next milestone: **M2 — Obsidian storage**. Frontmatter parse and serialise with
+unknown keys preserved, safe paths, atomic writes, the content hash, the
+`_history` directory and attachments. Its key tests are round-trip
+idempotence, a frontmatter fuzz target, a traversal fuzz target and atomicity
+under a simulated crash.
 
 ## Non-negotiable invariants
 
@@ -75,17 +98,24 @@ needs an explicit decision recorded as a new ADR.
 
 ## Commands
 
-Not available until M0 lands. The intended `Makefile` targets:
+`make help` lists these. `make check` is the one to run before every push; CI
+runs the same targets, so a green local `make check` is a green CI.
 
 ```
-make check    # fmt, vet, lint, go test -race -shuffle=on ./...
+make check    # fmt-check, vet, lint, go test -race -shuffle=on ./...
 make test     # tests only
 make lint     # golangci-lint run
-make cover    # coverage report and gate
+make cover    # coverage report, fails below the 80% gate
 make fuzz     # short fuzz runs
+make spike    # the Datastar spike, a separate module under spike/
 make run      # build and serve
 make reindex  # wiki reindex --full against the local data dir
+make install-tools  # the pinned golangci-lint and templ
 ```
+
+`run` and `reindex` name subcommands that arrive in later milestones, so they
+do nothing yet. The pinned tool versions live in the `Makefile` and nowhere
+else; CI reads them from there with `make print-<tool>-version`.
 
 ## Testing expectations
 

@@ -36,28 +36,34 @@ out-of-process plugins.
 | 6 | Obsidian compatibility is a defined subset | 0005 |
 | 7 | SSE isolated behind a four-function internal package | 0006 |
 | 8 | Three-level visibility, character ownership, secrets stripped at render | 0007 |
-| 9 | Core is system-agnostic; D&D 5e ships as a bundled plugin | — |
+| 9 | Core is system-agnostic; D&D 5e ships as a bundled plugin | 0010 |
 | 10 | Players author character-owned pages; the DM creates the character and binds the player | 0007 |
-| 11 | Local / self-hosted deployment: one static binary plus a SQLite file and a vault directory | — |
-| 12 | Datastar v1 GA, vendored, no CDN | 0006 |
+| 11 | Local / self-hosted deployment: one static binary plus a SQLite file and a vault directory | 0011 |
+| 12 | Datastar v1 GA, vendored, no CDN | 0006, 0008 |
+| 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
+| 14 | Migrations run through a runner in this repository rather than golang-migrate | 0012 |
 
 ## 3. Technology
 
 | Concern | Choice | Rationale |
 |---|---|---|
-| Language | Go 1.24+ | Single binary, excellent stdlib testing |
+| Language | Go 1.25+ | Single binary, excellent stdlib testing. 1.25 because `modernc.org/sqlite` requires it from v1.47, and the driver is the one non-negotiable choice here |
 | Routing | `github.com/go-chi/chi/v5` | Small, `net/http` native, good middleware model |
 | Front end | Datastar v1 GA | Hypermedia over SSE; composes with templ since both emit HTML |
 | Templates | `github.com/a-h/templ` | Compile-time checked components; reusable as SSE fragments |
 | Markdown | `github.com/yuin/goldmark` + extensions | AST extension points for wiki links and callouts |
 | Database | SQLite via `modernc.org/sqlite` | Pure Go, so tests run anywhere without a C toolchain |
-| Migrations | `github.com/golang-migrate/migrate/v4` | Versioned SQL, embedded with `go:embed` |
+| Migrations | `migrations/`, a runner in-repo | Versioned SQL embedded with `go:embed`; golang-migrate was available and pure-Go, and was passed over — [ADR 0012](adr/0012-migration-runner-in-repo.md) |
 | Sanitisation | `github.com/microcosm-cc/bluemonday` | HTML allow-list for rendered markdown |
 | Misc | `github.com/google/uuid`, `golang.org/x/crypto` | IDs, constant-time comparison |
 
-**Known risk.** The Datastar Go server module was not verified at design time.
-[ADR 0006](docs/adr/0006-sse-abstraction.md) confines it to one package with
-four functions. M0 contains a spike to confirm the real API.
+**Resolved risk — Datastar.** The Go server module was not verified at design
+time. The M0 spike has since confirmed it: client v1.0.4, server
+`datastar-go` v1.2.2, both fitting behind the four-function interface.
+[ADR 0008](adr/0008-datastar-release-and-client-pin.md) records the pins
+and the two defects the spike found.
+[ADR 0006](adr/0006-sse-abstraction.md) confines the dependency to one
+package with four functions.
 
 ## 4. Architecture
 
@@ -212,7 +218,7 @@ A fortified town at the confluence of the [[Blackwater]] and the [[Thorn]].
 ```
 
 The committed subset is enumerated in
-[ADR 0005](docs/adr/0005-obsidian-compat-subset.md). The load-bearing
+[ADR 0005](adr/0005-obsidian-compat-subset.md). The load-bearing
 requirements:
 
 - **Frontmatter** — YAML between `---` fences. Unknown keys preserved
@@ -412,7 +418,7 @@ third. Accepted for v1; per-principal ACLs are the natural extension.
 ## 10. Authentication
 
 A capability URL, exchanged exactly once for an opaque session cookie.
-Full rationale in [ADR 0003](docs/adr/0003-url-token-auth.md).
+Full rationale in [ADR 0003](adr/0003-url-token-auth.md).
 
 **Issuance** — the DM clicks "New player link". The server generates 32 bytes
 from `crypto/rand`, stores only `sha256(token)` plus a four-character hint, and
@@ -505,7 +511,7 @@ markdown file
 ## 12. Plugin architecture
 
 Compile-time registry, in-process. See
-[ADR 0002](docs/adr/0002-plugin-registry-in-process.md).
+[ADR 0002](adr/0002-plugin-registry-in-process.md).
 
 ```go
 // internal/plugin/plugin.go
@@ -562,9 +568,11 @@ Each is also a test fixture, so the plugin API can never drift from reality.
 
 ## 13. Deployment
 
-Local or self-hosted. See [ADR 0006](docs/adr/0006-sse-abstraction.md) for the
-offline requirement and [ADR 0004](docs/adr/0004-pure-go-sqlite.md) for the
-connection settings.
+Local or self-hosted. See [ADR 0011](adr/0011-single-binary-data-directory-backup-unit.md)
+for the shape and the backup unit, [ADR 0006](adr/0006-sse-abstraction.md)
+for the offline requirement and [ADR 0004](adr/0004-pure-go-sqlite.md) for
+the connection settings. The threat model is in
+[`docs/security.md`](security.md).
 
 - **One static binary.** `templ` output and `web/static/**` (CSS, fonts,
   pinned `datastar.js`) are embedded with `go:embed`. Nothing is fetched at
@@ -585,10 +593,10 @@ connection settings.
   `DDSP_DATA_DIR`.
 - SQLite: WAL, `foreign_keys=ON`, `busy_timeout=5000`,
   `synchronous=NORMAL`, single-connection write pool plus a pooled read pool.
-- `ddsp backup [--prune]` writes a timestamped archive of the database (via
+- `wiki backup [--prune]` writes a timestamped archive of the database (via
   `.backup`) and the vault. The vault can equally be a git repository, which is
   the natural thing for the DM to do anyway.
-- `ddsp serve --lan` prints the LAN URL and offers self-signed TLS for playing
+- `wiki serve --lan` prints the LAN URL and offers self-signed TLS for playing
   around a table.
 - SSE streams are capped and drained on shutdown; `SIGINT` closes the database
   cleanly.
@@ -681,6 +689,36 @@ ci: add GitHub Actions workflow (vet, lint, race tests, coverage gate)
 chore: add commit template and changelog enforcement script
 docs(adr): record Datastar release and SSE client pin from the M0 spike
 ```
+
+### M1 commit sequence
+
+```
+feat: inject the sources of time and identity
+feat: describe the world the wiki is about
+feat: give the database a schema and a way to reach it
+feat: open the database the way ADR 0004 says, and check
+feat: store campaigns, pages, revisions and links
+test: write the store's contract down, once
+docs(adr): record the migration runner, and correct the spec
+chore: record where the project actually is
+build: measure coverage across the module, not per package
+build: make the fuzz target actually run
+build: take the newest pure-Go SQLite and the Go it needs
+feat(cli): add a manual wiki migrate
+docs(adr): correct a false claim in ADR 0012
+```
+
+Four of those are not postscripts. Choosing a migration runner departed
+from §3 and needed recording; the two `build:`
+commits fix tools that the first code commits made insufficient — the
+coverage gate was measuring each package with its own test binary, which
+reports 0% for a package that only runs inside another package's tests,
+and `make fuzz` was exiting zero having fuzzed nothing; the driver bump
+is the Go version the pure-Go SQLite translation needs. And the last
+commit corrects ADR 0012, which had claimed the library had no pure-Go
+SQLite driver. It has one. The decision to keep an in-repo runner stands
+on the corrected, weaker grounds the ADR now gives, and §3 says so rather
+than repeating the error.
 
 ### Definition of Done
 
