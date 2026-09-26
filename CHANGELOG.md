@@ -108,6 +108,57 @@ House rules:
 - A fuzz target over the whole pipeline for the property the spec names: render
   never panics. Both decisions are exercised, and every anchor in the table of
   contents has to be an id in the HTML that came with it.
+- Wiki links — `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and the
+  embed form `![[target]]` — as their own inline node rather than a rewrite of
+  the source into markdown that happens to look like one, because a markdown
+  link to a page is a page link too and a link to `https://example.invalid` is
+  not. Resolution goes through a `LinkResolver` the index fills in M4, in
+  Obsidian's order: exact path, then alias, then case-insensitive filename.
+- An unresolved link is a `<span class="unresolved">` and not an `<a>` with no
+  href: an anchor with no destination is not focusable, not clickable and not
+  valid HTML, and a link's text is what the DM typed, never the resolved page's
+  title. A DM writes links to pages they intend to write, and a wiki that
+  rendered those as broken links would be unusable on the day it is most useful.
+- Callouts: `> [!type] Title` with `-` and `+` fold markers, nesting, and the
+  `{.revealed}` attribute form. A type this build has never heard of still
+  renders as a callout with its type as a class, because a DM's callout
+  becoming a plain blockquote is a worse answer than a callout nothing has
+  styled yet — and an ordinary quote with `[!warning]` written inside it stays an
+  ordinary quote.
+- **The secret stripper**, which is the milestone. A `[!SECRET]` callout's body
+  is removed from the tree and the callout becomes a visible, obviously-empty
+  placeholder, so a player can see that a secret is there and cannot see what
+  it says. The bytes of a secret are never rendered and then removed.
+  Three things fail closed: a blockquote whose first line has the *shape* of a
+  secret callout and not the syntax (`> [!SECRET` with the bracket unclosed) is
+  removed, a secret nested in a list or a quote is removed, and the zero
+  `Decision` permits none. A secret the DM marked `{.revealed}` is shown, because
+  the DM chose to show it, and a malformed secret is *not* hidden from a DM,
+  because the DM wrote it and is the one who can fix it.
+- A fuzz target for the stripper itself: every input is a well-formed secret
+  callout with a canary in it followed by whatever the fuzzer invents, and the
+  canary has to be absent from the output. The trailing junk is the point — a
+  fence that swallows the page, a quote that never closes, a nested callout, an
+  unterminated `[!SECRET` of its own.
+- A render cache keyed by `(content hash, renderer version, decision, path)`.
+  The decision is in there because without it a render made for a DM is served
+  to a player, and that mistake looks like a cache rather than like a security
+  bug. The path is in there because two pages from the same template are the
+  same bytes, and relative link resolution is the next thing to need it.
+- A sanitiser on the way out, for **every author, the DM included**. A
+  sanitiser applied only to player-authored markdown leaves the highest-value
+  target in the application on the weakest path: a DM pastes a snippet from a
+  forum into their own notes, and a forum is a place scripts come from. The
+  policy is built from what this renderer emits rather than from what HTML can
+  do, and `style`, `data-*`, comments, forms, iframes and `unsafe` are all
+  absent. `class` is allowed as a space-separated list of this application's own
+  classes, so a DM cannot reach a stylesheet rule that is not theirs.
+- ~75 XSS corpus payloads run through the whole pipeline, the way a DM pastes
+  something: script and event handlers, `javascript:` in five spellings, svg,
+  data URLs, style expressions, form and frame tricks, and the payloads that
+  hide behind our own class names. Every one is checked for the *absence* of the
+  construct in the output, and the prose after it has to survive, so a payload
+  cannot take the page with it.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints

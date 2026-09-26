@@ -56,6 +56,23 @@ const RendererVersion Version = 1
 // players will render at the same time.
 type Renderer struct {
 	md goldmark.Markdown
+
+	// links resolves what a wiki link points at. A nil resolver resolves
+	// nothing, and every link in the output is then visibly unresolved.
+	links LinkResolver
+}
+
+// NewWithLinks returns a renderer that resolves wiki links through a resolver.
+//
+// It is separate from New because a nil resolver is a legitimate thing to render
+// with -- a page read before the index has seen it, a test, a golden file -- and
+// a constructor that took a resolver would either have to reject nil or have a
+// second way of saying "no links", and both are worse than saying it at the call
+// site.
+func NewWithLinks(links LinkResolver) *Renderer {
+	r := New()
+	r.links = links
+	return r
 }
 
 // New returns a renderer with the goldmark pipeline this project commits to.
@@ -74,6 +91,7 @@ func New() *Renderer {
 		goldmark.WithExtensions(
 			extension.GFM,
 			extension.Footnote,
+			NewWikiLinks(),
 		),
 		goldmark.WithParserOptions(
 			// The id a heading gets is what the table of contents links to and
@@ -103,6 +121,13 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 	source := []byte(page.Body)
 
 	doc := r.md.Parser().Parse(text.NewReader(source))
+
+	// Resolution walks the tree rather than the source, so a link that a
+	// resolver found is a link whose destination has been rewritten, not a
+	// string that was replaced somewhere in the markdown.
+	if err := resolveLinks(ctx, doc, r.links); err != nil {
+		return Result{}, fmt.Errorf("resolving the links in %s: %w", page.Path, err)
+	}
 
 	toc := buildTOC(doc, source)
 
