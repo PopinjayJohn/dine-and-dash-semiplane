@@ -167,6 +167,11 @@ House rules:
   hide behind our own class names. Every one is checked for the *absence* of the
   construct in the output, and the prose after it has to survive, so a payload
   cannot take the page with it.
+- A render cache keyed by `(content hash, renderer version, decision, path)`.
+  The decision is in there because without it a render made for a DM is served
+  to a player — a mistake that looks like a cache rather than like a security
+  bug. `docs/spec.md` §11 is corrected, and ADR 0014 records why the stripping
+  happens on the parse tree and what each key field costs when it is dropped.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints

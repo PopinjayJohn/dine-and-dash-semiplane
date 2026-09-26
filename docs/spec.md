@@ -43,6 +43,7 @@ out-of-process plugins.
 | 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
 | 14 | Migrations run through a runner in this repository rather than golang-migrate | 0012 |
 | 15 | A document is the bytes it was read as; frontmatter is a parse tree | 0013 |
+| 16 | Secrets are removed from the parse tree; the cache is keyed by the decision | 0014 |
 
 ## 3. Technology
 
@@ -500,8 +501,13 @@ markdown file
   -> render to HTML
   -> bluemonday sanitise
   -> templ wraps in the page shell
-  -> cache keyed by (content_hash, renderer_version)
+  -> cache keyed by (content_hash, renderer_version, can_see_secrets, path)
 ```
+
+The cache key carries the decision because a render made for a DM and one made
+for a player are different bytes, and one of them contains secrets: see
+[ADR 0014](adr/0014-secrets-leave-the-tree.md), which also records why the
+stripping happens on the tree and not on the way out.
 
 - **Wiki-link extension** resolves against the index: exact path, then alias,
   then case-insensitive filename — Obsidian's resolution order.
