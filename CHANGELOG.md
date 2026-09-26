@@ -63,6 +63,24 @@ House rules:
   path this package accepts names a file inside the vault, and a path it refuses
   never becomes one. After the check, the accepted path is joined to a real
   vault and required to be inside it.
+- A page is written the way ADR 0001 fixes it: a temporary file in the same
+  directory, `fsync`, rename, `fsync` the directory. A reader sees the old page
+  or the new one, never a mixture — checked by reading while four writers write,
+  and by failing a write at each of its four steps in turn. Every crash leaves
+  either the old file or the new one, whole.
+- Every file operation goes through an `os.Root` — a directory handle, not a
+  name — so the operating system itself refuses anything that would leave the
+  vault, following a symlink included. That is stronger than checking a path and
+  then opening it, because there is no window between the two for a symlink to
+  appear in, and it is why this package has no method that hands back an
+  absolute path to open with `os.ReadFile`: a caller holding a path has left the
+  guarantee behind.
+- A crash leaves a temporary file behind, and opening the vault sweeps it.
+  Opening is the only moment that cannot race: one data directory has one server,
+  so a temporary file found then belongs to a process that is no longer running.
+  Sweeping at the start of every write instead would delete a live write's
+  temporary file out from under it, which is an error the caller did nothing to
+  deserve.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints

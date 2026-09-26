@@ -1,6 +1,7 @@
 package vault_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,28 +240,23 @@ func TestCheckFileName(t *testing.T) {
 	}
 }
 
-func TestResolve(t *testing.T) {
+// TestReadRefusesWhatCheckPagePathRefuses is the half of the contract that is
+// about errors: a path the sanitiser refuses does not reach the filesystem, and
+// a path it accepts is looked for and reported as missing rather than refused.
+func TestReadRefusesWhatCheckPagePathRefuses(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	v := newVault(t, root)
+	v := newVault(t, t.TempDir())
 
 	tests := map[string]struct {
 		in      string
-		want    string
 		wantErr string
 	}{
-		"a page inside the vault": {
-			in:   "locations/rivergate",
-			want: filepath.Join(root, "locations", "rivergate.md"),
-		},
-		"a page that does not exist yet": {
-			in:   "npcs/garros-ironbar",
-			want: filepath.Join(root, "npcs", "garros-ironbar.md"),
+		"a page that is not in the vault yet": {
+			in: "locations/rivergate",
 		},
 		"a page at the top of the vault": {
-			in:   "campaign",
-			want: filepath.Join(root, "campaign.md"),
+			in: "campaign",
 		},
 		"a traversal is refused before anything is looked at": {
 			in:      "../outside",
@@ -270,22 +266,23 @@ func TestResolve(t *testing.T) {
 			in:      "/etc/passwd",
 			wantErr: "is absolute",
 		},
+		"a page inside the attachments directory is refused": {
+			in:      "_attachments/map-rivergate",
+			wantErr: "reserved directory",
+		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := v.Resolve(tt.in)
+			_, err := v.ReadBytes(tt.in)
 			if tt.wantErr != "" {
 				assertPathError(t, err, tt.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("Resolve(%q): %v", tt.in, err)
-			}
-			if got != tt.want {
-				t.Errorf("Resolve(%q) = %q, want %q", tt.in, got, tt.want)
+			if !errors.Is(err, vault.ErrNotFound) {
+				t.Errorf("ReadBytes(%q) = %v, want an error matching ErrNotFound: the path was accepted", tt.in, err)
 			}
 		})
 	}
@@ -311,7 +308,7 @@ func TestResolveRefusesASymlinkOutOfTheVault(t *testing.T) {
 
 	v := newVault(t, root)
 
-	_, err := v.Resolve("escape/secret")
+	_, err := v.ReadBytes("escape/secret")
 	assertPathError(t, err, "outside the vault")
 
 	// And the file outside is exactly where it was put: nothing was read or
@@ -339,7 +336,7 @@ func TestResolveRefusesASymlinkedFile(t *testing.T) {
 
 	v := newVault(t, root)
 
-	_, err := v.Resolve("rivergate")
+	_, err := v.ReadBytes("rivergate")
 	assertPathError(t, err, "outside the vault")
 }
 
@@ -403,13 +400,15 @@ func TestOpenResolvesTheRootItself(t *testing.T) {
 	// A symlinked data directory is a legitimate thing to have, so the
 	// containment check compares resolved paths on both sides.
 	v := newVault(t, link)
+	defer func() { _ = v.Close() }()
 
 	if v.Root() != campaign {
 		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), campaign)
 	}
 
-	if _, err := v.Resolve("locations/rivergate"); err != nil {
-		t.Errorf("Resolve through a symlinked root: %v", err)
+	// A page inside it is a missing page, not a refused path.
+	if _, err := v.ReadBytes("locations/rivergate"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("ReadBytes through a symlinked root = %v, want ErrNotFound", err)
 	}
 }
 

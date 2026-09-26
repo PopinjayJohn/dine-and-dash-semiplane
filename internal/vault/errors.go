@@ -23,6 +23,11 @@ var (
 	// tried to store a value of the wrong shape under one that it does.
 	ErrKey = errors.New("vault: the frontmatter key is not one the application owns")
 
+	// ErrNotFound means the file is not in the vault. It is not a failure in
+	// the way a read error is: "this page is not here" is the answer a sync
+	// pass expects for most of the pages it asks about.
+	ErrNotFound = errors.New("vault: not found")
+
 	// ErrPath means a path is not usable as a page's identity, or a name is
 	// not usable as a file's.
 	//
