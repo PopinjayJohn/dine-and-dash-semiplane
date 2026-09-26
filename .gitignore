@@ -38,3 +38,6 @@ go.work.sum
 *.db-shm
 /backups/
 /coverage.html
+
+# Build output. `make build` writes here.
+/bin/

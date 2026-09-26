@@ -18,12 +18,19 @@ re-litigate one without a new ADR that supersedes it.
 
 ## Current state
 
-- `README.md` and `LICENSE` (MIT, © 2026 Johan Englund) only.
-- **No `go.mod`, no `cmd/`, no `migrations/`, no production code, no tests.**
+- **M0 — Foundation is landed on `m0-foundation`.** `go.mod`, `Makefile`,
+  `.golangci.yml`, GitHub Actions, `.gitmessage`,
+  `scripts/check-changelog.sh` and the Datastar spike all exist and CI is
+  wired to run them.
+- The only Go code is `cmd/wiki` (`version` and `help`) and
+  `internal/version`. **No `migrations/`, no `internal/http`, no plugins, no
+  front end, no access control.**
+- `spike/datastar/` is a separate Go module. `go test ./...` at the root does
+  not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file.
 
-Next milestone: **M0 — Foundation**. Its commit sequence is in
+Next milestone: **M1 — Domain and store**. Its commit sequence is in
 `docs/spec.md` § Milestones.
 
 ## Non-negotiable invariants
@@ -75,17 +82,24 @@ needs an explicit decision recorded as a new ADR.
 
 ## Commands
 
-Not available until M0 lands. The intended `Makefile` targets:
+`make help` lists these. `make check` is the one to run before every push; CI
+runs the same targets, so a green local `make check` is a green CI.
 
 ```
-make check    # fmt, vet, lint, go test -race -shuffle=on ./...
+make check    # fmt-check, vet, lint, go test -race -shuffle=on ./...
 make test     # tests only
 make lint     # golangci-lint run
-make cover    # coverage report and gate
+make cover    # coverage report, fails below the 80% gate
 make fuzz     # short fuzz runs
+make spike    # the Datastar spike, a separate module under spike/
 make run      # build and serve
 make reindex  # wiki reindex --full against the local data dir
+make install-tools  # the pinned golangci-lint and templ
 ```
+
+`run` and `reindex` name subcommands that arrive in later milestones, so they
+do nothing yet. The pinned tool versions live in the `Makefile` and nowhere
+else; CI reads them from there with `make print-<tool>-version`.
 
 ## Testing expectations
 
