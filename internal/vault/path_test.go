@@ -402,8 +402,23 @@ func TestOpenResolvesTheRootItself(t *testing.T) {
 	v := newVault(t, link)
 	defer func() { _ = v.Close() }()
 
-	if v.Root() != campaign {
-		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), campaign)
+	// The expectation is resolved the same way the vault resolves it, which is
+	// the whole reason this comparison is written this way and not against the
+	// path the test happened to be given. On macOS a temporary directory is
+	// reached through /var, which is a symlink to /private/var, and on Windows
+	// the runner's home directory has both a long and an 8.3 spelling of
+	// itself. A resolved path differs from the one handed in on both, and the
+	// test that compared the two said so out loud on a Linux runner.
+	resolved, err := filepath.EvalSymlinks(campaign)
+	if err != nil {
+		t.Fatalf("resolving the campaign directory: %v", err)
+	}
+
+	if v.Root() != resolved {
+		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), resolved)
+	}
+	if v.Root() == link {
+		t.Error("Root() is the symlink rather than the directory it points at: the containment check would be comparing against something that can be moved")
 	}
 
 	// A page inside it is a missing page, not a refused path.

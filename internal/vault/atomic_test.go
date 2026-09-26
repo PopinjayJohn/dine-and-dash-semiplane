@@ -121,7 +121,7 @@ func TestAFailedWriteLeavesNoTemporaryFile(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	// A file where a directory has to be, so ensureDir fails.
+	// A file where a directory has to be, so the write cannot proceed.
 	if err := os.WriteFile(filepath.Join(root, "locations"), []byte("in the way\n"), 0o600); err != nil {
 		t.Fatalf("writing the file in the way: %v", err)
 	}
@@ -132,9 +132,14 @@ func TestAFailedWriteLeavesNoTemporaryFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("Write succeeded where a directory should have been")
 	}
-	if !strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("error %q, want it to say what could not be resolved", err)
-	}
+
+	// The message is not asserted on, and that is the fix for a failure this
+	// test had on Windows. Which syscall notices first is the operating
+	// system's business: Linux reports the file as not a directory from
+	// EvalSymlinks, Windows reports it as a file that already exists from
+	// MkdirAll, and both refusals are correct. What the test is about is that
+	// the write failed and that failing left nothing behind, and the second
+	// half is the part a reader cannot verify by reading the first.
 	if leftovers := temporaries(t, root); len(leftovers) != 0 {
 		t.Errorf("a failed write left temporary files: %v", leftovers)
 	}
