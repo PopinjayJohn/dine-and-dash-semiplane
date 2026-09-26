@@ -24,6 +24,33 @@ House rules:
 
 ### Added
 
+- `internal/vault`, which reads and writes the markdown files a DM keeps in
+  Obsidian. **A file the application did not change comes back out byte for
+  byte.** Not semantically equal — byte for byte. A document keeps the bytes it
+  was parsed from and hands them back untouched until something actually
+  changes, so a reindex, a render and a save of an untouched page all produce a
+  zero-byte diff, and a serialiser that tidied somebody's YAML would never put
+  a diff in their git history.
+- Frontmatter is a YAML parse tree, not a map. Order, comments, quote style and
+  every key the application does not understand survive an edit to a key it does
+  own; a `map[string]any` round trip would drop the comment beside a key and
+  reorder the block on every save. Unknown keys are preserved verbatim, and the
+  application refuses to write a key it does not own, because it is a guest in
+  the DM's files.
+- Reading is forgiving and writing is conventional, which is the only way the
+  zero-byte-diff promise holds for everybody. A file with CRLF endings, a
+  byte-order mark or no trailing newline is read as it is and written back as
+  it is; a file the application wrote has no BOM, its own line ending and
+  exactly one trailing newline. A DM on Windows is not a broken DM.
+- A file whose frontmatter is not valid YAML, or is not a set of keys, or whose
+  `visibility` is not a level the application knows, is **refused rather than
+  interpreted** — including a typo like `plyers`. The permissive reading of a
+  visibility key is how a `[!SECRET]` block reaches a player. A file with no
+  frontmatter at all is not an error: most pages in a new vault have none.
+- Two fuzz targets over the parser: one for "parse anything without panicking,
+  and return what came in", and one for "a change to a key survives a
+  re-parse, keeps the unknown keys and leaves the body alone".
+
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
   the path it touched every time, because a migration command that only says
