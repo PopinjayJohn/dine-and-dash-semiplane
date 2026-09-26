@@ -2,7 +2,7 @@
 
 `docs/spec.md` §3 lists one thing it could not verify when the design was
 agreed: the Go module and API for the server side of Datastar.
-[ADR 0006](../../docs/adr/0006-sse-abstraction.md) confines that uncertainty
+[ADR 0006](../docs/adr/0006-sse-abstraction.md) confines that uncertainty
 to a four-function interface in `internal/sse` and says M0 contains a spike to
 confirm it.
 
@@ -38,7 +38,7 @@ changed wire protocol, and a green main build is no evidence about it.
 ## What the spike found
 
 Recorded in full in
-[ADR 0008](../../docs/adr/0008-datastar-release-and-client-pin.md). In short:
+[ADR 0008](../docs/adr/0008-datastar-release-and-client-pin.md). In short:
 the SDK is small enough to be worth confining, one method is byte-compatible
 with the stdlib, and `Redirect` is not a redirect event but a script element.
 

@@ -59,7 +59,7 @@ dependency.
   `CGO_ENABLED` matrix in CI, no build tags.
 - Static cross-compilation for Linux, macOS and Windows from one command.
 - FTS5 is available, which is what makes the two-index search design in
-  [0007](0007-access-control-model.md) possible.
+  [0009](0009-two-index-search-with-rrf.md) possible.
 
 **Bad**
 
