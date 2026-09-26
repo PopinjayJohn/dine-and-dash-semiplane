@@ -33,6 +33,17 @@ re-litigate one without a new ADR that supersedes it.
   resolved through an `os.Root`, and every write is atomic. There is **no
   `internal/http`, no plugins, no front end, no search and no access control**,
   and the store and the vault do not talk to each other yet.
+- **M3 — Renderer is on `m3-renderer`.** `internal/render` is the goldmark
+  pipeline with the wiki-link and callout extensions, the table of contents, the
+  secret stripper, the sanitiser and the render cache. It has **no
+  `internal/http` and no plugins**: nothing serves what it renders yet, and the
+  `LinkResolver` it asks about links is an interface M4 fills in.
+- **The renderer's `Decision` is not `access.Decision`, and its zero value
+  permits no secrets.** That is the safe direction: a caller that has not
+  decided anything gets a page with no secrets in it, which is a missing
+  feature rather than a disclosure. M7 replaces the field with the real
+  decision, and the render cache is keyed by it, so a render made for a DM can
+  never be served to a player.
 - **The store has no access control yet, and says so.** There is no
   `visibility` column, no `owner_character_page_id` and no principal, so
   every page-returning method is campaign-scoped and unfiltered. That is
@@ -54,12 +65,12 @@ re-litigate one without a new ADR that supersedes it.
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M3 — Renderer**. The goldmark pipeline, the wiki-link
-extension, the callout extension, the `[!SECRET]` parsing and the fail-closed
-stripper, the table of contents, the sanitiser and the render cache. Its key
-tests are golden files, a no-panic fuzz target, an XSS corpus and cache
-invalidation. The stripping is the whole milestone: the policy's default
-permits nobody to see a secret, so a half-finished M3 leaks nothing.
+Next milestone: **M4 — Index sync**. The sync engine that walks a vault and
+keeps the index in step with it, the fsnotify watcher, the per-campaign lock,
+`wiki sync` and `wiki reindex --full`. It is the first milestone that joins the
+two halves, so it is the first one where a change can break the
+zero-byte-diff promise, and its key tests are the dual-write consistency and
+drift-repair cases in the store contract.
 
 ## Non-negotiable invariants
 
