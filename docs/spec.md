@@ -47,7 +47,7 @@ out-of-process plugins.
 
 | Concern | Choice | Rationale |
 |---|---|---|
-| Language | Go 1.24+ | Single binary, excellent stdlib testing |
+| Language | Go 1.25+ | Single binary, excellent stdlib testing. 1.25 because `modernc.org/sqlite` requires it from v1.47, and the driver is the one non-negotiable choice here |
 | Routing | `github.com/go-chi/chi/v5` | Small, `net/http` native, good middleware model |
 | Front end | Datastar v1 GA | Hypermedia over SSE; composes with templ since both emit HTML |
 | Templates | `github.com/a-h/templ` | Compile-time checked components; reusable as SSE fragments |

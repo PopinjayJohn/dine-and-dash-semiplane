@@ -126,6 +126,12 @@ House rules:
 
 ### Development
 
+- `modernc.org/sqlite` moved to v1.59.0 (SQLite 3.53.4) and the module's Go
+  directive to 1.25.0, which is the newest Go that driver family needs and the
+  newest Go the driver can be used from. v1.47.0 and later declare `go 1.25.0`,
+  so holding the directive at 1.24 meant holding the driver two years back.
+  FTS5, `snippet()`, `bm25()`, the DSN pragmas and `CGO_ENABLED=0` are all
+  re-verified on v1.59.0, because M5's two-index search is built on them.
 - The coverage gate now measures the whole module rather than each package's
   own test binary. A package that only ever runs as part of another package's
   tests — `internal/store/testsuite` is the first, and it is most of the M1
