@@ -55,9 +55,13 @@ out-of-process plugins.
 | Sanitisation | `github.com/microcosm-cc/bluemonday` | HTML allow-list for rendered markdown |
 | Misc | `github.com/google/uuid`, `golang.org/x/crypto` | IDs, constant-time comparison |
 
-**Known risk.** The Datastar Go server module was not verified at design time.
-[ADR 0006](docs/adr/0006-sse-abstraction.md) confines it to one package with
-four functions. M0 contains a spike to confirm the real API.
+**Resolved risk — Datastar.** The Go server module was not verified at design
+time. The M0 spike has since confirmed it: client v1.0.4, server
+`datastar-go` v1.2.2, both fitting behind the four-function interface.
+[ADR 0008](docs/adr/0008-datastar-release-and-client-pin.md) records the pins
+and the two defects the spike found.
+[ADR 0006](docs/adr/0006-sse-abstraction.md) confines the dependency to one
+package with four functions.
 
 ## 4. Architecture
 

@@ -30,8 +30,7 @@ House rules:
 - `internal/version`, which reports the build version, commit, build date and
   Go toolchain. Every field is set with `-ldflags` at link time and defaults to
   `dev` and `unknown` so an unlinked build never claims to be a release.
-- `wiki version` and `/healthz` report the same `version.Info` struct, so a
-  bug report from a DM names the exact build.
+  `wiki version` prints it; `/healthz` will report the same struct in M8.
 - `.golangci.yml`, pinning the linter set: `errcheck`, `gosec` and
   `errorlint` for the access-control and error-handling invariants, plus
   formatting checks on `gofmt` and `goimports`.
@@ -73,6 +72,13 @@ House rules:
   `net/http` — and asserting the two agree on the wire. It is a separate
   Go module, so it can be run and re-run without putting Datastar in
   the application's dependency graph. Findings in ADR 0008.
+
+### Documentation
+
+- ADR 0008 records the Datastar pins from that spike: client v1.0.4, server
+  `datastar-go` v1.2.2, the four-method mapping onto the SDK, the actual wire
+  format, and the two defects the spike turned up. It closes the "known risk"
+  in `docs/spec.md` §3.
 
 ## [0.1.0] - TBD
 
