@@ -268,3 +268,24 @@ func resolverFixture(t *testing.T) (context.Context, *store.Store, domain.Campai
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && strings.Contains(haystack, needle)
 }
+
+// newStore opens and migrates a store in a data directory, the way `wiki sync`
+// will: the database beside the vault, not inside it.
+func newStore(t *testing.T, root string) *store.Store {
+	t.Helper()
+
+	s, err := store.Open(context.Background(), filepath.Join(root, "campaigns.db"), store.Options{
+		Clock: clock.NewFixed(time.Date(2026, 2, 14, 19, 3, 0, 0, time.UTC), time.Minute),
+		IDGen: idgen.NewSequence("id"),
+	})
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, migrateErr := s.Migrate(context.Background()); migrateErr != nil {
+		t.Fatalf("Migrate: %v", migrateErr)
+	}
+
+	return s
+}

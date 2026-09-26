@@ -66,7 +66,22 @@ func NewResolver(s *store.Store, campaignID string) *Resolver {
 }
 
 // Resolve returns the page a target names, in Obsidian's order, and false when
-// nothing in the campaign answers to it.
+// nothing in the campaign answers to it. It is ResolvePage projected to what a
+// rendered link needs, which is a path and a title and no id.
+func (r *Resolver) Resolve(ctx context.Context, target, heading string) (render.Link, bool, error) {
+	page, found, err := r.ResolvePage(ctx, target, heading)
+	if err != nil || !found {
+		return render.Link{}, false, err
+	}
+	return linkFor(page), true, nil
+}
+
+// ResolvePage is Resolve for a caller that needs the row rather than a link.
+//
+// The link graph needs the page's id and the renderer needs the page's path and
+// title, and a resolver that returned only the first would make the second a
+// second query per link. This is the one that answers, and the interface method
+// above is the projection of it.
 //
 // The order is the whole point, and it is Obsidian's rather than ours:
 //
@@ -79,9 +94,9 @@ func NewResolver(s *store.Store, campaignID string) *Resolver {
 // distinction is the reason the interface returns three values: a wiki full of
 // unresolved links is a bug report, and rendering one because the database was
 // briefly busy turns a bug into a mystery.
-func (r *Resolver) Resolve(ctx context.Context, target, heading string) (render.Link, bool, error) {
+func (r *Resolver) ResolvePage(ctx context.Context, target, heading string) (domain.Page, bool, error) {
 	if r == nil || r.store == nil || r.campaignID == "" {
-		return render.Link{}, false, nil
+		return domain.Page{}, false, nil
 	}
 
 	target = strings.TrimSpace(target)
@@ -94,28 +109,32 @@ func (r *Resolver) Resolve(ctx context.Context, target, heading string) (render.
 		target = page
 	}
 	if target == "" {
-		return render.Link{}, false, nil
+		return domain.Page{}, false, nil
 	}
 
+	// An exact path that is *not* found is not a reason to try the other two
+	// fallbacks: a DM who wrote a path and has not written the page yet means
+	// the path, and falling through to a name lookup would resolve their
+	// deliberate placeholder to somebody else's page.
 	if page, err := r.store.GetPage(ctx, r.campaignID, target); err == nil {
-		return linkFor(page), true, nil
+		return page, true, nil
 	}
 
 	if page, found, err := r.store.FindPageByAlias(ctx, r.campaignID, target); err != nil {
-		return render.Link{}, false, err
+		return domain.Page{}, false, err
 	} else if found {
-		return linkFor(page), true, nil
+		return page, true, nil
 	}
 
 	if page, found, err := r.store.FindPageByName(ctx, r.campaignID, target); err != nil {
-		return render.Link{}, false, err
+		return domain.Page{}, false, err
 	} else if found {
-		return linkFor(page), true, nil
+		return page, true, nil
 	}
 
 	_ = heading
 
-	return render.Link{}, false, nil
+	return domain.Page{}, false, nil
 }
 
 // Campaign is the campaign this resolver resolves within, for a caller that has

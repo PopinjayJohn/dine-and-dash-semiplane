@@ -49,6 +49,28 @@ House rules:
   exact path, then an alias, then a case-insensitive file name — and it is a
   **per-campaign object**, because every table in the index is campaign-scoped and
   `[[rivergate]]` means a different page in each of a DM's two campaigns.
+- A sync engine: one campaign's vault read into its index, with a `Report` that
+  says what it did. **It never writes a file** — that is not a limitation but
+  the property ADR 0001 is about, and a test hashes every file's contents *and*
+  modification time before and after a sync to keep it that way.
+- A page whose frontmatter is malformed is **skipped** and the rest of the
+  campaign is still indexed. A page whose `visibility` key is not one the
+  application knows is **refused** and never reaches the index at all. They look
+  like the same failure and are opposites: the first is a page the DM has to fix
+  and nobody should wait for, the second is a page whose audience is unknown,
+  and a row that exists is a row a later render may treat as `players`.
+- A page with no `type:` is indexed as a `note`, the least claiming type there
+  is. A DM who wrote no `type:` has not claimed a page as an NPC, and guessing
+  one would give it behaviour it never asked for.
+- A page is left alone when its content hash is unchanged **and** none of its
+  links would resolve today. The obvious version of that test — "no unresolved
+  links" — settles nothing for a page linking to a page the DM has not written
+  yet, which is most pages of an early campaign: every sync would rewrite all of
+  them, for ever, with the same bytes.
+- One `wiki sync` is enough for a fresh vault. The walk repeats while the
+  previous one wrote something, because a page indexed late in a pass is the
+  target of a page the pass had already passed. A vault that is already in step
+  takes one pass, and `Report.Passes` says which.
 - `render.LinkResolver` grows an error return. An index that could not answer is
   not the same answer as a target nothing answers to, and a wiki full of
   unresolved links because the database was briefly busy is a bug report about
