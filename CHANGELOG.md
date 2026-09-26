@@ -68,6 +68,11 @@ House rules:
   `internal/`, `cmd/`, `plugins/`, `migrations/` or `web/` without
   changing `CHANGELOG.md` in the same commit. It reports the offending
   commits by short SHA and subject rather than just saying no.
+- A Datastar spike under `spike/`, implementing ADR 0006's four-function
+  SSE interface twice — once on `datastar-go`, once with only
+  `net/http` — and asserting the two agree on the wire. It is a separate
+  Go module, so it can be run and re-run without putting Datastar in
+  the application's dependency graph. Findings in ADR 0008.
 
 ## [0.1.0] - TBD
 
