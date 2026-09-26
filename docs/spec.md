@@ -700,12 +700,19 @@ feat: open the database the way ADR 0004 says, and check
 feat: store campaigns, pages, revisions and links
 test: write the store's contract down, once
 docs(adr): record the migration runner, and correct the spec
+chore: record where the project actually is
+build: measure coverage across the module, not per package
+build: make the fuzz target actually run
 ```
 
-The last commit is not a postscript. Choosing a migration runner meant
+Two of those are not postscripts. Choosing a migration runner meant
 departing from §3, because golang-migrate's only SQLite driver is a cgo
 binding and ADR 0004 rules that out; the departure needed recording and the
-spec correcting in the same milestone that made it, not the next one.
+spec correcting in the same milestone that made it. And the two `build:`
+commits fix tools that the first two code commits made insufficient: the
+coverage gate was measuring each package with its own test binary, which
+reports 0% for a package that only runs inside another package's tests, and
+`make fuzz` was exiting zero having fuzzed nothing.
 
 ### Definition of Done
 
