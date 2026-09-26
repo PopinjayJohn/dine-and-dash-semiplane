@@ -211,6 +211,13 @@ House rules:
   correct refusals. The first now compares like with like; the second asserts
   what it is about — that a failed write leaves no temporary file behind — and
   says why the message is not the test's business.
+- A `vault.Vault` that was never closed leaked its directory handle, which on
+  Windows is opened without `FILE_SHARE_DELETE` — so the handle stopped the
+  temporary directory from being deleted at the end of the test, with a message
+  about a file being in use by another process. The test helpers close what they
+  open now, the concurrent write-and-read test waits for its writers in a
+  cleanup so a failure cannot leave them writing into a directory that is being
+  removed, and `Vault.Close` says why a caller has to mean it.
 - A write to a closed stdout or stderr is now reported to the caller instead
   of being discarded. Previously `wiki help` could print a truncated page and
   exit 0.

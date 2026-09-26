@@ -164,6 +164,16 @@ func TestWriteIsAtomicForAReader(t *testing.T) {
 	)
 
 	var wg sync.WaitGroup
+	// The writers are waited for in a cleanup as well as at the end of the body,
+	// because the read loop below calls t.Fatalf: a failure there ends the test
+	// function without reaching the wait below, and the writers would carry on
+	// writing into a directory that the next line of cleanup is deleting.
+	//
+	// Cleanups run last-registered-first, and this is registered after the
+	// vault's own close, so the wait happens before the handle is closed and
+	// before the directory goes.
+	t.Cleanup(wg.Wait)
+
 	failures := make(chan string, writers)
 
 	for range writers {
@@ -245,6 +255,14 @@ func newTestVault(t *testing.T) *Vault {
 	return newTestVaultIn(t, t.TempDir())
 }
 
+// newTestVaultIn opens a vault and closes it when the test ends.
+//
+// The close is a cleanup and not a defer because a Vault holds an open
+// directory handle, and a leaked handle is a directory the operating system may
+// then refuse to delete. On Linux that costs nothing and is invisible; on
+// Windows it fails the test with a message about a file being in use by
+// another process, which is a long way from saying "a test forgot to close
+// something".
 func newTestVaultIn(t *testing.T, root string) *Vault {
 	t.Helper()
 
@@ -252,6 +270,9 @@ func newTestVaultIn(t *testing.T, root string) *Vault {
 	if err != nil {
 		t.Fatalf("Open(%q): %v", root, err)
 	}
+
+	t.Cleanup(func() { _ = v.Close() })
+
 	return v
 }
 
