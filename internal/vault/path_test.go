@@ -373,7 +373,10 @@ func TestOpenRefuses(t *testing.T) {
 
 			v, err := vault.Open(tt.root(t))
 			if err == nil {
-				_ = v
+				// Close before the failure, for the same reason every other
+				// open in this package closes: a leaked handle is a directory
+				// the operating system may refuse to delete.
+				_ = v.Close()
 				t.Fatal("Open accepted something it should have refused")
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
@@ -402,8 +405,23 @@ func TestOpenResolvesTheRootItself(t *testing.T) {
 	v := newVault(t, link)
 	defer func() { _ = v.Close() }()
 
-	if v.Root() != campaign {
-		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), campaign)
+	// The expectation is resolved the same way the vault resolves it, which is
+	// the whole reason this comparison is written this way and not against the
+	// path the test happened to be given. On macOS a temporary directory is
+	// reached through /var, which is a symlink to /private/var, and on Windows
+	// the runner's home directory has both a long and an 8.3 spelling of
+	// itself. A resolved path differs from the one handed in on both, and the
+	// test that compared the two said so out loud on a Linux runner.
+	resolved, err := filepath.EvalSymlinks(campaign)
+	if err != nil {
+		t.Fatalf("resolving the campaign directory: %v", err)
+	}
+
+	if v.Root() != resolved {
+		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), resolved)
+	}
+	if v.Root() == link {
+		t.Error("Root() is the symlink rather than the directory it points at: the containment check would be comparing against something that can be moved")
 	}
 
 	// A page inside it is a missing page, not a refused path.
@@ -412,6 +430,9 @@ func TestOpenResolvesTheRootItself(t *testing.T) {
 	}
 }
 
+// newVault opens a vault and closes it when the test ends. The close is a
+// cleanup rather than a defer because a Vault holds an open directory handle,
+// and a leaked one is a directory the operating system may refuse to delete.
 func newVault(t *testing.T, root string) *vault.Vault {
 	t.Helper()
 
@@ -419,6 +440,9 @@ func newVault(t *testing.T, root string) *vault.Vault {
 	if err != nil {
 		t.Fatalf("vault.Open(%q): %v", root, err)
 	}
+
+	t.Cleanup(func() { _ = v.Close() })
+
 	return v
 }
 

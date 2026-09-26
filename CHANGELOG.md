@@ -275,6 +275,23 @@ House rules:
 
 ### Fixed
 
+- Two `internal/vault` tests compared things the operating system decides, and
+  so passed on Linux and failed on the CI matrix: one compared a *resolved*
+  path against the unresolved one it was given (identical on Linux, different
+  on macOS, where a temporary directory is reached through `/var`, and on
+  Windows, where the runner's home directory has both a long and an 8.3
+  spelling of itself), and one asserted an error message that Linux produces
+  from `EvalSymlinks` and Windows produces from `MkdirAll` as two different
+  correct refusals. The first now compares like with like; the second asserts
+  what it is about — that a failed write leaves no temporary file behind — and
+  says why the message is not the test's business.
+- A `vault.Vault` that was never closed leaked its directory handle, which on
+  Windows is opened without `FILE_SHARE_DELETE` — so the handle stopped the
+  temporary directory from being deleted at the end of the test, with a message
+  about a file being in use by another process. The test helpers close what they
+  open now, the concurrent write-and-read test waits for its writers in a
+  cleanup so a failure cannot leave them writing into a directory that is being
+  removed, and `Vault.Close` says why a caller has to mean it.
 - A write to a closed stdout or stderr is now reported to the caller instead
   of being discarded. Previously `wiki help` could print a truncated page and
   exit 0.

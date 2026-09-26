@@ -121,7 +121,7 @@ func TestAFailedWriteLeavesNoTemporaryFile(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	// A file where a directory has to be, so ensureDir fails.
+	// A file where a directory has to be, so the write cannot proceed.
 	if err := os.WriteFile(filepath.Join(root, "locations"), []byte("in the way\n"), 0o600); err != nil {
 		t.Fatalf("writing the file in the way: %v", err)
 	}
@@ -132,9 +132,14 @@ func TestAFailedWriteLeavesNoTemporaryFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("Write succeeded where a directory should have been")
 	}
-	if !strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("error %q, want it to say what could not be resolved", err)
-	}
+
+	// The message is not asserted on, and that is the fix for a failure this
+	// test had on Windows. Which syscall notices first is the operating
+	// system's business: Linux reports the file as not a directory from
+	// EvalSymlinks, Windows reports it as a file that already exists from
+	// MkdirAll, and both refusals are correct. What the test is about is that
+	// the write failed and that failing left nothing behind, and the second
+	// half is the part a reader cannot verify by reading the first.
 	if leftovers := temporaries(t, root); len(leftovers) != 0 {
 		t.Errorf("a failed write left temporary files: %v", leftovers)
 	}
@@ -159,6 +164,16 @@ func TestWriteIsAtomicForAReader(t *testing.T) {
 	)
 
 	var wg sync.WaitGroup
+	// The writers are waited for in a cleanup as well as at the end of the body,
+	// because the read loop below calls t.Fatalf: a failure there ends the test
+	// function without reaching the wait below, and the writers would carry on
+	// writing into a directory that the next line of cleanup is deleting.
+	//
+	// Cleanups run last-registered-first, and this is registered after the
+	// vault's own close, so the wait happens before the handle is closed and
+	// before the directory goes.
+	t.Cleanup(wg.Wait)
+
 	failures := make(chan string, writers)
 
 	for range writers {
@@ -240,6 +255,14 @@ func newTestVault(t *testing.T) *Vault {
 	return newTestVaultIn(t, t.TempDir())
 }
 
+// newTestVaultIn opens a vault and closes it when the test ends.
+//
+// The close is a cleanup and not a defer because a Vault holds an open
+// directory handle, and a leaked handle is a directory the operating system may
+// then refuse to delete. On Linux that costs nothing and is invisible; on
+// Windows it fails the test with a message about a file being in use by
+// another process, which is a long way from saying "a test forgot to close
+// something".
 func newTestVaultIn(t *testing.T, root string) *Vault {
 	t.Helper()
 
@@ -247,6 +270,9 @@ func newTestVaultIn(t *testing.T, root string) *Vault {
 	if err != nil {
 		t.Fatalf("Open(%q): %v", root, err)
 	}
+
+	t.Cleanup(func() { _ = v.Close() })
+
 	return v
 }
 

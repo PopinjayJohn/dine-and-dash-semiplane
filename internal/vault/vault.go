@@ -96,6 +96,13 @@ func Open(dir string) (*Vault, error) {
 
 // Close releases the directory handle. A Vault is not safe to use afterwards,
 // and the files it has written are already on disk: nothing is buffered here.
+//
+// A caller must close it. On Windows the handle is opened without
+// FILE_SHARE_DELETE, because that is what Go's syscall.Open does, so an open
+// Vault's directory cannot be deleted while the handle is held. That is the
+// right behaviour for a data directory -- one process owns it while it is
+// running (ADR 0011) -- and the reason every caller in this repository defers a
+// close rather than leaving it to a finaliser.
 func (v *Vault) Close() error {
 	return v.root.Close()
 }
