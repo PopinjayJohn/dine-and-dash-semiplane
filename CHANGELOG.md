@@ -24,6 +24,19 @@ House rules:
 
 ### Added
 
+- `wiki migrate`, for the two questions a person has about a database: what
+  schema is it at, and bring it to the one this build knows about. It prints
+  the path it touched every time, because a migration command that only says
+  "migrated" gets run twice in the wrong directory, and `-status` answers
+  without writing anything — including without creating an empty database where
+  there was none, and saying so loudly if the path is not one you meant.
+- `internal/datadir`, so every command that touches a database agrees on where
+  the data directory is: `-data-dir` beats `DDSP_DATA_DIR`, which beats the
+  platform default. That is ADR 0011's precedence in three rules, and
+  `config.yaml` is not read yet — a half-implemented config loader that
+  silently ignored a config file a DM had written would be worse than one that
+  does not exist.
+
 - `internal/clock` and `internal/idgen`, the only two packages allowed to know
   what time it is and what a new identifier looks like. Anything that stamps a
   row or mints a key takes a `clock.Clock` or an `idgen.IDGen` instead, so a

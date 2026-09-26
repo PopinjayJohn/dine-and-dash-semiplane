@@ -77,6 +77,10 @@ var commands = map[string]command{
 		summary: "print the build version",
 		run:     runVersion,
 	},
+	"migrate": {
+		summary: "apply database migrations to a data directory",
+		run:     runMigrate,
+	},
 }
 
 func init() {
