@@ -26,8 +26,13 @@ re-litigate one without a new ADR that supersedes it.
   describes the world, `internal/clock` and `internal/idgen` are the injected
   sources of time and identity, `migrations/` holds the base schema and the
   runner that applies it, and `internal/store` projects campaigns, pages,
-  revisions and the link graph into SQLite. There is **no `internal/http`, no
-  plugins, no front end, no search and no access control.**
+  revisions and the link graph into SQLite.
+- **M2 — Obsidian storage is on `m2-obsidian-storage`.** `internal/vault`
+  reads and writes the markdown files: a Document is the bytes it was read as,
+  the frontmatter is a parse tree rather than a map, paths are checked and then
+  resolved through an `os.Root`, and every write is atomic. There is **no
+  `internal/http`, no plugins, no front end, no search and no access control**,
+  and the store and the vault do not talk to each other yet.
 - **The store has no access control yet, and says so.** There is no
   `visibility` column, no `owner_character_page_id` and no principal, so
   every page-returning method is campaign-scoped and unfiltered. That is
@@ -37,17 +42,24 @@ re-litigate one without a new ADR that supersedes it.
   then the store is reachable only from tests and from code that already knows
   the answer. A commit that adds a page query to the store must not ship with
   that comment removed and nothing in its place.
+- **The vault and the store are separate halves, on purpose.** Nothing in M2
+  knows what a `domain.Page` is, and nothing in the store knows what a file
+  is. M4 joins them, and it is the first place a change can break the
+  zero-byte-diff promise: anything that reads a page and writes it back must
+  write back the document it read, not a re-serialisation of the values it
+  took out of it.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M2 — Obsidian storage**. Frontmatter parse and serialise with
-unknown keys preserved, safe paths, atomic writes, the content hash, the
-`_history` directory and attachments. Its key tests are round-trip
-idempotence, a frontmatter fuzz target, a traversal fuzz target and atomicity
-under a simulated crash.
+Next milestone: **M3 — Renderer**. The goldmark pipeline, the wiki-link
+extension, the callout extension, the `[!SECRET]` parsing and the fail-closed
+stripper, the table of contents, the sanitiser and the render cache. Its key
+tests are golden files, a no-panic fuzz target, an XSS corpus and cache
+invalidation. The stripping is the whole milestone: the policy's default
+permits nobody to see a secret, so a half-finished M3 leaks nothing.
 
 ## Non-negotiable invariants
 
