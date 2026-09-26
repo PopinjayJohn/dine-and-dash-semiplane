@@ -22,16 +22,32 @@ re-litigate one without a new ADR that supersedes it.
   `.golangci.yml`, GitHub Actions, `.gitmessage`,
   `scripts/check-changelog.sh` and the Datastar spike all exist and CI is
   wired to run them.
-- The only Go code is `cmd/wiki` (`version` and `help`) and
-  `internal/version`. **No `migrations/`, no `internal/http`, no plugins, no
-  front end, no access control.**
+- **M1 — Domain and store is on `m1-domain-store`.** `internal/domain`
+  describes the world, `internal/clock` and `internal/idgen` are the injected
+  sources of time and identity, `migrations/` holds the base schema and the
+  runner that applies it, and `internal/store` projects campaigns, pages,
+  revisions and the link graph into SQLite. There is **no `internal/http`, no
+  plugins, no front end, no search and no access control.**
+- **The store has no access control yet, and says so.** There is no
+  `visibility` column, no `owner_character_page_id` and no principal, so
+  every page-returning method is campaign-scoped and unfiltered. That is
+  correct for a schema that has nothing to filter on and it is *not* correct
+  for a served application: M7 adds the columns and every one of those methods
+  gains a principal and routes through `page_acl_read`, per invariant 3. Until
+  then the store is reachable only from tests and from code that already knows
+  the answer. A commit that adds a page query to the store must not ship with
+  that comment removed and nothing in its place.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
-  of that file.
+  of that file, and each shipped milestone's commit sequence is recorded there
+  too.
 
-Next milestone: **M1 — Domain and store**. Its commit sequence is in
-`docs/spec.md` § Milestones.
+Next milestone: **M2 — Obsidian storage**. Frontmatter parse and serialise with
+unknown keys preserved, safe paths, atomic writes, the content hash, the
+`_history` directory and attachments. Its key tests are round-trip
+idempotence, a frontmatter fuzz target, a traversal fuzz target and atomicity
+under a simulated crash.
 
 ## Non-negotiable invariants
 

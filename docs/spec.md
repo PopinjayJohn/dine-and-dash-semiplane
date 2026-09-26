@@ -690,6 +690,23 @@ chore: add commit template and changelog enforcement script
 docs(adr): record Datastar release and SSE client pin from the M0 spike
 ```
 
+### M1 commit sequence
+
+```
+feat: inject the sources of time and identity
+feat: describe the world the wiki is about
+feat: give the database a schema and a way to reach it
+feat: open the database the way ADR 0004 says, and check
+feat: store campaigns, pages, revisions and links
+test: write the store's contract down, once
+docs(adr): record the migration runner, and correct the spec
+```
+
+The last commit is not a postscript. Choosing a migration runner meant
+departing from §3, because golang-migrate's only SQLite driver is a cgo
+binding and ADR 0004 rules that out; the departure needed recording and the
+spec correcting in the same milestone that made it, not the next one.
+
 ### Definition of Done
 
 Every milestone:
