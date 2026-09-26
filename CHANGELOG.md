@@ -167,11 +167,6 @@ House rules:
   hide behind our own class names. Every one is checked for the *absence* of the
   construct in the output, and the prose after it has to survive, so a payload
   cannot take the page with it.
-- A render cache keyed by `(content hash, renderer version, decision, path)`.
-  The decision is in there because without it a render made for a DM is served
-  to a player — a mistake that looks like a cache rather than like a security
-  bug. `docs/spec.md` §11 is corrected, and ADR 0014 records why the stripping
-  happens on the parse tree and what each key field costs when it is dropped.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
@@ -329,6 +324,18 @@ House rules:
 
 ### Documentation
 
+- ADR 0013 records why a document is the bytes it was read as: ADR 0005 asks
+  for unknown keys preserved verbatim *and* a zero-byte diff on rewriting an
+  untouched file, and together those are sharper than they read — no YAML
+  emitter agrees byte for byte with every hand-written file. The promise
+  cannot be tested for, so it is structural: a document keeps its bytes until
+  something actually changes, and the frontmatter is a parse tree rather than a
+  map, because a map drops key order, comments and quote style.
+- ADR 0014 records where a secret leaves the render path and what the render
+  cache is keyed by. The stripping happens on the parse tree, so a secret's
+  text is never rendered and then removed, and the cache key carries the
+  decision, so a render made for a DM cannot be served to a player.
+  `docs/spec.md` §11 is corrected: its two-field cache key is a channel.
 - ADR 0012 is corrected. It originally claimed golang-migrate had no pure-Go
   SQLite driver and that its only one was a cgo binding, which ruled the
   library out under ADR 0004. It has one: `database/sqlite` imports
