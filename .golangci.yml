@@ -60,11 +60,13 @@ linters:
       scope: declarations
     misspell:
       locale: UK
-      # goldmark exports Prioritized and PrioritizedSlice, so the spelling is
-      # the library's and not something this repository can change. The rule is
-      # keyed on the lower-case typo, so that is what goes here.
+      # Two library spellings that are the libraries' and not this repository's:
+      # goldmark exports Prioritized and PrioritizedSlice, and bluemonday exports
+      # Sanitize. The rules are keyed on the lower-case typo, so that is what
+      # goes here.
       ignore-rules:
         - prioritized
+        - sanitize
     nakedret:
       max-func-lines: 30
     revive:

@@ -152,6 +152,11 @@ House rules:
   do, and `style`, `data-*`, comments, forms, iframes and `unsafe` are all
   absent. `class` is allowed as a space-separated list of this application's own
   classes, so a DM cannot reach a stylesheet rule that is not theirs.
+  The corpus found two holes in the first draft of that policy — a second,
+  unconstrained allowance of `class` beat the matched one, and a pattern that
+  matched a single class name stripped the attribute from every callout — and a
+  review of the golden diff found a third: `blockquote` was missing, which
+  turned a GM's rulebook quote into an unattributed paragraph.
 - ~75 XSS corpus payloads run through the whole pipeline, the way a DM pastes
   something: script and event handlers, `javascript:` in five spellings, svg,
   data URLs, style expressions, form and frame tricks, and the payloads that

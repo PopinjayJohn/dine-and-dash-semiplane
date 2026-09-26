@@ -57,6 +57,9 @@ const RendererVersion Version = 1
 type Renderer struct {
 	md goldmark.Markdown
 
+	// saniti is the last thing the HTML passes through.
+	saniti *Sanitiser
+
 	// links resolves what a wiki link points at. A nil resolver resolves
 	// nothing, and every link in the output is then visibly unresolved.
 	links LinkResolver
@@ -87,29 +90,33 @@ func NewWithLinks(links LinkResolver) *Renderer {
 // page with holes in it, and the sanitiser is the thing that gets tested
 // against an XSS corpus.
 func New() *Renderer {
-	return &Renderer{md: goldmark.New(
-		goldmark.WithExtensions(
-			extension.GFM,
-			extension.Footnote,
-			NewWikiLinks(),
-			NewCallouts(),
-		),
-		goldmark.WithParserOptions(
-			// The id a heading gets is what the table of contents links to and
-			// what the HTML carries, so it is generated once, here, and read
-			// from the tree rather than guessed twice.
-			parser.WithAutoHeadingID(),
-		),
-		goldmark.WithRendererOptions(
-			html.WithUnsafe(),
-			html.WithXHTML(),
-			// Hard line breaks are deliberately *off*. A DM's notes are
-			// soft-wrapped, and turning every newline in the file into a <br>
-			// would break sentences at whatever column their editor wrapped
-			// at. Obsidian's live preview does not do it either; the setting
-			// that does is called "strict line breaks" and is off by default.
-		),
-	)}
+	renderer := &Renderer{
+		md: goldmark.New(
+			goldmark.WithExtensions(
+				extension.GFM,
+				extension.Footnote,
+				NewWikiLinks(),
+				NewCallouts(),
+			),
+			goldmark.WithParserOptions(
+				// The id a heading gets is what the table of contents links to and
+				// what the HTML carries, so it is generated once, here, and read
+				// from the tree rather than guessed twice.
+				parser.WithAutoHeadingID(),
+			),
+			goldmark.WithRendererOptions(
+				html.WithUnsafe(),
+				html.WithXHTML(),
+				// Hard line breaks are deliberately *off*. A DM's notes are
+				// soft-wrapped, and turning every newline in the file into a <br>
+				// would break sentences at whatever column their editor wrapped
+				// at. Obsidian's live preview does not do it either; the setting
+				// that does is called "strict line breaks" and is off by default.
+			),
+		)}
+	renderer.saniti = NewSanitiser()
+
+	return renderer
 }
 
 // Render turns a page into HTML.
@@ -143,7 +150,13 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		return Result{}, fmt.Errorf("rendering %s: %w", page.Path, err)
 	}
 
-	result := Result{HTML: rendered.String(), TOC: toc}
+	// The sanitiser runs last, on every page, for every author. It is not a
+	// filter for untrusted input: a DM is the highest-value target in this
+	// application, and "sanitise only what a player wrote" is how the DM's own
+	// notes become the way in.
+	clean := r.saniti.Sanitise(rendered.String())
+
+	result := Result{HTML: clean, TOC: toc}
 	if stripped > 0 {
 		// The count travels with the result so a caller can log it and a test
 		// can assert that a page with a secret in it was treated as one. The
