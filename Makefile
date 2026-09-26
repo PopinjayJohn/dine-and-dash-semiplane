@@ -61,7 +61,12 @@ test: ## Run the tests with the race detector
 
 .PHONY: cover
 cover: ## Report coverage and fail below $(COVERAGE_MIN)%
-	go test $(TEST_FLAGS) -covermode=atomic -coverprofile=coverage.out ./...
+	@# -coverpkg=./... is what makes a package that is only ever run by
+	@# another package's tests count as covered. internal/store/testsuite is
+	@# the first such package and it is most of the M1 test suite; without the
+	@# flag each package is measured by its own binary, a test helper reports
+	@# 0%, and the gate fails on code the tests exercise on every run.
+	go test $(TEST_FLAGS) -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -1
 	@total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub("%","",$$NF); print $$NF}'); \
 	awk -v total="$$total" -v min="$(COVERAGE_MIN)" -v file=coverage.out 'BEGIN { \

@@ -126,6 +126,13 @@ House rules:
 
 ### Development
 
+- The coverage gate now measures the whole module rather than each package's
+  own test binary. A package that only ever runs as part of another package's
+  tests — `internal/store/testsuite` is the first, and it is most of the M1
+  suite — used to report 0% and fail a gate the code was passing all day.
+  Per-package numbers in `make cover` output are now "share of the module
+  covered by this package's tests"; the gate and `coverage.out` are
+  unaffected.
 - `Makefile` with `check`, `test`, `cover`, `fuzz`, `lint`, `vet`, `fmt`,
   `build`, `run`, `reindex`, `spike` and `install-tools`. `make help` lists
   them.
