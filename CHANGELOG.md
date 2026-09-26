@@ -24,6 +24,76 @@ House rules:
 
 ### Added
 
+- `internal/vault`, which reads and writes the markdown files a DM keeps in
+  Obsidian. **A file the application did not change comes back out byte for
+  byte.** Not semantically equal — byte for byte. A document keeps the bytes it
+  was parsed from and hands them back untouched until something actually
+  changes, so a reindex, a render and a save of an untouched page all produce a
+  zero-byte diff, and a serialiser that tidied somebody's YAML would never put
+  a diff in their git history.
+- Frontmatter is a YAML parse tree, not a map. Order, comments, quote style and
+  every key the application does not understand survive an edit to a key it does
+  own; a `map[string]any` round trip would drop the comment beside a key and
+  reorder the block on every save. Unknown keys are preserved verbatim, and the
+  application refuses to write a key it does not own, because it is a guest in
+  the DM's files.
+- Reading is forgiving and writing is conventional, which is the only way the
+  zero-byte-diff promise holds for everybody. A file with CRLF endings, a
+  byte-order mark or no trailing newline is read as it is and written back as
+  it is; a file the application wrote has no BOM, its own line ending and
+  exactly one trailing newline. A DM on Windows is not a broken DM.
+- A file whose frontmatter is not valid YAML, or is not a set of keys, or whose
+  `visibility` is not a level the application knows, is **refused rather than
+  interpreted** — including a typo like `plyers`. The permissive reading of a
+  visibility key is how a `[!SECRET]` block reaches a player. A file with no
+  frontmatter at all is not an error: most pages in a new vault have none.
+- Two fuzz targets over the parser: one for "parse anything without panicking,
+  and return what came in", and one for "a change to a key survives a
+  re-parse, keeps the unknown keys and leaves the body alone".
+- Page paths and attachment names are checked, and a checked path is not a
+  string test. `vault.Open` resolves the campaign directory and every path is
+  resolved against it and required to still be inside, so a symlink planted in a
+  vault — a directory component *or* the file at the end of it — is a refusal
+  rather than a read. A path may not contain `..`, `.`, an empty segment, a
+  backslash, a volume name, a NUL, a control character, a leading dot or a
+  reserved directory, and may not be a Windows device name or end in a dot or a
+  space. A path that would only be valid after cleaning is refused, because
+  `a/./b` and `a/b` naming two pages is a duplicate identity.
+- Two more fuzz targets, one per sanitiser, whose invariant is one sentence: a
+  path this package accepts names a file inside the vault, and a path it refuses
+  never becomes one. After the check, the accepted path is joined to a real
+  vault and required to be inside it.
+- A page is written the way ADR 0001 fixes it: a temporary file in the same
+  directory, `fsync`, rename, `fsync` the directory. A reader sees the old page
+  or the new one, never a mixture — checked by reading while four writers write,
+  and by failing a write at each of its four steps in turn. Every crash leaves
+  either the old file or the new one, whole.
+- Every file operation goes through an `os.Root` — a directory handle, not a
+  name — so the operating system itself refuses anything that would leave the
+  vault, following a symlink included. That is stronger than checking a path and
+  then opening it, because there is no window between the two for a symlink to
+  appear in, and it is why this package has no method that hands back an
+  absolute path to open with `os.ReadFile`: a caller holding a path has left the
+  guarantee behind.
+- A crash leaves a temporary file behind, and opening the vault sweeps it.
+  Opening is the only moment that cannot race: one data directory has one server,
+  so a temporary file found then belongs to a process that is no longer running.
+  Sweeping at the start of every write instead would delete a live write's
+  temporary file out from under it, which is an error the caller did nothing to
+  deserve.
+- Revisions are archived to `_history/<path>/<n>-<rfc3339>.md`, close enough to
+  Obsidian's File Recovery layout to be recognised. The timestamp has no colons
+  in it, because a colon is a forbidden character in a filename on Windows and a
+  revision a DM cannot open on the machine they wrote it on is not a revision.
+  The number comes from the store, not from this package, so the files and
+  `page_revisions` cannot disagree about the order of a page's history, and a
+  page's history is a whole file rather than a diff. Revisions can be listed,
+  restored, and are never listed as pages.
+- Attachments live in `_attachments/` and are referred to by vault-relative
+  path, so a vault stays portable when it is zipped or put in git. A page may
+  point into the attachments directory — that is the case the whole thing is for —
+  but not into `_history` or `.obsidian`, whatever case it spells them in.
+
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
   the path it touched every time, because a migration command that only says
@@ -131,6 +201,23 @@ House rules:
 
 ### Fixed
 
+- Two `internal/vault` tests compared things the operating system decides, and
+  so passed on Linux and failed on the CI matrix: one compared a *resolved*
+  path against the unresolved one it was given (identical on Linux, different
+  on macOS, where a temporary directory is reached through `/var`, and on
+  Windows, where the runner's home directory has both a long and an 8.3
+  spelling of itself), and one asserted an error message that Linux produces
+  from `EvalSymlinks` and Windows produces from `MkdirAll` as two different
+  correct refusals. The first now compares like with like; the second asserts
+  what it is about — that a failed write leaves no temporary file behind — and
+  says why the message is not the test's business.
+- A `vault.Vault` that was never closed leaked its directory handle, which on
+  Windows is opened without `FILE_SHARE_DELETE` — so the handle stopped the
+  temporary directory from being deleted at the end of the test, with a message
+  about a file being in use by another process. The test helpers close what they
+  open now, the concurrent write-and-read test waits for its writers in a
+  cleanup so a failure cannot leave them writing into a directory that is being
+  removed, and `Vault.Close` says why a caller has to mean it.
 - A write to a closed stdout or stderr is now reported to the caller instead
   of being discarded. Previously `wiki help` could print a truncated page and
   exit 0.

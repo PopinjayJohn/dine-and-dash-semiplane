@@ -41,3 +41,7 @@ go.work.sum
 
 # Build output. `make build` writes here.
 /bin/
+
+# A CI run's log, dropped into the working tree to be read rather than fetched.
+# They are about one run of one branch and are not a property of any of them.
+/ci-*.txt

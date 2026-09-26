@@ -42,6 +42,7 @@ out-of-process plugins.
 | 12 | Datastar v1 GA, vendored, no CDN | 0006, 0008 |
 | 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
 | 14 | Migrations run through a runner in this repository rather than golang-migrate | 0012 |
+| 15 | A document is the bytes it was read as; frontmatter is a parse tree | 0013 |
 
 ## 3. Technology
 
@@ -52,6 +53,7 @@ out-of-process plugins.
 | Front end | Datastar v1 GA | Hypermedia over SSE; composes with templ since both emit HTML |
 | Templates | `github.com/a-h/templ` | Compile-time checked components; reusable as SSE fragments |
 | Markdown | `github.com/yuin/goldmark` + extensions | AST extension points for wiki links and callouts |
+| YAML | `go.yaml.in/yaml/v3` | Frontmatter as a parse tree, so a DM's keys, order and comments survive a rewrite — [ADR 0013](adr/0013-frontmatter-parse-tree.md) |
 | Database | SQLite via `modernc.org/sqlite` | Pure Go, so tests run anywhere without a C toolchain |
 | Migrations | `migrations/`, a runner in-repo | Versioned SQL embedded with `go:embed`; golang-migrate was available and pure-Go, and was passed over — [ADR 0012](adr/0012-migration-runner-in-repo.md) |
 | Sanitisation | `github.com/microcosm-cc/bluemonday` | HTML allow-list for rendered markdown |
@@ -706,6 +708,7 @@ build: make the fuzz target actually run
 build: take the newest pure-Go SQLite and the Go it needs
 feat(cli): add a manual wiki migrate
 docs(adr): correct a false claim in ADR 0012
+docs: record the commits M1 actually took
 ```
 
 Four of those are not postscripts. Choosing a migration runner departed
@@ -714,11 +717,32 @@ commits fix tools that the first code commits made insufficient — the
 coverage gate was measuring each package with its own test binary, which
 reports 0% for a package that only runs inside another package's tests,
 and `make fuzz` was exiting zero having fuzzed nothing; the driver bump
-is the Go version the pure-Go SQLite translation needs. And the last
-commit corrects ADR 0012, which had claimed the library had no pure-Go
-SQLite driver. It has one. The decision to keep an in-repo runner stands
-on the corrected, weaker grounds the ADR now gives, and §3 says so rather
-than repeating the error.
+is the Go version the pure-Go SQLite translation needs. And one corrects
+ADR 0012, which had claimed the library had no pure-Go SQLite driver. It
+has one. The decision to keep an in-repo runner stands on the corrected,
+weaker grounds the ADR now gives, and §3 says so rather than repeating
+the error.
+
+### M2 commit sequence
+
+```
+feat: read a DM's markdown without touching it
+feat: check a path by resolving it, not by reading it
+feat: write a page atomically, through a handle rather than a path
+feat: keep the history and the attachments where Obsidian expects them
+docs(adr): record why a document is the bytes it was read as
+chore: record where the project actually is
+```
+
+The first commit is the milestone. A file the application did not change
+comes back out byte for byte, which cannot be tested for and has to be
+structural — see [ADR 0013](adr/0013-frontmatter-parse-tree.md). The
+third one moved every file operation onto an `os.Root`, which is a
+directory handle rather than a name: the kernel then refuses anything that
+would leave the vault, a symlink followed included, and there is no
+window between checking a path and opening it. The second commit had
+already done the string-level work that the handle makes unnecessary, and
+it is the one whose fuzz targets state the invariant the rest stands on.
 
 ### Definition of Done
 
