@@ -57,6 +57,9 @@ const RendererVersion Version = 1
 type Renderer struct {
 	md goldmark.Markdown
 
+	// cache holds the renders, keyed by everything that can change one.
+	cache *Cache
+
 	// saniti is the last thing the HTML passes through.
 	saniti *Sanitiser
 
@@ -116,16 +119,41 @@ func New() *Renderer {
 		)}
 	renderer.saniti = NewSanitiser()
 
+	renderer.cache = NewCache(defaultCacheSize)
+
 	return renderer
 }
 
 // Render turns a page into HTML.
 //
-// The Decision is taken even though nothing in this milestone reads it yet: it
-// is the parameter the rest of the pipeline hangs off, and a signature that
-// grows a security-relevant argument later is a signature that callers get
-// wrong in the meantime.
+// The Decision is in the cache key as well as the arguments, because a render
+// made for a DM and a render made for a player are different bytes and one of
+// them contains secrets: see the cache key comment for the whole list of what a
+// missing field would cost.
 func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Result, error) {
+	key := CacheKey{
+		ContentHash:   page.ContentHash,
+		Version:       RendererVersion,
+		CanSeeSecrets: decision.CanSeeSecrets,
+		Path:          page.Path,
+	}
+	if cached, found := r.cache.Get(key); found {
+		return cached, nil
+	}
+
+	result, err := r.render(ctx, page, decision)
+	if err != nil {
+		return Result{}, err
+	}
+
+	r.cache.Put(key, result)
+	return result, nil
+}
+
+// render is the pipeline itself, with no cache in it. It is a separate function
+// so the cache is an optimisation of one function rather than woven through it,
+// and so a test can ask for the pipeline without a cache at all.
+func (r *Renderer) render(ctx context.Context, page Page, decision Decision) (Result, error) {
 	source := []byte(page.Body)
 
 	doc := r.md.Parser().Parse(text.NewReader(source))

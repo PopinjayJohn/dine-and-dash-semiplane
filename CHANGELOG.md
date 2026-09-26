@@ -140,10 +140,14 @@ House rules:
   fence that swallows the page, a quote that never closes, a nested callout, an
   unterminated `[!SECRET` of its own.
 - A render cache keyed by `(content hash, renderer version, decision, path)`.
-  The decision is in there because without it a render made for a DM is served
-  to a player, and that mistake looks like a cache rather than like a security
-  bug. The path is in there because two pages from the same template are the
-  same bytes, and relative link resolution is the next thing to need it.
+  Each field names what it costs to drop it: no hash serves the previous
+  version of a saved page, no version keeps serving old HTML after a renderer
+  upgrade, and **no decision serves a render made for a DM to a player** — a
+  mistake that looks like a cache rather than like a security bug. The path is in
+  there because two pages from the same template are the same bytes, and
+  relative link resolution is the next thing to need it. Eviction is
+  least-recently-stored rather than least-recently-used, and the code and a
+  test both say which one it is rather than calling it LRU.
 - A sanitiser on the way out, for **every author, the DM included**. A
   sanitiser applied only to player-authored markdown leaves the highest-value
   target in the application on the weakest path: a DM pastes a snippet from a
