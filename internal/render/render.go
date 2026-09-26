@@ -92,6 +92,7 @@ func New() *Renderer {
 			extension.GFM,
 			extension.Footnote,
 			NewWikiLinks(),
+			NewCallouts(),
 		),
 		goldmark.WithParserOptions(
 			// The id a heading gets is what the table of contents links to and
@@ -129,6 +130,12 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		return Result{}, fmt.Errorf("resolving the links in %s: %w", page.Path, err)
 	}
 
+	// The secrets go before the table of contents is built, because a heading
+	// inside a stripped secret must not end up in a table of contents a player
+	// can read: the *text* of a secret heading is secret, whatever the text of
+	// the callout's own body is.
+	stripped := (&secretStripper{decision: decision}).strip(doc)
+
 	toc := buildTOC(doc, source)
 
 	var rendered bytes.Buffer
@@ -136,5 +143,14 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		return Result{}, fmt.Errorf("rendering %s: %w", page.Path, err)
 	}
 
-	return Result{HTML: rendered.String(), TOC: toc}, nil
+	result := Result{HTML: rendered.String(), TOC: toc}
+	if stripped > 0 {
+		// The count travels with the result so a caller can log it and a test
+		// can assert that a page with a secret in it was treated as one. The
+		// number is not in the HTML: how many secrets a page has is not
+		// something a player may know.
+		result.stripped = stripped
+	}
+
+	return result, nil
 }

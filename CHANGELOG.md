@@ -93,6 +93,15 @@ House rules:
   path, so a vault stays portable when it is zipped or put in git. A page may
   point into the attachments directory — that is the case the whole thing is for —
   but not into `_history` or `.obsidian`, whatever case it spells them in.
+- **The secret stripper**, which is the milestone, first among the renderer's
+  features because everything else here is in service of it. A `[!SECRET]`
+  callout's body is removed from the tree and the callout becomes a visible,
+  obviously-empty placeholder, so a player can see that a secret is there and
+  cannot see what it says. The bytes of a secret are never rendered and then
+  removed, and the stripper has its own walk: goldmark's advances with
+  `child.NextSibling()` after the visitor returns, and a child just spliced out
+  of its parent has no next sibling left to offer, so a stripper built on it
+  removes the first secret on a page and reports that it removed six.
 - `internal/render`, the goldmark pipeline and the table of contents. GFM and
   footnotes are on, because a DM's notes contain tables, task lists and footnotes
   and a page whose footnotes become literal text is a page the DM has to fix by
@@ -125,16 +134,6 @@ House rules:
   becoming a plain blockquote is a worse answer than a callout nothing has
   styled yet — and an ordinary quote with `[!warning]` written inside it stays an
   ordinary quote.
-- **The secret stripper**, which is the milestone. A `[!SECRET]` callout's body
-  is removed from the tree and the callout becomes a visible, obviously-empty
-  placeholder, so a player can see that a secret is there and cannot see what
-  it says. The bytes of a secret are never rendered and then removed.
-  Three things fail closed: a blockquote whose first line has the *shape* of a
-  secret callout and not the syntax (`> [!SECRET` with the bracket unclosed) is
-  removed, a secret nested in a list or a quote is removed, and the zero
-  `Decision` permits none. A secret the DM marked `{.revealed}` is shown, because
-  the DM chose to show it, and a malformed secret is *not* hidden from a DM,
-  because the DM wrote it and is the one who can fix it.
 - A fuzz target for the stripper itself: every input is a well-formed secret
   callout with a canary in it followed by whatever the fuzzer invents, and the
   canary has to be absent from the output. The trailing junk is the point — a
