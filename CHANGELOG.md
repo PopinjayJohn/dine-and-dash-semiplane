@@ -180,12 +180,14 @@ House rules:
 
 ### Documentation
 
-- ADR 0012 records why migrations run through a runner in this repository
-  rather than through `golang-migrate`: its only SQLite driver is a cgo
-  binding, which ADR 0004 rules out, and a `CGO_ENABLED=0` build fails at run
-  time rather than at compile time when that driver goes missing. The
-  migration files keep golang-migrate's naming, so the swap is a change to one
-  file. `docs/spec.md` §3 and its decision table are corrected to match.
+- ADR 0012 is corrected. It originally claimed golang-migrate had no pure-Go
+  SQLite driver and that its only one was a cgo binding, which ruled the
+  library out under ADR 0004. It has one: `database/sqlite` imports
+  `modernc.org/sqlite` and takes the same `*sql.DB` this store already builds.
+  The decision to keep an in-repo runner stands, but on the corrected grounds —
+  it is already written and tested, it keeps a row per applied version, and it
+  is a close call that should be revisited if the runner has to grow — not on a
+  blocked door. `docs/spec.md` §3 and its decision table are corrected with it.
 - ADR 0008 records the Datastar pins from that spike: client v1.0.4, server
   `datastar-go` v1.2.2, the four-method mapping onto the SDK, the actual wire
   format, and the two defects the spike turned up. It closes the "known risk"
