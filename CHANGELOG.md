@@ -71,6 +71,14 @@ House rules:
   previous one wrote something, because a page indexed late in a pass is the
   target of a page the pass had already passed. A vault that is already in step
   takes one pass, and `Report.Passes` says which.
+- A per-campaign lock, `internal/lockfile`, so a `wiki sync` in a terminal cannot
+  interleave with the server's watcher — or with another `wiki sync`, which is
+  what happens when a DM presses the up arrow. It is a file and not a row in the
+  database, so holding it is holding a handle and a process that dies releases
+  it. A lock that has not been refreshed inside a stale window belongs to
+  something that is no longer running and is taken over, and a lock file this
+  application did not write is left alone until the window passes: a file it
+  cannot reason about is not one it should decide is rubbish.
 - Drift detection and `ReindexFull`, the repair of last resort. **Drift is a
   state, not an error**: the projection has stopped describing what it projects,
   and ADR 0001's answer is to rebuild it from the files.
