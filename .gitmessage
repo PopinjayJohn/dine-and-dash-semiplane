@@ -1,0 +1,21 @@
+# One line, imperative, no trailing period. The subject is read in a git log
+# and in a release note, so it has to say what changed for a person.
+#
+#   feat(access): strip [!SECRET] blocks during render
+#   fix(search): rank exact title matches before body matches
+#   chore: initialise Go module and tooling
+#
+# Types:  feat, fix, docs, test, refactor, build, ci, chore, perf
+# Scopes: vault, index, search, access, auth, render, plugin, http, sse, cli,
+#         dnd5e. Leave the scope off only when no scope fits.
+#
+# The body answers why, not what. A diff already says what changed. If the
+# change is a bug fix, the body is the sentence a player would recognise.
+#
+# Every commit that touches internal/, cmd/, plugins/, migrations/ or web/ must
+# change CHANGELOG.md in the same commit. That is the house rule; it is not
+# negotiable per commit and the CI check will fail the push.
+#
+# Breaking changes: add "!" before the colon and a "BREAKING CHANGE:" paragraph
+# describing the migration.
+
