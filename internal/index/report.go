@@ -43,18 +43,28 @@ type Report struct {
 	// Refused is the pages that will not be indexed at all. See Refusal, which
 	// is the other half of this pair and the opposite of Skip.
 	Refused []Refusal
+
+	// Ownership is the pages whose owner does not hold up: a `character:` key
+	// naming a page that is not there, or a page under one character whose key
+	// says another. These pages *are* indexed -- the ownership question does not
+	// stop a page being readable -- and the problems are here because the owner
+	// they will be given in M7 is wrong.
+	Ownership []OwnershipProblem
 }
 
 // Err returns the skip and refusal reasons as one error, for a caller that
 // wants to print them or fail on them. It is nil when there were none, so a
 // successful sync is a nil error even when it indexed nothing.
 func (r Report) Err() error {
-	reasons := make([]string, 0, len(r.Skipped)+len(r.Refused))
+	reasons := make([]string, 0, len(r.Skipped)+len(r.Refused)+len(r.Ownership))
 	for _, skip := range r.Skipped {
 		reasons = append(reasons, fmt.Sprintf("%s: %s", skip.Path, skip.Reason))
 	}
 	for _, refusal := range r.Refused {
 		reasons = append(reasons, fmt.Sprintf("%s: %s", refusal.Path, refusal.Reason))
+	}
+	for _, problem := range r.Ownership {
+		reasons = append(reasons, fmt.Sprintf("%s: %s", problem.Path, problem.Reason))
 	}
 
 	if len(reasons) == 0 {
@@ -82,6 +92,12 @@ func (r Report) Changed() int {
 // never be given.
 func (r Report) InStep() bool {
 	return r.Changed() == 0 && len(r.Skipped) == 0 && len(r.Refused) == 0
+}
+
+// Problems is how many pages the sync could not do anything sensible with, which
+// is the number a DM wants printed and the number a script wants non-zero on.
+func (r Report) Problems() int {
+	return len(r.Skipped) + len(r.Refused) + len(r.Ownership)
 }
 
 // seen and written are the report's private bookkeeping, because Sync runs

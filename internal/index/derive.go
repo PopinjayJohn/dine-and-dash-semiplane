@@ -62,6 +62,13 @@ type plan struct {
 	links []domain.PageLink
 	doc   *vault.Document
 
+	// owner is who this page belongs to, and ownerProblem is why that does not
+	// hold up. The column for the owner arrives in M7; what arrives here is the
+	// rule and the validation, which are the parts that are easy to get wrong.
+	owner        Owner
+	owned        bool
+	ownerProblem *OwnershipProblem
+
 	settled bool
 	skip    *Skip
 	refusal *Refusal
@@ -133,6 +140,11 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 	}
 	p.doc = doc
 	p.page.ID = y.pageID(ctx, pagePath)
+
+	if owner, owned := OwnerOf(pagePath, doc); owned {
+		p.owner, p.owned = owner, true
+		p.ownerProblem = y.checkOwner(ctx, pagePath, doc, owner)
+	}
 	p.links = y.linksFor(ctx, p.page.ID, doc)
 
 	settled, err := y.isSettled(ctx, p)

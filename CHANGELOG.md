@@ -83,6 +83,16 @@ House rules:
   milestone that changes how a body is derived leaves every row stale with hashes
   that match their files perfectly, so no incremental sync would ever repair
   them and every campaign would need a manual full rebuild.
+- Ownership resolution, from docs/spec.md §8: a page is character-owned when
+  its path begins with `characters/<slug>/` **or** its frontmatter declares
+  `character: <slug>`, and the path wins where they disagree. The column
+  (`pages.owner_character_page_id`) arrives with access control in M7; the rule
+  and its validation arrive here, because the rule decides which subtree a player
+  may write in and is easy to get subtly wrong and hard to notice. A
+  `character:` key that normalises to a path no page has, and a page under one
+  character whose key says another, are lines in the sync report — and the page is
+  still indexed, because a page the DM cannot open is worse than a page with a
+  wrong owner recorded.
 - `Report.InStep()`: the boolean `wiki sync --check` exits on. It counts a skip
   and a **refusal** as out of step, because a page whose `visibility` cannot be
   read changes no rows when it is refused — and a check that counted only rows

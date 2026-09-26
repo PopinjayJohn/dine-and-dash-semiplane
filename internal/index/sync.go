@@ -87,7 +87,7 @@ func (y *Syncer) SyncPath(ctx context.Context, pagePath string) (Report, error) 
 	report := Report{}
 	sets := newReportSets()
 
-	one, err := y.syncPath(ctx, pagePath)
+	one, err := y.syncPath(ctx, &report, pagePath)
 	if err != nil {
 		report.finalise(sets)
 		return report, err
@@ -113,7 +113,7 @@ func (y *Syncer) syncPass(ctx context.Context, report *Report, sets *reportSets)
 	for _, pagePath := range paths {
 		present[pagePath] = true
 
-		one, syncErr := y.syncPath(ctx, pagePath)
+		one, syncErr := y.syncPath(ctx, report, pagePath)
 		if syncErr != nil {
 			return changed, syncErr
 		}
@@ -163,10 +163,14 @@ type outcome struct {
 // syncPath plans one page and, if the index is not already what the file says,
 // writes it. The planning is in derive.go and is the only place a page's
 // contents are read.
-func (y *Syncer) syncPath(ctx context.Context, pagePath string) (outcome, error) {
+func (y *Syncer) syncPath(ctx context.Context, report *Report, pagePath string) (outcome, error) {
 	p, err := y.planFor(ctx, pagePath)
 	if err != nil {
 		return outcome{}, err
+	}
+
+	if p.ownerProblem != nil {
+		report.Ownership = append(report.Ownership, *p.ownerProblem)
 	}
 
 	switch {

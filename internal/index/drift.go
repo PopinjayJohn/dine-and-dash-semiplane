@@ -64,6 +64,10 @@ func (y *Syncer) checkPass(ctx context.Context, report *Report, sets *reportSets
 			return changed, planErr
 		}
 
+		if p.ownerProblem != nil {
+			report.Ownership = append(report.Ownership, *p.ownerProblem)
+		}
+
 		// The same shape of answer Sync would give, from the same plan.
 		one := outcome{path: pagePath, unchanged: true}
 		switch {
