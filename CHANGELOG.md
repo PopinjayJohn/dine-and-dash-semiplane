@@ -71,6 +71,18 @@ House rules:
   previous one wrote something, because a page indexed late in a pass is the
   target of a page the pass had already passed. A vault that is already in step
   takes one pass, and `Report.Passes` says which.
+- `wiki sync` and `wiki reindex --full`, and the Makefile's `reindex` target now
+  does something. `wiki sync` reads a campaign's vault into its index and takes
+  that campaign's lock first; `wiki reindex --full` throws the index away and
+  rebuilds it, and the flag is required, because it is work worth typing on
+  purpose rather than something that happens to you. A campaign exists when its
+  directory does — a vault on disk with no row in the index is drift the sync
+  repairs, and importing somebody else's vault is M12's job and has a
+  confirmation step of its own. An empty directory is skipped silently, because
+  somebody's `Downloads` folder is not a campaign.
+- `wiki sync --check` answers a question and answers it in the **exit code** as
+  well as on stdout, because a script asking whether the index is in step cannot
+  read stdout. It changes nothing, and a refused page counts as *not* in step.
 - A watcher, so a page the DM just saved in Obsidian is the page they see when
   they reload. It watches every directory including the reserved ones (a
   directory renamed *into* the vault is one event, and a filter would throw it

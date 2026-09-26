@@ -81,6 +81,14 @@ var commands = map[string]command{
 		summary: "apply database migrations to a data directory",
 		run:     runMigrate,
 	},
+	"sync": {
+		summary: "read a campaign's vault into its index",
+		run:     runSync,
+	},
+	"reindex": {
+		summary: "rebuild the index from the files, discarding what is there",
+		run:     runReindex,
+	},
 }
 
 func init() {
