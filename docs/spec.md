@@ -41,6 +41,7 @@ out-of-process plugins.
 | 11 | Local / self-hosted deployment: one static binary plus a SQLite file and a vault directory | 0011 |
 | 12 | Datastar v1 GA, vendored, no CDN | 0006, 0008 |
 | 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
+| 14 | Migrations run through a runner in this repository, not golang-migrate | 0012 |
 
 ## 3. Technology
 
@@ -52,7 +53,7 @@ out-of-process plugins.
 | Templates | `github.com/a-h/templ` | Compile-time checked components; reusable as SSE fragments |
 | Markdown | `github.com/yuin/goldmark` + extensions | AST extension points for wiki links and callouts |
 | Database | SQLite via `modernc.org/sqlite` | Pure Go, so tests run anywhere without a C toolchain |
-| Migrations | `github.com/golang-migrate/migrate/v4` | Versioned SQL, embedded with `go:embed` |
+| Migrations | `migrations/`, a runner in-repo | Versioned SQL embedded with `go:embed`; golang-migrate's only SQLite driver is cgo, which ADR 0004 rules out — [ADR 0012](adr/0012-migration-runner-in-repo.md) |
 | Sanitisation | `github.com/microcosm-cc/bluemonday` | HTML allow-list for rendered markdown |
 | Misc | `github.com/google/uuid`, `golang.org/x/crypto` | IDs, constant-time comparison |
 
