@@ -43,6 +43,23 @@ House rules:
   slugs are normalised rather than rejected, so `The Blackwater` becomes
   `the-blackwater`, and a slug can never come out as `..`, absolute or
   containing a path separator — pinned by a property test and a fuzz target.
+- `migrations/0001_init`, the base schema: campaigns, pages, revisions, the
+  link graph, principals, sessions and the audit log, with the indexes that
+  make backlinks and "active now" cheap. The SQL is embedded in the binary
+  rather than shipped beside it, which is what "one binary and a data
+  directory" means in practice.
+- A migration runner that takes a database to a known version or says why it
+  cannot. It records one row per applied version, refuses a migration set with
+  a hole in it or a version with no way back, stops against a database written
+  by a newer build, and marks a version dirty *before* running its SQL — so a
+  migration that fails half way stops the next run instead of being retried on
+  top of a schema nobody described. `Force` is the documented way out of that
+  state, and it is deliberately blunt.
+- Timestamps are written as RFC 3339 with a fixed nine-digit fraction, because
+  a timestamp column is TEXT: with a variable-width fraction, `…T19:03:00.4Z`
+  sorts after `…T19:03:00.45Z` and every `WHERE created_at < ?` in the
+  codebase would be subtly wrong. There is a test that asserts the two orders
+  agree.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
