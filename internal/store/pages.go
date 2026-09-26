@@ -17,6 +17,11 @@ const pageColumns = `id, campaign_id, path, title, type, frontmatter, body,
 // UpsertPage stores a page, inserting it or replacing the row already at that
 // path, and returns the row as stored.
 //
+// It also records the page's `name` target, so a page is reachable by the name
+// of its own file from the moment the row exists. That is a second table touched
+// by a page write, and it is deliberate: the alternative is every writer having
+// to remember, and a forgotten line is a link that silently stops resolving.
+//
 // The conflict target is (campaign_id, path) because the path is the page's
 // identity. An id the caller supplies for a path that already exists is
 // therefore ignored: revisions and links point at the id, and moving it would
@@ -54,13 +59,36 @@ func (s *Store) UpsertPage(ctx context.Context, p domain.Page) (domain.Page, err
 			updated_at       = excluded.updated_at,
 			is_deleted       = excluded.is_deleted`
 
-	_, err := s.write.ExecContext(ctx, query,
-		p.ID, p.CampaignID, p.Path, p.Title, p.Type.String(), p.Frontmatter, p.Body,
-		p.ContentHash, p.RendererVersion,
-		p.CreatedAt.UTC().Format(timeLayout), p.UpdatedAt.UTC().Format(timeLayout),
-		boolArg(p.IsDeleted))
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, execErr := tx.ExecContext(ctx, query,
+			p.ID, p.CampaignID, p.Path, p.Title, p.Type.String(), p.Frontmatter, p.Body,
+			p.ContentHash, p.RendererVersion,
+			p.CreatedAt.UTC().Format(timeLayout), p.UpdatedAt.UTC().Format(timeLayout),
+			boolArg(p.IsDeleted)); execErr != nil {
+			return writeError(fmt.Sprintf("storing page %q", p.Path), execErr)
+		}
+
+		// The page's own name target goes with the row, in the same transaction,
+		// because a page's name is a property of its path: a page that exists and
+		// answers to no name is a page a `[[name]]` link cannot reach, and the
+		// caller syncing it knows the aliases but the store owns the path.
+		//
+		// The id it is written for is the one the row *ends up* with, which is
+		// not the one the caller supplied when the path already existed: an
+		// upsert on (campaign_id, path) keeps the original id, because that id
+		// is what the revisions and the inbound links point at. Reading it back
+		// inside the transaction is what stops a second write of the same path
+		// from recording a name target against an id no page has.
+		var storedID string
+		const idQuery = `SELECT id FROM pages WHERE campaign_id = ? AND path = ?`
+		if err := tx.QueryRowContext(ctx, idQuery, p.CampaignID, p.Path).Scan(&storedID); err != nil {
+			return fmt.Errorf("reading back the id of page %q: %w", p.Path, err)
+		}
+
+		return s.replaceNameTarget(ctx, tx, p.CampaignID, storedID, nameStem(p.Path))
+	})
 	if err != nil {
-		return domain.Page{}, writeError(fmt.Sprintf("storing page %q", p.Path), err)
+		return domain.Page{}, err
 	}
 
 	// Read the row back rather than returning the value that went in. On a

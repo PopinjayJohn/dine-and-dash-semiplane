@@ -29,6 +29,10 @@ func Store(t *testing.T, factory Factory) {
 	t.Run("revision numbers start at one, per page", func(t *testing.T) { revisionNumbers(t, factory) })
 	t.Run("replacing links is all or nothing", func(t *testing.T) { linkReplacement(t, factory) })
 	t.Run("the link graph holds links to pages that do not exist", func(t *testing.T) { unresolvedLinks(t, factory) })
+	t.Run("a page answers to its aliases and to its own name", func(t *testing.T) { lookupTargets(t, factory) })
+	t.Run("a page whose aliases were replaced answers only to the new ones", func(t *testing.T) { replacingAliases(t, factory) })
+	t.Run("an archived page answers to nothing", func(t *testing.T) { archivedAnswersToNothing(t, factory) })
+	t.Run("a target in one campaign is not found in another", func(t *testing.T) { targetsArePerCampaign(t, factory) })
 }
 
 // roundTrip is the property every column has to satisfy: what goes in comes
@@ -593,6 +597,29 @@ func createCampaign(t *testing.T, s API, mutate ...func(*domain.Campaign)) domai
 	return stored
 }
 
+// createCampaignWithSlug creates a campaign whose fixture is named by its slug,
+// for the cases that need two of them and the second one is the point.
+func createCampaignWithSlug(t *testing.T, s API, slug string) domain.Campaign {
+	t.Helper()
+
+	return createCampaign(t, s, func(c *domain.Campaign) {
+		parsed, err := domain.NewSlug(slug)
+		if err != nil {
+			t.Fatalf("the fixture has an invalid slug: %v", err)
+		}
+		c.Slug = parsed
+		c.VaultDir = "vault/" + parsed.String()
+	})
+}
+
+// createFixturePage creates the fixture page, which is the one every case here
+// wants.
+func createFixturePage(t *testing.T, s API, campaignID string) domain.Page {
+	t.Helper()
+
+	return createPage(t, s, campaignID)
+}
+
 func createPage(t *testing.T, s API, campaignID string, mutate ...func(*domain.Page)) domain.Page {
 	t.Helper()
 
@@ -606,4 +633,206 @@ func createPage(t *testing.T, s API, campaignID string, mutate ...func(*domain.P
 		t.Fatalf("UpsertPage(%q): %v", p.Path, err)
 	}
 	return stored
+}
+
+// lookupTargets is the contract for the two fallbacks a wiki link tries after
+// the exact path, and it exists here rather than only in the store's own tests
+// because a link that resolves in Obsidian and not in the wiki is a broken link
+// in a wiki that is otherwise Obsidian-openable.
+//
+// The four cases are the ones the rules turn on: an alias as written, a name in
+// another case, a name that is a whole path, and a name nobody has.
+func lookupTargets(t *testing.T, factory Factory) {
+	t.Helper()
+
+	ctx := context.Background()
+	s := factory(t)
+	campaign := createCampaignWithSlug(t, s, "blackwater")
+
+	town := createFixturePage(t, s, campaign.ID)
+	if err := s.ReplacePageAliases(ctx, town.ID, []string{"the toll town", "Flussport"}); err != nil {
+		t.Fatalf("ReplacePageAliases: %v", err)
+	}
+
+	if _, err := s.UpsertPage(ctx, domain.Page{
+		CampaignID:  campaign.ID,
+		Path:        "npcs/garros-ironbar",
+		Title:       "Garros Ironbar",
+		Type:        domain.PageTypeNPC,
+		ContentHash: "hash-of-garros",
+	}); err != nil {
+		t.Fatalf("UpsertPage: %v", err)
+	}
+
+	tests := map[string]struct {
+		alias string
+		name  string
+		want  string
+		found bool
+	}{
+		"an alias as written": {
+			alias: "the toll town", want: "locations/rivergate", found: true,
+		},
+		"an alias that is not a path": {
+			alias: "Flussport", want: "locations/rivergate", found: true,
+		},
+		"a file name as written": {
+			name: "rivergate", want: "locations/rivergate", found: true,
+		},
+		"a file name in another case": {
+			name: "RIVERGATE", want: "locations/rivergate", found: true,
+		},
+		"a whole path finds the same page as its name": {
+			name: "locations/rivergate", want: "locations/rivergate", found: true,
+		},
+		"a name with the extension finds the same page": {
+			name: "rivergate.md", want: "locations/rivergate", found: true,
+		},
+		"a partial name is not a name": {
+			name: "rive", want: "", found: false,
+		},
+		"a name nobody has": {
+			name: "thornford", want: "", found: false,
+		},
+		"an alias nobody has": {
+			alias: "the drowned hound", want: "", found: false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if tt.alias != "" {
+				got, found, err := s.FindPageByAlias(ctx, campaign.ID, tt.alias)
+				if err != nil {
+					t.Fatalf("FindPageByAlias(%q): %v", tt.alias, err)
+				}
+				if found != tt.found {
+					t.Fatalf("FindPageByAlias(%q) found = %t, want %t", tt.alias, found, tt.found)
+				}
+				if found && got.Path != tt.want {
+					t.Errorf("FindPageByAlias(%q) = %q, want %q", tt.alias, got.Path, tt.want)
+				}
+				return
+			}
+
+			got, found, err := s.FindPageByName(ctx, campaign.ID, tt.name)
+			if err != nil {
+				t.Fatalf("FindPageByName(%q): %v", tt.name, err)
+			}
+			if found != tt.found {
+				t.Fatalf("FindPageByName(%q) found = %t, want %t", tt.name, found, tt.found)
+			}
+			if found && got.Path != tt.want {
+				t.Errorf("FindPageByName(%q) = %q, want %q", tt.name, got.Path, tt.want)
+			}
+		})
+	}
+
+	// A page answers to its own name from the moment the row exists, without a
+	// caller having to say so.
+	targets, err := s.PageTargets(ctx, town.ID)
+	if err != nil {
+		t.Fatalf("PageTargets: %v", err)
+	}
+	if got := targets["name"]; len(got) != 1 || got[0] != "rivergate" {
+		t.Errorf("the page's own name targets are %v, want [rivergate]", got)
+	}
+}
+
+// replacingAliases: an alias the DM removed from their frontmatter must stop
+// resolving, or a link outlives the thing it pointed at.
+func replacingAliases(t *testing.T, factory Factory) {
+	t.Helper()
+
+	ctx := context.Background()
+	s := factory(t)
+	campaign := createCampaignWithSlug(t, s, "blackwater")
+	town := createFixturePage(t, s, campaign.ID)
+
+	if err := s.ReplacePageAliases(ctx, town.ID, []string{"the toll town", "Flussport"}); err != nil {
+		t.Fatalf("ReplacePageAliases: %v", err)
+	}
+	if err := s.ReplacePageAliases(ctx, town.ID, []string{"the bridge town"}); err != nil {
+		t.Fatalf("ReplacePageAliases: %v", err)
+	}
+
+	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "Flussport"); err != nil || found {
+		t.Errorf("an alias the page no longer declares still resolves (found = %t, %v)", found, err)
+	}
+
+	got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the bridge town")
+	if err != nil || !found || got.Path != "locations/rivergate" {
+		t.Errorf("the new alias resolves to %+v (found = %t, %v), want the page", got, found, err)
+	}
+
+	// Replacing the aliases left the name target alone, because a page's name is
+	// a property of its path.
+	targets, err := s.PageTargets(ctx, town.ID)
+	if err != nil {
+		t.Fatalf("PageTargets: %v", err)
+	}
+	if got := targets["name"]; len(got) != 1 || got[0] != "rivergate" {
+		t.Errorf("replacing the aliases took the name target with them: %v", got)
+	}
+}
+
+// archivedAnswersToNothing: an archived page is gone from every read, and a link
+// that resolved to it would be a link to a page nobody can open.
+func archivedAnswersToNothing(t *testing.T, factory Factory) {
+	t.Helper()
+
+	ctx := context.Background()
+	s := factory(t)
+	campaign := createCampaignWithSlug(t, s, "blackwater")
+	town := createFixturePage(t, s, campaign.ID)
+
+	if err := s.ReplacePageAliases(ctx, town.ID, []string{"the toll town"}); err != nil {
+		t.Fatalf("ReplacePageAliases: %v", err)
+	}
+	if err := s.DeletePage(ctx, town.ID); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+
+	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate"); err != nil || found {
+		t.Errorf("an archived page answers to its own name (found = %t, %v)", found, err)
+	}
+	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town"); err != nil || found {
+		t.Errorf("an archived page answers to its alias (found = %t, %v)", found, err)
+	}
+}
+
+// targetsArePerCampaign: a wiki link is resolved inside a campaign, because a DM
+// has two of them open in two tabs and a page called `rivergate` in each.
+func targetsArePerCampaign(t *testing.T, factory Factory) {
+	t.Helper()
+
+	ctx := context.Background()
+	s := factory(t)
+
+	first := createCampaignWithSlug(t, s, "blackwater")
+	second := createCampaignWithSlug(t, s, "rivergate-county")
+
+	for _, campaign := range []domain.Campaign{first, second} {
+		page := createFixturePage(t, s, campaign.ID)
+		if err := s.ReplacePageAliases(ctx, page.ID, []string{"the toll town"}); err != nil {
+			t.Fatalf("ReplacePageAliases: %v", err)
+		}
+	}
+
+	for _, campaign := range []domain.Campaign{first, second} {
+		got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town")
+		if err != nil || !found {
+			t.Fatalf("FindPageByAlias in campaign %s: found = %t, %v", campaign.Slug, found, err)
+		}
+		if got.CampaignID != campaign.ID {
+			t.Errorf("campaign %s's alias resolved to a page of campaign %s", campaign.Slug, got.CampaignID)
+		}
+	}
+
+	// And a campaign with no such page says so, rather than reaching into
+	// another one.
+	empty := createCampaignWithSlug(t, s, "thornford-county")
+	if _, found, err := s.FindPageByName(ctx, empty.ID, "rivergate"); err != nil || found {
+		t.Errorf("a page from another campaign was found (found = %t, %v)", found, err)
+	}
 }

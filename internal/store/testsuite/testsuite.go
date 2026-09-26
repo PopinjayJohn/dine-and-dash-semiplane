@@ -54,6 +54,14 @@ type API interface {
 	LinksFrom(ctx context.Context, pageID string) ([]domain.PageLink, error)
 	Backlinks(ctx context.Context, pageID string) ([]domain.PageLink, error)
 	LinksToPath(ctx context.Context, path string) ([]domain.PageLink, error)
+
+	// The names a page answers to, which is what a wiki link resolves by after
+	// the exact path. Added in M4, when the renderer needed a resolver and the
+	// projection had to answer one.
+	ReplacePageAliases(ctx context.Context, pageID string, aliases []string) error
+	PageTargets(ctx context.Context, pageID string) (map[string][]string, error)
+	FindPageByAlias(ctx context.Context, campaignID, alias string) (domain.Page, bool, error)
+	FindPageByName(ctx context.Context, campaignID, name string) (domain.Page, bool, error)
 }
 
 // The two errors a caller must be able to recognise without reading a message.

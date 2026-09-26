@@ -24,6 +24,26 @@ House rules:
 
 ### Added
 
+- A `page_targets` table and three store methods, so a wiki link can resolve the
+  way it does in Obsidian: the exact path, then an alias, then a case-insensitive
+  file name. The aliases and the file name live in the index rather than being
+  read out of `frontmatter`, because SQL cannot read YAML and a `LIKE` against
+  the block would make `[[river]]` find `[[the toll on the river]]`. The table
+  is entirely derived from the files and a full reindex rebuilds it.
+- Two rules the lookups are explicit about, because both are ways a link
+  outlives what it pointed at. An **alias is matched exactly**: case-insensitive
+  alias matching would make `Rear; the Toll` and `rear; the toll` two pages with
+  one reachable. A **file name is matched case-insensitively**, folded in Go
+  rather than by SQLite's `LOWER()`, which only folds ASCII and would index
+  `Ölbach` one way and search for it another.
+- A page answers to the name of its own file from the moment its row exists:
+  `UpsertPage` writes that target in the same transaction as the row. The store
+  owns it because a page's name is a property of its path, and the alternative
+  is every writer having to remember — a forgotten line is a link that quietly
+  stops resolving.
+- The lookups are part of the store contract suite, not only of the store's own
+  tests, so a second implementation is held to the same rules.
+
 - `internal/vault`, which reads and writes the markdown files a DM keeps in
   Obsidian. **A file the application did not change comes back out byte for
   byte.** Not semantically equal — byte for byte. A document keeps the bytes it
