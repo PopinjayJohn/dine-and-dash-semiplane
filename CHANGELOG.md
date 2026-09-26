@@ -32,6 +32,17 @@ House rules:
   `clock.Fixed` steps forward by a fixed interval on every call, so
   consecutive writes get distinct and ordered timestamps rather than one
   repeated value.
+- `internal/domain`, the values the application is about: campaigns, pages,
+  revisions, links, principals, sessions and audit entries, with the three
+  `Slug`, `Role`, `Visibility` and `LinkKind` vocabularies they use. Every
+  value can check itself, so a bad row is refused at the boundary with an
+  error naming the field instead of surfacing as `UNIQUE constraint failed`.
+  Two consequences worth knowing: a page's path is its identity, so retitling
+  never moves a file; and a page is required to carry a content hash, because
+  a row that cannot be compared to a file is reindexed on every run. Campaign
+  slugs are normalised rather than rejected, so `The Blackwater` becomes
+  `the-blackwater`, and a slug can never come out as `..`, absolute or
+  containing a path separator — pinned by a property test and a fuzz target.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
