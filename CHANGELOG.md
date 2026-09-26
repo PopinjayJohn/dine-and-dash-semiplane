@@ -46,6 +46,17 @@ House rules:
 - Pressing Ctrl-C no longer risks leaving the signal handler installed:
   `os.Exit` skipped the deferred cleanup, so `stop` is now called explicitly.
 
+### Development
+
+- `Makefile` with `check`, `test`, `cover`, `fuzz`, `lint`, `vet`, `fmt`,
+  `build`, `run`, `reindex`, `spike` and `install-tools`. `make help` lists
+  them.
+- Pinned tool versions live in the `Makefile` and nowhere else, and CI reads
+  them from there with `make print-<tool>-version`, so a version bump is one
+  edit rather than three.
+- `make cover` fails below the 80% coverage floor. The floor is one
+  `COVERAGE_MIN` assignment, not a number typed into a workflow.
+
 ## [0.1.0] - TBD
 
 _First release. Will cover milestones M0 through M12; see `docs/spec.md`
