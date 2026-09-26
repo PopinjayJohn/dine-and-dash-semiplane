@@ -750,6 +750,30 @@ window between checking a path and opening it. The second commit had
 already done the string-level work that the handle makes unnecessary, and
 it is the one whose fuzz targets state the invariant the rest stands on.
 
+### M4 commit sequence
+
+```
+feat(store): hold the names a page answers to, and look them up
+feat(index): put a resolver behind the interface the renderer asked for
+feat(index): read a vault into the index, and say what it did
+feat(index): notice drift, and rebuild when asked
+feat(index): work out who owns a page, and check the answer
+feat(lock): one campaign, one writer
+feat(index): watch the vault, so a saved page is a seen page
+feat(cli): wiki sync, and wiki reindex --full
+chore: record where the project actually is
+```
+
+The second commit is the one that makes the third possible: the renderer
+finished M3 with a `LinkResolver` and nothing behind it, and the link graph
+has to be derived by the same walk as the rendered links or a link can resolve
+in the page and not in the graph. The third is the milestone, and its own
+tests found the design error worth finding — settling a page on its content
+hash, which a row that rots in place and a change to how fields are derived
+both defeat. The fifth ships the ownership *rule* without its column, because
+the rule decides which subtree a player may write in and the column arrives
+with access control in M7.
+
 ### M3 commit sequence
 
 ```

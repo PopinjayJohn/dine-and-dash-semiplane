@@ -36,8 +36,29 @@ re-litigate one without a new ADR that supersedes it.
 - **M3 — Renderer is on `m3-renderer`.** `internal/render` is the goldmark
   pipeline with the wiki-link and callout extensions, the table of contents, the
   secret stripper, the sanitiser and the render cache. It has **no
-  `internal/http` and no plugins**: nothing serves what it renders yet, and the
-  `LinkResolver` it asks about links is an interface M4 fills in.
+  `internal/http` and no plugins**: nothing serves what it renders yet.
+- **M4 — Index sync is on `m4-index-sync`.** `internal/index` reads a vault
+  into the store, notices drift, rebuilds on request and watches for changes;
+  `internal/lockfile` keeps two writers off one campaign; `wiki sync` and
+  `wiki reindex --full` are the commands, so the Makefile's `reindex` target does
+  something. It has **no `internal/http` and no plugins**: nothing serves the
+  wiki yet, and the watcher is what M8's server will run.
+- **The sync engine reads files and writes rows, and never writes a file.**
+  That is the property ADR 0001 is about, it is the first thing a change here
+  can break, and a test hashes every file's contents *and* modification time
+  before and after a sync to keep it that way. The editor (M9) and the importer
+  (M12) are the only things that will write markdown.
+- **A page is "settled" when re-deriving it from its file would produce the row
+  that is already there** — not when its content hash matches. A hash says a file
+  has not changed, which is a different thing, and settling on the hash alone
+  meant a row could rot in place unnoticed and a change to how fields are derived
+  would leave every row stale with matching hashes. One function decides it, so
+  `Sync` and `Check` cannot disagree about what is out of step.
+- **Ownership is resolved but not stored.** A page is character-owned when its
+  path begins with `characters/<slug>/` or its frontmatter declares
+  `character: <slug>`, and the path wins where they disagree. The column arrives
+  with M7; the rule and its validation are here, because the rule decides which
+  subtree a player may write in and is easy to get subtly wrong.
 - **The renderer's `Decision` is not `access.Decision`, and its zero value
   permits no secrets.** That is the safe direction: a caller that has not
   decided anything gets a page with no secrets in it, which is a missing
@@ -53,24 +74,18 @@ re-litigate one without a new ADR that supersedes it.
   then the store is reachable only from tests and from code that already knows
   the answer. A commit that adds a page query to the store must not ship with
   that comment removed and nothing in its place.
-- **The vault and the store are separate halves, on purpose.** Nothing in M2
-  knows what a `domain.Page` is, and nothing in the store knows what a file
-  is. M4 joins them, and it is the first place a change can break the
-  zero-byte-diff promise: anything that reads a page and writes it back must
-  write back the document it read, not a re-serialisation of the values it
-  took out of it.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M4 — Index sync**. The sync engine that walks a vault and
-keeps the index in step with it, the fsnotify watcher, the per-campaign lock,
-`wiki sync` and `wiki reindex --full`. It is the first milestone that joins the
-two halves, so it is the first one where a change can break the
-zero-byte-diff promise, and its key tests are the dual-write consistency and
-drift-repair cases in the store contract.
+Next milestone: **M5 — Search**. Two FTS5 indexes — `pages` and
+`pages_secrets_fts`, which holds the text a player may see — merged with
+Reciprocal Rank Fusion, and **ACL in SQL** rather than in Go. Its key tests are
+relevance, an FTS-injection corpus, "the secret never appears in a result", and
+a benchmark. The M3 stripper keeps its zero value throughout: the index it
+feeds is built from `body_public`, which is empty today and is M7's to fill.
 
 ## Non-negotiable invariants
 
