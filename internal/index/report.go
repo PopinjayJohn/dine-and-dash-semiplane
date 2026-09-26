@@ -36,6 +36,10 @@ type Report struct {
 	// later, and the second pass finds it.
 	Passes int
 
+	// Rebuilt is how many rows a full reindex threw away before rebuilding them.
+	// It is zero for a sync, and the number a caller prints after one.
+	Rebuilt int
+
 	// Refused is the pages that will not be indexed at all. See Refusal, which
 	// is the other half of this pair and the opposite of Skip.
 	Refused []Refusal
@@ -61,9 +65,23 @@ func (r Report) Err() error {
 }
 
 // Changed is how many rows this sync touched, which is the number a caller
-// prints and a test asserts.
+// prints and a test asserts. It is not the whole answer: a file the sync
+// skipped or refused means the index is not in step either, however few rows
+// would change.
 func (r Report) Changed() int {
 	return len(r.Indexed) + len(r.Archived)
+}
+
+// InStep reports whether the index says exactly what the files say, and
+// everything in the vault could be indexed.
+//
+// It is the boolean `wiki sync --check` exits on, and it counts a skip and a
+// refusal as out of step. A page whose `visibility` the application cannot read
+// changes no rows when it is refused, so a check that counted only rows would say
+// "in step" about a page the DM cannot see -- which is the one answer that must
+// never be given.
+func (r Report) InStep() bool {
+	return r.Changed() == 0 && len(r.Skipped) == 0 && len(r.Refused) == 0
 }
 
 // seen and written are the report's private bookkeeping, because Sync runs

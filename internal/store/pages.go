@@ -101,6 +101,28 @@ func (s *Store) UpsertPage(ctx context.Context, p domain.Page) (domain.Page, err
 // pageAt returns the row at a campaign and path, archived rows included. It
 // reads through the write connection so it sees the row the statement above
 // just wrote, on the same connection.
+// PurgePage removes a page's row and everything that pointed at it: its
+// revisions, its outgoing links and its name targets.
+//
+// It is the opposite of DeletePage, and the difference is not a matter of
+// degree. DeletePage archives: the row stays, because revisions and inbound
+// links reference it and a DM who deleted a file by accident should be able to
+// get it back. PurgePage is for when the row itself is wrong or unwanted -- M9's
+// purge action, and the first half of a full reindex.
+//
+// Nothing here is recoverable afterwards, which is the whole point, and it is why
+// a sync never does it: a sync archives what it cannot see, and only a human who
+// has decided the row should go says so.
+func (s *Store) PurgePage(ctx context.Context, id string) error {
+	const query = `DELETE FROM pages WHERE id = ?`
+
+	if _, err := s.write.ExecContext(ctx, query, id); err != nil {
+		return writeError("purging page "+id, err)
+	}
+
+	return nil
+}
+
 func (s *Store) pageAt(ctx context.Context, campaignID, path string) (domain.Page, error) {
 	const query = `SELECT ` + pageColumns + ` FROM pages WHERE campaign_id = ? AND path = ?`
 

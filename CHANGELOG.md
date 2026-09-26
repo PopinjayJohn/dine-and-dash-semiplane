@@ -71,6 +71,29 @@ House rules:
   previous one wrote something, because a page indexed late in a pass is the
   target of a page the pass had already passed. A vault that is already in step
   takes one pass, and `Report.Passes` says which.
+- Drift detection and `ReindexFull`, the repair of last resort. **Drift is a
+  state, not an error**: the projection has stopped describing what it projects,
+  and ADR 0001's answer is to rebuild it from the files.
+- A page is **settled** when re-deriving it from its file would produce exactly
+  the row, aliases and links that are already there. One function decides that,
+  and both `Sync` and `Check` ask it, so "would change" and "changed" cannot
+  disagree. Settling on the content hash alone — which is cheaper, and which the
+  schema's `content_hash` looks built for — is wrong in two ways that only show up
+  months later: a row can rot in place with its hash still matching, and a
+  milestone that changes how a body is derived leaves every row stale with hashes
+  that match their files perfectly, so no incremental sync would ever repair
+  them and every campaign would need a manual full rebuild.
+- `Report.InStep()`: the boolean `wiki sync --check` exits on. It counts a skip
+  and a **refusal** as out of step, because a page whose `visibility` cannot be
+  read changes no rows when it is refused — and a check that counted only rows
+  would report "in step" about a page the DM cannot see, which is the one answer
+  that must never be given.
+- `store.PurgePage`, the opposite of archiving: the row goes, and its revisions,
+  links and name targets with it. A sync never purges; a sync archives what it
+  cannot see, and only a human who has decided the row should go says so.
+- A page that both embeds and links the same target is **one edge**, and the
+  embed wins. The link graph's primary key is (source, destination), so a second
+  row would not be stored, and the stronger statement is the more useful one.
 - `render.LinkResolver` grows an error return. An index that could not answer is
   not the same answer as a target nothing answers to, and a wiki full of
   unresolved links because the database was briefly busy is a bug report about

@@ -55,7 +55,7 @@ func LinksOf(body string) ([]LinkRef, error) {
 
 // linksFromTree collects the links of an already-parsed document.
 func linksFromTree(doc ast.Node) ([]LinkRef, error) {
-	collector := &linkCollector{seen: map[string]bool{}}
+	collector := &linkCollector{at: map[string]int{}}
 
 	err := ast.Walk(doc, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
@@ -93,11 +93,9 @@ func linksFromTree(doc ast.Node) ([]LinkRef, error) {
 type linkCollector struct {
 	refs []LinkRef
 
-	// seen keeps the collector from recording one destination twice. A page that
-	// links to a page in a sentence and again in a footnote is one edge, and the
-	// link graph's primary key is (source, destination). An embed and a link to
-	// the same page are two edges, which is why the embed marks the key.
-	seen map[string]bool
+	// at is where each destination is in refs, so a destination seen twice can
+	// be superseded rather than appended.
+	at map[string]int
 }
 
 func (c *linkCollector) add(ref LinkRef) {
@@ -105,14 +103,18 @@ func (c *linkCollector) add(ref LinkRef) {
 		return
 	}
 
-	key := ref.Target
-	if ref.Embed {
-		key = "!" + key
-	}
-	if c.seen[key] {
+	if i, seen := c.at[ref.Target]; seen {
+		// One edge per (source, destination), because that is the link graph's
+		// primary key and a second row would not be stored. A page that both
+		// embeds and links the same target is one edge, and the embed is the
+		// stronger statement about it -- so an embed supersedes a link rather
+		// than being dropped in favour of whichever the DM wrote first.
+		if ref.Embed && !c.refs[i].Embed {
+			c.refs[i] = ref
+		}
 		return
 	}
-	c.seen[key] = true
 
+	c.at[ref.Target] = len(c.refs)
 	c.refs = append(c.refs, ref)
 }
