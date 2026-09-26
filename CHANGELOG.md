@@ -93,6 +93,21 @@ House rules:
   path, so a vault stays portable when it is zipped or put in git. A page may
   point into the attachments directory — that is the case the whole thing is for —
   but not into `_history` or `.obsidian`, whatever case it spells them in.
+- `internal/render`, the goldmark pipeline and the table of contents. GFM and
+  footnotes are on, because a DM's notes contain tables, task lists and footnotes
+  and a page whose footnotes become literal text is a page the DM has to fix by
+  hand. Hard line breaks are **off**: a DM's notes are soft-wrapped, and turning
+  every newline in a file into a `<br>` would break sentences at whatever column
+  their editor wrapped at. The renderer version is a constant in the package,
+  and it is what a page row stores and a cache key uses, so bumping it
+  invalidates every render at once rather than leaving a stale cache.
+- Golden files for the renderer under `internal/render/testdata/render/`,
+  compared byte for byte and regenerated with `-update`. A fixture with no golden
+  file beside it is a fixture that is not testing anything, so that is a failing
+  test too.
+- A fuzz target over the whole pipeline for the property the spec names: render
+  never panics. Both decisions are exercised, and every anchor in the table of
+  contents has to be an id in the HTML that came with it.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
