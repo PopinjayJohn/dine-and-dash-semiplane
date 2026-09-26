@@ -43,6 +43,7 @@ out-of-process plugins.
 | 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
 | 14 | Migrations run through a runner in this repository rather than golang-migrate | 0012 |
 | 15 | A document is the bytes it was read as; frontmatter is a parse tree | 0013 |
+| 16 | Secrets are removed from the parse tree; the cache is keyed by the decision | 0014 |
 
 ## 3. Technology
 
@@ -500,8 +501,13 @@ markdown file
   -> render to HTML
   -> bluemonday sanitise
   -> templ wraps in the page shell
-  -> cache keyed by (content_hash, renderer_version)
+  -> cache keyed by (content_hash, renderer_version, can_see_secrets, path)
 ```
+
+The cache key carries the decision because a render made for a DM and one made
+for a player are different bytes, and one of them contains secrets: see
+[ADR 0014](adr/0014-secrets-leave-the-tree.md), which also records why the
+stripping happens on the tree and not on the way out.
 
 - **Wiki-link extension** resolves against the index: exact path, then alias,
   then case-insensitive filename — Obsidian's resolution order.
@@ -743,6 +749,25 @@ would leave the vault, a symlink followed included, and there is no
 window between checking a path and opening it. The second commit had
 already done the string-level work that the handle makes unnecessary, and
 it is the one whose fuzz targets state the invariant the rest stands on.
+
+### M3 commit sequence
+
+```
+feat: render a page, and put the output under a golden file
+feat: render wiki links, and say when one does not resolve
+feat: strip secrets from the tree, not from the output
+feat: sanitise every page, for the DM as much as for a player
+feat: cache renders by everything that can change one
+docs(adr): record where a secret leaves, and what the cache is keyed by
+chore: record where the project actually is
+```
+
+The third commit is the milestone. The last two are the ones whose wrong answers
+look like working features rather than like bugs: a sanitiser applied to
+"untrusted authors only" leaves the DM on the weakest path, and a cache keyed
+by content hash alone is a channel from a DM's render to a player. Both are
+written down in [ADR 0014](adr/0014-secrets-leave-the-tree.md), which also
+corrects §11's two-field cache key.
 
 ### Definition of Done
 

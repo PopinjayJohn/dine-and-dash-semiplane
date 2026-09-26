@@ -93,6 +93,80 @@ House rules:
   path, so a vault stays portable when it is zipped or put in git. A page may
   point into the attachments directory — that is the case the whole thing is for —
   but not into `_history` or `.obsidian`, whatever case it spells them in.
+- **The secret stripper**, which is the milestone, first among the renderer's
+  features because everything else here is in service of it. A `[!SECRET]`
+  callout's body is removed from the tree and the callout becomes a visible,
+  obviously-empty placeholder, so a player can see that a secret is there and
+  cannot see what it says. The bytes of a secret are never rendered and then
+  removed, and the stripper has its own walk: goldmark's advances with
+  `child.NextSibling()` after the visitor returns, and a child just spliced out
+  of its parent has no next sibling left to offer, so a stripper built on it
+  removes the first secret on a page and reports that it removed six.
+- `internal/render`, the goldmark pipeline and the table of contents. GFM and
+  footnotes are on, because a DM's notes contain tables, task lists and footnotes
+  and a page whose footnotes become literal text is a page the DM has to fix by
+  hand. Hard line breaks are **off**: a DM's notes are soft-wrapped, and turning
+  every newline in a file into a `<br>` would break sentences at whatever column
+  their editor wrapped at. The renderer version is a constant in the package,
+  and it is what a page row stores and a cache key uses, so bumping it
+  invalidates every render at once rather than leaving a stale cache.
+- Golden files for the renderer under `internal/render/testdata/render/`,
+  compared byte for byte and regenerated with `-update`. A fixture with no golden
+  file beside it is a fixture that is not testing anything, so that is a failing
+  test too.
+- A fuzz target over the whole pipeline for the property the spec names: render
+  never panics. Both decisions are exercised, and every anchor in the table of
+  contents has to be an id in the HTML that came with it.
+- Wiki links — `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and the
+  embed form `![[target]]` — as their own inline node rather than a rewrite of
+  the source into markdown that happens to look like one, because a markdown
+  link to a page is a page link too and a link to `https://example.invalid` is
+  not. Resolution goes through a `LinkResolver` the index fills in M4, in
+  Obsidian's order: exact path, then alias, then case-insensitive filename.
+- An unresolved link is a `<span class="unresolved">` and not an `<a>` with no
+  href: an anchor with no destination is not focusable, not clickable and not
+  valid HTML, and a link's text is what the DM typed, never the resolved page's
+  title. A DM writes links to pages they intend to write, and a wiki that
+  rendered those as broken links would be unusable on the day it is most useful.
+- Callouts: `> [!type] Title` with `-` and `+` fold markers, nesting, and the
+  `{.revealed}` attribute form. A type this build has never heard of still
+  renders as a callout with its type as a class, because a DM's callout
+  becoming a plain blockquote is a worse answer than a callout nothing has
+  styled yet — and an ordinary quote with `[!warning]` written inside it stays an
+  ordinary quote.
+- A fuzz target for the stripper itself: every input is a well-formed secret
+  callout with a canary in it followed by whatever the fuzzer invents, and the
+  canary has to be absent from the output. The trailing junk is the point — a
+  fence that swallows the page, a quote that never closes, a nested callout, an
+  unterminated `[!SECRET` of its own.
+- A render cache keyed by `(content hash, renderer version, decision, path)`.
+  Each field names what it costs to drop it: no hash serves the previous
+  version of a saved page, no version keeps serving old HTML after a renderer
+  upgrade, and **no decision serves a render made for a DM to a player** — a
+  mistake that looks like a cache rather than like a security bug. The path is in
+  there because two pages from the same template are the same bytes, and
+  relative link resolution is the next thing to need it. Eviction is
+  least-recently-stored rather than least-recently-used, and the code and a
+  test both say which one it is rather than calling it LRU.
+- A sanitiser on the way out, for **every author, the DM included**. A
+  sanitiser applied only to player-authored markdown leaves the highest-value
+  target in the application on the weakest path: a DM pastes a snippet from a
+  forum into their own notes, and a forum is a place scripts come from. The
+  policy is built from what this renderer emits rather than from what HTML can
+  do, and `style`, `data-*`, comments, forms, iframes and `unsafe` are all
+  absent. `class` is allowed as a space-separated list of this application's own
+  classes, so a DM cannot reach a stylesheet rule that is not theirs.
+  The corpus found two holes in the first draft of that policy — a second,
+  unconstrained allowance of `class` beat the matched one, and a pattern that
+  matched a single class name stripped the attribute from every callout — and a
+  review of the golden diff found a third: `blockquote` was missing, which
+  turned a GM's rulebook quote into an unattributed paragraph.
+- ~75 XSS corpus payloads run through the whole pipeline, the way a DM pastes
+  something: script and event handlers, `javascript:` in five spellings, svg,
+  data URLs, style expressions, form and frame tricks, and the payloads that
+  hide behind our own class names. Every one is checked for the *absence* of the
+  construct in the output, and the prose after it has to survive, so a payload
+  cannot take the page with it.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
@@ -226,6 +300,15 @@ House rules:
 
 ### Development
 
+- A `.gitattributes` pinning every text file to LF on every platform. The
+  reason is the renderer's golden files: they are compared byte for byte, so
+  their line endings are part of what they assert, and a Windows checkout with
+  git's default `core.autocrlf=true` rewrote them to CRLF — which fails the test
+  over a difference that `git diff`, a terminal and a reviewer all render as
+  nothing. A golden file test that can fail without a visible cause teaches a
+  maintainer that a green-looking diff is not a green test. `text=auto` leaves
+  binaries alone, and no file in this repository wants CRLF.
+
 - `modernc.org/sqlite` moved to v1.59.0 (SQLite 3.53.4) and the module's Go
   directive to 1.25.0, which is the newest Go that driver family needs and the
   newest Go the driver can be used from. v1.47.0 and later declare `go 1.25.0`,
@@ -267,6 +350,18 @@ House rules:
 
 ### Documentation
 
+- ADR 0013 records why a document is the bytes it was read as: ADR 0005 asks
+  for unknown keys preserved verbatim *and* a zero-byte diff on rewriting an
+  untouched file, and together those are sharper than they read — no YAML
+  emitter agrees byte for byte with every hand-written file. The promise
+  cannot be tested for, so it is structural: a document keeps its bytes until
+  something actually changes, and the frontmatter is a parse tree rather than a
+  map, because a map drops key order, comments and quote style.
+- ADR 0014 records where a secret leaves the render path and what the render
+  cache is keyed by. The stripping happens on the parse tree, so a secret's
+  text is never rendered and then removed, and the cache key carries the
+  decision, so a render made for a DM cannot be served to a player.
+  `docs/spec.md` §11 is corrected: its two-field cache key is a channel.
 - ADR 0012 is corrected. It originally claimed golang-migrate had no pure-Go
   SQLite driver and that its only one was a cgo binding, which ruled the
   library out under ADR 0004. It has one: `database/sqlite` imports

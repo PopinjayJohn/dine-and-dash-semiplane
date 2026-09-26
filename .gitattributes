@@ -1,0 +1,19 @@
+# Every text file in this repository is LF, in the index and in every working
+# tree, on every platform.
+#
+# The reason is not tidiness. `internal/render` compares its golden files byte
+# for byte, so their line endings are part of what they assert, and a Windows
+# checkout that rewrote them to CRLF fails that test over a difference which
+# `git diff`, a terminal and a reviewer all render as nothing at all. A golden
+# file test that can fail without a visible cause is worse than no golden file
+# test: it teaches a maintainer that a green-looking diff is not a green test.
+#
+# `text=auto` is what keeps this safe. Git detects binary content and does not
+# normalise it, so one line here cannot corrupt an image or a database in a
+# fixture, and there is no file in this repository that wants CRLF: no batch
+# scripts, no PowerShell, and a DM's vault is not in the repository at all
+# (ADR 0001).
+#
+# `eol=lf` is the load-bearing half. Without it the setting only normalises what
+# is committed, and the platform's default still decides what lands on disk.
+* text=auto eol=lf
