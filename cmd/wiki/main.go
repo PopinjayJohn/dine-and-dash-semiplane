@@ -20,21 +20,47 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 )
 
+// Process exit codes. Anything non-zero means the command did not do what it
+// was asked to do.
+const (
+	exitOK      = 0
+	exitFailure = 1
+)
+
 func main() {
 	// SIGINT and SIGTERM cancel the context, which is what lets long-running
-	// commands drain SSE streams and close the database cleanly. The stop
-	// function is called explicitly below because os.Exit skips defers.
+	// commands drain SSE streams and close the database cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
-	stop()
+	code := execute(ctx, os.Args[1:], os.Stdout, os.Stderr)
 
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "wiki: %v\n", err)
-		}
-		os.Exit(1)
+	// Released explicitly: os.Exit below skips deferred calls.
+	stop()
+	os.Exit(code)
+}
+
+// execute is main without the two things a test cannot reach: installing
+// signal handlers and ending the process. Everything observable, including the
+// exit code and what lands on stderr, is decided here.
+func execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return exitCode(run(ctx, args, stdout, stderr), stderr)
+}
+
+// exitCode turns a command error into a process exit code, and reports the
+// error unless it is a cancellation. Kept separate from execute so that the
+// mapping can be tested without a subcommand that blocks, which M0 does not
+// have yet.
+func exitCode(err error, stderr io.Writer) int {
+	if err == nil {
+		return exitOK
 	}
+
+	// A Ctrl-C is an ordinary way to stop, not a failure worth reporting. A
+	// script that ran `wiki serve` still sees the non-zero code.
+	if !errors.Is(err, context.Canceled) {
+		fmt.Fprintf(stderr, "wiki: %v\n", err)
+	}
+	return exitFailure
 }
 
 // command is a wiki subcommand. It receives the arguments following the

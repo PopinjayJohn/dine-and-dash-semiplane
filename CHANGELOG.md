@@ -35,6 +35,16 @@ House rules:
 - `.golangci.yml`, pinning the linter set: `errcheck`, `gosec` and
   `errorlint` for the access-control and error-handling invariants, plus
   formatting checks on `gofmt` and `goimports`.
+- `wiki` returns an exit code of 0 on success and 1 on failure, decided by
+  `exitCode` rather than by `os.Exit`, so the mapping is table-tested.
+
+### Fixed
+
+- A write to a closed stdout or stderr is now reported to the caller instead
+  of being discarded. Previously `wiki help` could print a truncated page and
+  exit 0.
+- Pressing Ctrl-C no longer risks leaving the signal handler installed:
+  `os.Exit` skipped the deferred cleanup, so `stop` is now called explicitly.
 
 ## [0.1.0] - TBD
 
