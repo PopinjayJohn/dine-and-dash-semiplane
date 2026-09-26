@@ -300,6 +300,15 @@ House rules:
 
 ### Development
 
+- A `.gitattributes` pinning every text file to LF on every platform. The
+  reason is the renderer's golden files: they are compared byte for byte, so
+  their line endings are part of what they assert, and a Windows checkout with
+  git's default `core.autocrlf=true` rewrote them to CRLF — which fails the test
+  over a difference that `git diff`, a terminal and a reviewer all render as
+  nothing. A golden file test that can fail without a visible cause teaches a
+  maintainer that a green-looking diff is not a green test. `text=auto` leaves
+  binaries alone, and no file in this repository wants CRLF.
+
 - `modernc.org/sqlite` moved to v1.59.0 (SQLite 3.53.4) and the module's Go
   directive to 1.25.0, which is the newest Go that driver family needs and the
   newest Go the driver can be used from. v1.47.0 and later declare `go 1.25.0`,
