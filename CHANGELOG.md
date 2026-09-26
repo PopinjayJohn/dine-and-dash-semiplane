@@ -44,6 +44,16 @@ House rules:
 - The lookups are part of the store contract suite, not only of the store's own
   tests, so a second implementation is held to the same rules.
 
+- `internal/index`, and with it the resolver the renderer asked for in M3 and
+  nothing had been put behind. It answers a wiki link in Obsidian's order — the
+  exact path, then an alias, then a case-insensitive file name — and it is a
+  **per-campaign object**, because every table in the index is campaign-scoped and
+  `[[rivergate]]` means a different page in each of a DM's two campaigns.
+- `render.LinkResolver` grows an error return. An index that could not answer is
+  not the same answer as a target nothing answers to, and a wiki full of
+  unresolved links because the database was briefly busy is a bug report about
+  links that do not exist — a much worse thing to be handed than a 500.
+
 - `internal/vault`, which reads and writes the markdown files a DM keeps in
   Obsidian. **A file the application did not change comes back out byte for
   byte.** Not semantically equal — byte for byte. A document keeps the bytes it
