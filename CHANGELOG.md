@@ -60,6 +60,20 @@ House rules:
   sorts after `…T19:03:00.45Z` and every `WHERE created_at < ?` in the
   codebase would be subtly wrong. There is a test that asserts the two orders
   agree.
+- `store.Open`, which opens a campaign database the way ADR 0004 describes and
+  then **verifies** it: if WAL, foreign keys, the busy timeout or the
+  synchronous setting did not take, the store refuses to open rather than
+  running with a referential-integrity guarantee it does not have. A test asks
+  for more connections than queries, on purpose, because a pragma set once is
+  a pragma set on one connection.
+- Reads and writes go to separate pools over the same file, with a single write
+  connection. Two writers cannot collide, so `SQLITE_BUSY` between them cannot
+  happen at all, and a reader never queues behind a write.
+- A value a caller leaves zero is filled in: the store mints the id and stamps
+  the timestamps from the injected clock, then returns the row as stored. A
+  database path containing `?` or `#` is refused, because the connection string
+  would be truncated at that character and the database would be created
+  somewhere else.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
