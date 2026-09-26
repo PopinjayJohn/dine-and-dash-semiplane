@@ -79,6 +79,26 @@ House rules:
   `datastar-go` v1.2.2, the four-method mapping onto the SDK, the actual wire
   format, and the two defects the spike turned up. It closes the "known risk"
   in `docs/spec.md` §3.
+- ADR 0009 records why search uses two FTS5 indexes merged with Reciprocal
+  Rank Fusion. A page row and the text inside it can have different readers, so
+  filtering by page and showing a snippet is already a disclosure: the match
+  position carries the secret. It also fixes `is:dm-only` as a filter applied
+  inside the ACL join rather than a bypass, and extends
+  `pages.renderer_version` to mean "the renderer version this index was built
+  against".
+- ADR 0010 records where the line between core and a plugin falls: core owns
+  the eight ruleset-agnostic page types, ownership, `[!SECRET]` and the ACL; a
+  page type is data rather than a Go type; and a plugin may not add a
+  visibility level, register a second render path or FTS index, or read the
+  database unfiltered.
+- ADR 0011 records the deployment shape: one static binary, one data
+  directory, and "copy the directory" as the whole backup procedure. It fixes
+  the two things the spec left undecided — one server per data directory via
+  `locks/serve.lock`, and environment-over-file configuration precedence.
+- `docs/security.md`, the threat model ADR 0003 has referenced since it was
+  written. Assets in priority order, the threat actors, every control mapped
+  to the named test that enforces it, and six accepted limitations stated
+  rather than discovered.
 
 ## [0.1.0] - TBD
 
