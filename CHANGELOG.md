@@ -74,6 +74,24 @@ House rules:
   database path containing `?` or `#` is refused, because the connection string
   would be truncated at that character and the database would be created
   somewhere else.
+- Store methods for campaigns, pages, revisions and the link graph. Every one
+  of them fills in what the caller left blank — an id from the generator, a
+  timestamp from the clock — and returns the row **as stored** rather than the
+  value it was handed, so a test can assert on every field of a result.
+  Archiving a page keeps the row: revisions and inbound links point at it, and
+  an archive is recoverable. Listing is ordered by slug or by path, because a
+  list whose order varies between runs cannot be diffed.
+- Storing a page twice at the same path updates the row and keeps its id and
+  creation time, because a page's identity is its path and its id is what every
+  revision and every inbound link points at. Renaming a page is a different
+  operation that rewrites those links, and it is not this method.
+- `ReplaceLinks` makes a page's outgoing links be *exactly* the links given, in
+  one transaction, including the empty case. Appending would leave links to
+  pages the DM deleted from the text, and a link graph that remembers removed
+  links is a graph nobody can trust.
+- Unique and primary key violations come back as `store.ErrConflict`, a missing
+  row as `store.ErrNotFound`, and a driver result code is read through a small
+  interface rather than by matching on message text.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
