@@ -42,6 +42,7 @@ out-of-process plugins.
 | 12 | Datastar v1 GA, vendored, no CDN | 0006, 0008 |
 | 13 | Search splits into two FTS5 indexes, merged with Reciprocal Rank Fusion | 0009 |
 | 14 | Migrations run through a runner in this repository rather than golang-migrate | 0012 |
+| 15 | A document is the bytes it was read as; frontmatter is a parse tree | 0013 |
 
 ## 3. Technology
 
@@ -52,6 +53,7 @@ out-of-process plugins.
 | Front end | Datastar v1 GA | Hypermedia over SSE; composes with templ since both emit HTML |
 | Templates | `github.com/a-h/templ` | Compile-time checked components; reusable as SSE fragments |
 | Markdown | `github.com/yuin/goldmark` + extensions | AST extension points for wiki links and callouts |
+| YAML | `go.yaml.in/yaml/v3` | Frontmatter as a parse tree, so a DM's keys, order and comments survive a rewrite — [ADR 0013](adr/0013-frontmatter-parse-tree.md) |
 | Database | SQLite via `modernc.org/sqlite` | Pure Go, so tests run anywhere without a C toolchain |
 | Migrations | `migrations/`, a runner in-repo | Versioned SQL embedded with `go:embed`; golang-migrate was available and pure-Go, and was passed over — [ADR 0012](adr/0012-migration-runner-in-repo.md) |
 | Sanitisation | `github.com/microcosm-cc/bluemonday` | HTML allow-list for rendered markdown |
