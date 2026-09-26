@@ -24,6 +24,14 @@ House rules:
 
 ### Added
 
+- `internal/clock` and `internal/idgen`, the only two packages allowed to know
+  what time it is and what a new identifier looks like. Anything that stamps a
+  row or mints a key takes a `clock.Clock` or an `idgen.IDGen` instead, so a
+  test can hand it a sequence it can predict and assert on every id in a
+  golden file. Production gets the system clock and random UUIDs;
+  `clock.Fixed` steps forward by a fixed interval on every call, so
+  consecutive writes get distinct and ordered timestamps rather than one
+  repeated value.
 - `wiki` command with `version` and `help` subcommands. The usage text is
   generated from the subcommand table, so a subcommand cannot exist without
   appearing in `wiki help`.
