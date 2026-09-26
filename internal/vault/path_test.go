@@ -1,0 +1,435 @@
+package vault_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
+)
+
+func TestCheckPagePath(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		in      string
+		want    string
+		wantErr string
+	}{
+		"a plain page": {
+			in:   "notes",
+			want: "notes",
+		},
+		"a nested page": {
+			in:   "locations/rivergate",
+			want: "locations/rivergate",
+		},
+		"a deeply nested page": {
+			in:   "characters/aria/quests/the-toll",
+			want: "characters/aria/quests/the-toll",
+		},
+		"a name with dots in it, which is a date and not an extension": {
+			in:   "sessions/2026-02-14-dragon-heist",
+			want: "sessions/2026-02-14-dragon-heist",
+		},
+		"a name with a space": {
+			in:   "npcs/the drowned hound",
+			want: "npcs/the drowned hound",
+		},
+		"a name with a non-ASCII letter": {
+			in:   "locations/Ölbach",
+			want: "locations/Ölbach",
+		},
+		"empty": {
+			in:      "",
+			wantErr: "a page path is empty",
+		},
+		"one level up": {
+			in:      "../secrets",
+			wantErr: `has a ".." segment`,
+		},
+		"one level up, in the middle": {
+			in:      "locations/../../etc/passwd",
+			wantErr: `has a ".." segment`,
+		},
+		"the current directory": {
+			in:      "locations/.",
+			wantErr: `has a "." segment`,
+		},
+		"a path that only needs cleaning to be valid, which would be two spellings of one page": {
+			in:      "locations/./rivergate",
+			wantErr: `has a "." segment`,
+		},
+		"an empty segment from a doubled separator": {
+			in:      "locations//rivergate",
+			wantErr: "an empty segment",
+		},
+		"an absolute path": {
+			in:      "/etc/passwd",
+			wantErr: "is absolute",
+		},
+		"a Windows absolute path, which names a volume": {
+			in:      "C:/Windows/System32",
+			wantErr: "names a volume",
+		},
+		"a Windows volume-relative path": {
+			in:      "C:secrets",
+			wantErr: "names a volume",
+		},
+		"a UNC path": {
+			in:      "//server/share/secrets",
+			wantErr: "is absolute",
+		},
+		"a backslash, which is a separator on Windows and an ordinary character here": {
+			in:      `locations\rivergate`,
+			wantErr: "contains a backslash",
+		},
+		"a trailing separator": {
+			in:      "locations/",
+			wantErr: "ends in a separator",
+		},
+		"a NUL byte": {
+			in:      "locations/rivergate\x00.md",
+			wantErr: "NUL byte",
+		},
+		"a control character": {
+			in:      "locations/river\ngate",
+			wantErr: "control character",
+		},
+		"a hidden file": {
+			in:      ".hidden",
+			wantErr: "starts with a dot",
+		},
+		"a hidden directory": {
+			in:      ".config/rivergate",
+			wantErr: "starts with a dot",
+		},
+		"inside the attachments directory": {
+			in:      "_attachments/map-rivergate",
+			wantErr: "reserved directory",
+		},
+		"inside the history directory": {
+			in:      "_history/locations/rivergate/1",
+			wantErr: "reserved directory",
+		},
+		"Obsidian's own directory": {
+			in:      ".obsidian/plugins",
+			wantErr: "starts with a dot",
+		},
+		"the attachments directory spelled in another case, because a filesystem may not care": {
+			in:      "_ATTACHMENTS/map-rivergate",
+			wantErr: "reserved directory",
+		},
+		"a device name": {
+			in:      "locations/nul",
+			wantErr: "device name",
+		},
+		"a device name with an extension": {
+			in:      "locations/COM1.md",
+			wantErr: "device name",
+		},
+		"a segment ending in a space, which Windows rewrites": {
+			in:      "locations/rivergate ",
+			wantErr: "ending in a dot or a space",
+		},
+		"a segment ending in a dot, which Windows drops": {
+			in:      "locations/rivergate.",
+			wantErr: "ending in a dot or a space",
+		},
+		"a segment over the length limit": {
+			in:      "locations/" + strings.Repeat("a", 300),
+			wantErr: "the limit is 200",
+		},
+		"a path over the length limit": {
+			in:      strings.Repeat("segment/", 200) + "page",
+			wantErr: "may be at most 1024 bytes",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := vault.CheckPagePath(tt.in)
+			if tt.wantErr != "" {
+				assertPathError(t, err, tt.wantErr)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CheckPagePath(%q) returned an unexpected error: %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("CheckPagePath(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckFileName(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		in      string
+		want    string
+		wantErr string
+	}{
+		"an image": {
+			in:   "map-rivergate.png",
+			want: "map-rivergate.png",
+		},
+		"a name with a space": {
+			in:   "the drowned hound.png",
+			want: "the drowned hound.png",
+		},
+		"a path is not a name": {
+			in:      "_attachments/map-rivergate.png",
+			wantErr: "contains a separator",
+		},
+		"one level up": {
+			in:      "../map-rivergate.png",
+			wantErr: "contains a separator",
+		},
+		"a Windows path is not a name": {
+			in:      `C:\map-rivergate.png`,
+			wantErr: "contains a separator",
+		},
+		"empty": {
+			in:      "",
+			wantErr: "an attachment name is empty",
+		},
+		"a dot": {
+			in:      ".",
+			wantErr: "is not a file name",
+		},
+		"two dots": {
+			in:      "..",
+			wantErr: "is not a file name",
+		},
+		"a hidden file": {
+			in:      ".env",
+			wantErr: "starts with a dot",
+		},
+		"a NUL byte": {
+			in:      "map\x00.png",
+			wantErr: "control character",
+		},
+		"a device name": {
+			in:      "nul.png",
+			wantErr: "device name",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := vault.CheckFileName(tt.in)
+			if tt.wantErr != "" {
+				assertPathError(t, err, tt.wantErr)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CheckFileName(%q) returned an unexpected error: %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("CheckFileName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolve(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	v := newVault(t, root)
+
+	tests := map[string]struct {
+		in      string
+		want    string
+		wantErr string
+	}{
+		"a page inside the vault": {
+			in:   "locations/rivergate",
+			want: filepath.Join(root, "locations", "rivergate.md"),
+		},
+		"a page that does not exist yet": {
+			in:   "npcs/garros-ironbar",
+			want: filepath.Join(root, "npcs", "garros-ironbar.md"),
+		},
+		"a page at the top of the vault": {
+			in:   "campaign",
+			want: filepath.Join(root, "campaign.md"),
+		},
+		"a traversal is refused before anything is looked at": {
+			in:      "../outside",
+			wantErr: `has a ".." segment`,
+		},
+		"an absolute path is refused": {
+			in:      "/etc/passwd",
+			wantErr: "is absolute",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := v.Resolve(tt.in)
+			if tt.wantErr != "" {
+				assertPathError(t, err, tt.wantErr)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve(%q): %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveRefusesASymlinkOutOfTheVault is the reason Resolve is a method and
+// not a function. No string check can see this one: the path is a clean, valid,
+// relative page path that resolves, on this machine, to a directory outside the
+// campaign.
+func TestResolveRefusesASymlinkOutOfTheVault(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.md"), []byte("not the DM's campaign\n"), 0o600); err != nil {
+		t.Fatalf("writing the file outside the vault: %v", err)
+	}
+
+	// A directory inside the vault that is really a way out of it.
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("this machine will not let the test make a symlink: %v", err)
+	}
+
+	v := newVault(t, root)
+
+	_, err := v.Resolve("escape/secret")
+	assertPathError(t, err, "outside the vault")
+
+	// And the file outside is exactly where it was put: nothing was read or
+	// moved, the path was refused.
+	if _, err := os.Stat(filepath.Join(outside, "secret.md")); err != nil {
+		t.Fatalf("the file outside the vault is not where it was put: %v", err)
+	}
+}
+
+// TestResolveRefusesASymlinkedFile is the same hole with a file at the end of
+// it, which a check that only looked at directories would miss.
+func TestResolveRefusesASymlinkedFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	target := filepath.Join(outside, "elsewhere.md")
+	if err := os.WriteFile(target, []byte("not the DM's campaign\n"), 0o600); err != nil {
+		t.Fatalf("writing the file outside the vault: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "rivergate.md")); err != nil {
+		t.Skipf("this machine will not let the test make a symlink: %v", err)
+	}
+
+	v := newVault(t, root)
+
+	_, err := v.Resolve("rivergate")
+	assertPathError(t, err, "outside the vault")
+}
+
+func TestOpenRefuses(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		root    func(t *testing.T) string
+		wantErr string
+	}{
+		"no directory at all": {
+			root:    func(*testing.T) string { return "" },
+			wantErr: "no vault directory was given",
+		},
+		"a directory that is not there": {
+			root:    func(t *testing.T) string { return filepath.Join(t.TempDir(), "nope") },
+			wantErr: "opening the vault at",
+		},
+		"a path that is a file": {
+			root: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "campaigns")
+				if err := os.WriteFile(path, []byte("a file\n"), 0o600); err != nil {
+					t.Fatalf("writing a file: %v", err)
+				}
+				return path
+			},
+			wantErr: "is not a directory",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			v, err := vault.Open(tt.root(t))
+			if err == nil {
+				_ = v
+				t.Fatal("Open accepted something it should have refused")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestOpenResolvesTheRootItself(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	campaign := filepath.Join(base, "campaign")
+	if err := os.Mkdir(campaign, 0o700); err != nil {
+		t.Fatalf("creating the campaign directory: %v", err)
+	}
+
+	link := filepath.Join(base, "linked")
+	if err := os.Symlink(campaign, link); err != nil {
+		t.Skipf("this machine will not let the test make a symlink: %v", err)
+	}
+
+	// A symlinked data directory is a legitimate thing to have, so the
+	// containment check compares resolved paths on both sides.
+	v := newVault(t, link)
+
+	if v.Root() != campaign {
+		t.Errorf("Root() = %q, want the resolved directory %q", v.Root(), campaign)
+	}
+
+	if _, err := v.Resolve("locations/rivergate"); err != nil {
+		t.Errorf("Resolve through a symlinked root: %v", err)
+	}
+}
+
+func newVault(t *testing.T, root string) *vault.Vault {
+	t.Helper()
+
+	v, err := vault.Open(root)
+	if err != nil {
+		t.Fatalf("vault.Open(%q): %v", root, err)
+	}
+	return v
+}
+
+func assertPathError(t *testing.T, err error, want string) {
+	t.Helper()
+
+	switch {
+	case err == nil:
+		t.Fatalf("no error, want one containing %q", want)
+	case !strings.Contains(err.Error(), want):
+		t.Fatalf("error %q, want one containing %q", err, want)
+	}
+}

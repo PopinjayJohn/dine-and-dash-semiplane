@@ -22,4 +22,13 @@ var (
 	// ErrKey means a caller asked for a key the application does not own, or
 	// tried to store a value of the wrong shape under one that it does.
 	ErrKey = errors.New("vault: the frontmatter key is not one the application owns")
+
+	// ErrPath means a path is not usable as a page's identity, or a name is
+	// not usable as a file's.
+	//
+	// Nothing here is a "best effort" case. A path that could be made to point
+	// outside the vault is refused, and a path that would be two spellings of
+	// one page is refused, because a vault where a page has two identities is a
+	// vault where a rename loses a link.
+	ErrPath = errors.New("vault: the path is not usable")
 )

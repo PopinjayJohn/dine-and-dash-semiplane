@@ -50,6 +50,19 @@ House rules:
 - Two fuzz targets over the parser: one for "parse anything without panicking,
   and return what came in", and one for "a change to a key survives a
   re-parse, keeps the unknown keys and leaves the body alone".
+- Page paths and attachment names are checked, and a checked path is not a
+  string test. `vault.Open` resolves the campaign directory and every path is
+  resolved against it and required to still be inside, so a symlink planted in a
+  vault — a directory component *or* the file at the end of it — is a refusal
+  rather than a read. A path may not contain `..`, `.`, an empty segment, a
+  backslash, a volume name, a NUL, a control character, a leading dot or a
+  reserved directory, and may not be a Windows device name or end in a dot or a
+  space. A path that would only be valid after cleaning is refused, because
+  `a/./b` and `a/b` naming two pages is a duplicate identity.
+- Two more fuzz targets, one per sanitiser, whose invariant is one sentence: a
+  path this package accepts names a file inside the vault, and a path it refuses
+  never becomes one. After the check, the accepted path is joined to a real
+  vault and required to be inside it.
 
 - `wiki migrate`, for the two questions a person has about a database: what
   schema is it at, and bring it to the one this build knows about. It prints
