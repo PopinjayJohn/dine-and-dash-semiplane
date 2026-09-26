@@ -71,6 +71,19 @@ House rules:
   previous one wrote something, because a page indexed late in a pass is the
   target of a page the pass had already passed. A vault that is already in step
   takes one pass, and `Report.Passes` says which.
+- A watcher, so a page the DM just saved in Obsidian is the page they see when
+  they reload. It watches every directory including the reserved ones (a
+  directory renamed *into* the vault is one event, and a filter would throw it
+  away), learns about new directories as they appear, and debounces: an Obsidian
+  save is a write, a rename, a rename back and a modify, and syncing on each
+  would do the same work four times and race the editor's own writes. What
+  counts as a page is asked of the same `vault.CheckPagePath` the sync uses, so
+  there is no second list of reserved names to drift — revisions, attachments,
+  Obsidian's own directory and in-flight temporary files are all ignored.
+- An archive that tolerates being done already. Two syncs — a watcher's pass
+  and a `wiki sync` in the same campaign — can each have listed a page a moment
+  before the other archived it, and the second one reporting an error for work
+  that is already finished is an error a DM learns to ignore.
 - A per-campaign lock, `internal/lockfile`, so a `wiki sync` in a terminal cannot
   interleave with the server's watcher — or with another `wiki sync`, which is
   what happens when a DM presses the up arrow. It is a file and not a row in the

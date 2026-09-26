@@ -8,6 +8,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
 
@@ -302,11 +303,28 @@ func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) 
 		return outcome{}, fmt.Errorf("looking up %s to archive it: %w", pagePath, err)
 	}
 
-	if err := y.store.DeletePage(ctx, indexed.ID); err != nil {
-		return outcome{}, fmt.Errorf("archiving %s: %w", pagePath, err)
+	if err := y.archiveRow(ctx, indexed); err != nil {
+		return outcome{}, err
 	}
 
 	return outcome{path: pagePath, archived: true}, nil
+}
+
+// archiveRow archives one page's row, and treats "already gone" as done.
+//
+// The tolerance is for the interleaving two syncs can produce -- a watcher's
+// pass and a `wiki sync` in the same campaign, each having listed the pages a
+// moment before the other archived one. The second one reporting an error for
+// work that is already done is the kind of error a DM learns to ignore, and
+// then the next one too.
+func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
+	if err := y.store.DeletePage(ctx, page.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("archiving %s: %w", page.Path, err)
+	}
+	return nil
 }
 
 // archiveMissing archives every indexed page whose file is gone.
@@ -322,8 +340,8 @@ func (y *Syncer) archiveMissing(ctx context.Context, present map[string]bool) ([
 			continue
 		}
 
-		if err := y.store.DeletePage(ctx, page.ID); err != nil {
-			return nil, fmt.Errorf("archiving %s: %w", page.Path, err)
+		if err := y.archiveRow(ctx, page); err != nil {
+			return nil, err
 		}
 		archived = append(archived, page.Path)
 	}
