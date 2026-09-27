@@ -47,6 +47,16 @@ type serveOptions struct {
 	baseURL        string
 	trustedProxies string
 
+	// lan, certFile and keyFile are the LAN path, and `--lan` is a **first-class
+	// deployment** rather than a debugging flag: ADR 0011 says so, and
+	// `docs/security.md` lists self-signed TLS as the control for "the network, on a
+	// LAN". A DM playing at a table on somebody else's wifi is the case this
+	// application exists for, and it is not the case that works least well by
+	// default.
+	lan      bool
+	certFile string
+	keyFile  string
+
 	// logFormat is the encoding the log is written in: `text` or `json`, and the
 	// empty string is the environment's decision or the default's.
 	//
@@ -127,6 +137,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	flags.StringVar(&opts.baseURL, "base-url", "",
 		"the origin share links are built against, as scheme and host ("+config.EnvBaseURL+
 			" and config.yaml override it); defaults to the address served on")
+	flags.BoolVar(&opts.lan, "lan", false,
+		"serve on every interface, for playing at a table; implies --production and self-signed TLS")
+	flags.StringVar(&opts.certFile, "tls-cert", "", "a certificate file for --lan, instead of a generated one")
+	flags.StringVar(&opts.keyFile, "tls-key", "", "a key file for --lan, beside --tls-cert")
 	flags.StringVar(&opts.trustedProxies, "trusted-proxies", "",
 		"comma-separated proxy addresses whose X-Forwarded-For is believed ("+
 			config.EnvTrustedProxies+" and config.yaml override it)")
@@ -169,7 +183,20 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	// `--lan` is the one flag that implies another, and it implies the one that
+	// matters: a session cookie without `Secure` on a network is a cookie every other
+	// machine on the wifi can read. ADR 0003's attribute is not "on localhost".
+	if opts.lan {
+		opts.prod = true
+	}
+
 	addr := firstNonEmpty(opts.addr, settings.Listen)
+	if opts.lan && !strings.Contains(addr, ":") || (opts.lan && isLoopbackAddr(addr)) {
+		// A DM who typed `--lan` and left the default has asked for the LAN and got
+		// loopback, which is the failure that looks like the feature not working. The
+		// message says which of the two it was.
+		addr = defaultLANAddr
+	}
 	baseURL := firstNonEmpty(opts.baseURL, settings.BaseURL)
 	trustedProxies := settings.TrustedProxies
 	if opts.trustedProxies != "" {
@@ -201,6 +228,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
 	defer func() { _ = listener.Close() }()
+
+	// The certificate, before the handler is built, because the origin share links are
+	// built from it and a link with an `http` origin is a link a player's browser
+	// will refuse before it ever reaches the redemption.
+	lanConfig, err := lanTLS(ctx, opts, dir, stdout)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 
 	hub := sse.NewHub(opts.streams)
 	defer hub.Close()
@@ -293,6 +329,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
+		// Non-nil only for `--lan`, and the difference is the whole of that flag: a
+		// nil TLSConfig serves plaintext, which is right on loopback and wrong on a
+		// network. `docs/security.md` lists this as the control for "the network, on
+		// a LAN", and a control that is a nil field is not one.
+		TLSConfig: lanConfig,
 	}
 
 	// The signals, before anything is served. A Ctrl-C has to be a graceful
@@ -314,9 +355,42 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.Serve(listener) }()
+	go func() {
+		// `ServeTLS` rather than `Serve` plus a wrapped listener, because
+		// `ServeTLS` is the one that loads the certificate onto the server's own
+		// `TLSConfig` and answers `https://` on the same listener, so a `--lan`
+		// server and a loopback server are one code path rather than two.
+		//
+		// The certificate is already in `server.TLSConfig`, so the second argument
+		// is empty -- and passing the files here as well would be the older way of
+		// saying the same thing with a second chance to get it wrong.
+		if lanConfig != nil {
+			serveErr <- server.ServeTLS(listener, "", "")
+			return
+		}
+		serveErr <- server.Serve(listener)
+	}()
 
-	fmt.Fprintf(stdout, "wiki: serving %s on http://%s\n", dir, listener.Addr())
+	// The URL, and the scheme it is actually served on. Printing `http://` for a
+	// `--lan` server would be a link that does not work, and the DM would find that
+	// out from a player at the table rather than from this line.
+	scheme := "http"
+	if lanConfig != nil {
+		scheme = "https"
+	}
+	fmt.Fprintf(stdout, "wiki: serving %s on %s://%s\n", dir, scheme, listener.Addr())
+
+	if opts.lan {
+		// **The warning, before the server is announced.** `docs/security.md` is
+		// honest that "click through the warning is a poor security story", and the
+		// thing a DM needs at that moment is which warning, and what it should say to
+		// the three people about to open it.
+		fmt.Fprintf(stdout, `wiki: --lan is serving every interface with a self-signed certificate.
+wiki:   players will see a browser warning. That is expected, and the certificate
+wiki:   above is the one to check. The alternative is plaintext over the network,
+wiki:   which is not a trade worth making with a campaign on it.
+`)
+	}
 	fmt.Fprintf(stdout, "wiki: %d campaign(s); share links start at http://%s/c/<campaign>/?k=<token>\n",
 		len(served), listener.Addr())
 	if !opts.prod {

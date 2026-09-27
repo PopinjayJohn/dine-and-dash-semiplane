@@ -508,6 +508,21 @@
   names the backup test, and it names it as one of the tools for the question
   "`wiki reindex --full` and `TestBackupsRestoreIdenticalIndex` are this project's
   tools for that".
+- **`wiki serve --lan`, which ADR 0011 calls "a first-class path" and
+  `docs/security.md` has listed a control for without the flag existing.**
+  `docs/security.md`'s row is "The network, on a LAN | Sees plaintext HTTP if
+  `--lan` without TLS | Self-signed TLS offered by `wiki serve --lan`" — a control
+  for a path that was not there. `--lan` now turns TLS **on** and does not offer to
+  leave it off, because a campaign's secrets crossing a cafe wifi in plaintext is not
+  a poor security story, it is the thing this application exists for not doing. It
+  also implies `--production`, so the session cookie gets `Secure` (ADR 0003).
+- **The LAN certificate is generated per data directory and kept, and the fingerprint
+  is printed before the server is announced.** A certificate regenerated on every start
+  is a browser warning on every visit, and a warning a DM learns to dismiss without
+  reading has stopped protecting anything. The fingerprint is in
+  `openssl x509 -fingerprint -sha256` form so the thing they read in the dialog and
+  the thing they can type into a shell are the same string. Shipping one certificate
+  was the alternative and it means every DM in the world shares a private key.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a
