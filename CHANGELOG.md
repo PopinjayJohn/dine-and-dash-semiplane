@@ -2,6 +2,37 @@
 
 ### Added
 
+- **`web/`: the static half of the front end, embedded.** The stylesheet and the
+  pinned Datastar client, with `go:embed` and nothing fetched at runtime. ADR
+  0006 requires the offline property and ADR 0011 explains why it matters — a
+  table is a room with more than one device on it and no reason to have a working
+  internet connection — and a CDN is also a third party in the path of a
+  campaign's secrets, because a `datastar.js` fetched at runtime is a script the
+  application did not write running with the session cookie.
+- **`datastar.js` v1.0.4 vendored verbatim**, as ADR 0008 pins, and a test reads
+  the version out of the embedded bytes so an upgrade that forgets the constant
+  fails instead of passing quietly. The source map it names at the end is not
+  vendored: it is a developer convenience, and a browser that cannot find it says
+  so in a console and otherwise reads the file the application actually serves.
+- **Assets are served by a handler rather than a raw `http.FileServer`**, for two
+  reasons that are correctness and not polish. The content type is explicit,
+  because the HTTP layer sends `X-Content-Type-Options: nosniff` and a `.js`
+  served as `text/plain` is a script the browser refuses to run. And the ETag is
+  computed from the bytes, because embedded files have a zero modification time,
+  so `If-Modified-Since` never matches and a DM who replaces the binary would be
+  left with last month's stylesheet in a browser cache that never asks again.
+- **The stylesheet has no web font and no framework.** The system font stack is
+  the right font for a tool a DM opens on their own laptop, and one file with no
+  build step is one fewer thing to go wrong on a machine nobody has a shell open
+  on.
+- **The stylesheet matches the renderer's class names rather than inventing
+  them** — `wiki-link`, `unresolved`, `embed`, `callout`, `callout-<type>`,
+  `revealed`, `stripped` — and says so at the top, so renaming one is a change to
+  two files and both say why.
+- **There is no rule that hides a secret.** A `[!SECRET]` block a principal may
+  not read has already left the parse tree before any HTML is written, and the
+  only thing left is the marker the renderer emits instead.
+
 - **`internal/sse`: ADR 0006's four functions, and the hub behind them.** A
   handler takes a `templ.Component` and never touches `text/event-stream`
   headers, `data:` prefixes or event ids. The implementation is the standard
