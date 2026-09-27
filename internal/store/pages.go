@@ -11,7 +11,8 @@ import (
 
 // pageColumns is the column list every page query selects, in the order
 // scanPage expects.
-const pageColumns = `id, campaign_id, path, title, type, visibility, frontmatter, body,
+const pageColumns = `id, campaign_id, path, title, type, visibility,
+	owner_character_page_id, frontmatter, body,
 	content_hash, renderer_version, created_at, updated_at, is_deleted`
 
 // UpsertPage stores a page, inserting it or replacing the row already at that
@@ -48,11 +49,12 @@ func (s *Store) UpsertPage(ctx context.Context, p domain.Page) (domain.Page, err
 	}
 
 	const query = `INSERT INTO pages (` + pageColumns + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (campaign_id, path) DO UPDATE SET
 			title            = excluded.title,
 			type             = excluded.type,
 			visibility       = excluded.visibility,
+			owner_character_page_id = excluded.owner_character_page_id,
 			frontmatter      = excluded.frontmatter,
 			body             = excluded.body,
 			content_hash     = excluded.content_hash,
@@ -63,7 +65,7 @@ func (s *Store) UpsertPage(ctx context.Context, p domain.Page) (domain.Page, err
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, execErr := tx.ExecContext(ctx, query,
 			p.ID, p.CampaignID, p.Path, p.Title, p.Type.String(), p.Audience().String(),
-			p.Frontmatter, p.Body,
+			nullableString(p.OwnerCharacterPageID), p.Frontmatter, p.Body,
 			p.ContentHash, p.RendererVersion,
 			p.CreatedAt.UTC().Format(timeLayout), p.UpdatedAt.UTC().Format(timeLayout),
 			boolArg(p.IsDeleted)); execErr != nil {
@@ -227,11 +229,13 @@ func scanPage(row rowScanner) (domain.Page, error) {
 	var (
 		p                                          domain.Page
 		pageType, visibility, createdAt, updatedAt string
+		owner                                      sql.NullString
 		deleted                                    int
 	)
 
 	err := row.Scan(
-		&p.ID, &p.CampaignID, &p.Path, &p.Title, &pageType, &visibility, &p.Frontmatter, &p.Body,
+		&p.ID, &p.CampaignID, &p.Path, &p.Title, &pageType, &visibility,
+		&owner, &p.Frontmatter, &p.Body,
 		&p.ContentHash, &p.RendererVersion, &createdAt, &updatedAt, &deleted)
 	if err != nil {
 		return domain.Page{}, err
@@ -239,6 +243,7 @@ func scanPage(row rowScanner) (domain.Page, error) {
 
 	p.Type = domain.PageType(pageType)
 	p.Visibility = domain.Visibility(visibility)
+	p.OwnerCharacterPageID = owner.String
 	p.IsDeleted = deleted != 0
 	if p.CreatedAt, err = requiredTime("pages.created_at", createdAt); err != nil {
 		return domain.Page{}, err

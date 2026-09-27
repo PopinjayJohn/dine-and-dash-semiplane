@@ -123,20 +123,29 @@ type OwnershipProblem struct {
 	Reason string
 }
 
-// checkOwner validates one owner's answer and returns the problem it found, if
-// any.
+// checkOwner validates one owner's answer, and returns the id of the character
+// page it names plus any problem it found.
+//
+// Both halves come from one lookup, which is why it is one function: validating
+// that the character exists and then looking it up again to get its id would be
+// two queries for one question, and on a full sync of a campaign with a hundred
+// characters that is a hundred redundant lookups for a value the first one had.
+//
+// pageID is the calling page's own id, for the case where a character page *is*
+// its own owner; it is passed rather than looked up for the reason above, one
+// level up.
 //
 // The character's page has to exist. An owner that points at nothing would make
 // the page unowned in practice -- no character, so no player may read or write
 // it -- while the index said otherwise, and the two would disagree in the one
 // place where the difference is a support ticket.
-func (y *Syncer) checkOwner(ctx context.Context, pagePath string, doc *vault.Document, owner Owner) *OwnershipProblem {
+func (y *Syncer) checkOwner(ctx context.Context, pagePath, pageID string, doc *vault.Document, owner Owner) (string, *OwnershipProblem) {
 	// A page under one character that says another is a conflict, and it is
 	// checked first: it is about this page alone, needs no lookup, and a DM
 	// looking at the report will act on it before anything else.
 	if owner.FromPath && doc != nil {
 		if declared := strings.TrimSpace(doc.Character()); declared != "" && declared != owner.Character {
-			return &OwnershipProblem{
+			return "", &OwnershipProblem{
 				Path: pagePath,
 				Reason: fmt.Sprintf("it is under %s/%s but its character: key says %q, and the path is what counts",
 					CharacterDir, owner.Character, declared),
@@ -144,26 +153,39 @@ func (y *Syncer) checkOwner(ctx context.Context, pagePath string, doc *vault.Doc
 		}
 	}
 
-	// The character's own page. For a `character:` key it is whatever the key
-	// names; for the path rule it is the page at the top of the subtree.
+	// The character's own page, which is always `characters/<slug>`.
+	//
+	// **This was wrong until M7.** A `character: <slug>` key used to resolve to a
+	// page at `<slug>`, which is a top-level page called "aria" rather than the
+	// character at `characters/aria`. Nothing could go wrong from it while the
+	// answer was only used to say "not a page in this campaign" — a wrong path
+	// reported a problem for a page whose owner was perfectly fine, which is
+	// noise and not a disclosure. M7 uses the answer as a *page id*, and a wrong
+	// path is then a character that is never owned, which is fail-closed but is
+	// still a bug: a player's spell sheet would be nobody's, and the report would
+	// blame a page that does not exist.
+	//
+	// The rule is the spec's: a character is not a new entity, it is a page of
+	// type `character` at `characters/<slug>`, and both ways of naming one resolve
+	// to the same thing.
 	target := CharacterDir + "/" + owner.Character
-	if !owner.FromPath {
-		target = owner.Character
-	}
 
 	// A character's own page *is* its character's page, and it is being indexed
 	// by the very pass asking. Looking for it in the index would report every
-	// character in every campaign as an owner that does not exist.
+	// character in every campaign as an owner that does not exist -- and it does
+	// not, so there would be no id to read either. The page's own id is the
+	// answer, and the caller has already found it.
 	if target == pagePath {
-		return nil
+		return pageID, nil
 	}
 
-	if _, err := y.store.GetPage(ctx, y.campaign.ID, target); err != nil {
-		return &OwnershipProblem{
+	character, err := y.store.GetPage(ctx, y.campaign.ID, target)
+	if err != nil {
+		return "", &OwnershipProblem{
 			Path:   pagePath,
 			Reason: fmt.Sprintf("it claims to belong to the %s character, and %s is not a page in this campaign", owner.Character, target),
 		}
 	}
 
-	return nil
+	return character.ID, nil
 }

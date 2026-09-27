@@ -157,7 +157,16 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 
 	if owner, owned := OwnerOf(pagePath, doc); owned {
 		p.owner, p.owned = owner, true
-		p.ownerProblem = y.checkOwner(ctx, pagePath, doc, owner)
+		// The character's page *id*, which is what the read predicate joins on, and
+		// empty when the owner does not hold up.
+		//
+		// Empty is the fail-closed answer and it is worth being explicit that it is
+		// one: a `dm-and-owner` page whose character page could not be found has
+		// no owner, so the DM reads it and nobody else does, while the sync report
+		// says why. The alternative -- carrying the slug anyway and letting the
+		// predicate fail to join -- is the same answer by a longer route, and a
+		// slug in a column that is documented as a page id is a lie.
+		p.page.OwnerCharacterPageID, p.ownerProblem = y.checkOwner(ctx, pagePath, p.page.ID, doc, owner)
 	}
 	p.links = y.linksFor(ctx, p.page.ID, doc)
 	p.index = indexEntryFor(doc, p.page)
@@ -246,6 +255,7 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 		indexed.Title != p.page.Title ||
 		indexed.Type != p.page.Type ||
 		indexed.Visibility != p.page.Visibility ||
+		indexed.OwnerCharacterPageID != p.page.OwnerCharacterPageID ||
 		indexed.Frontmatter != p.page.Frontmatter ||
 		indexed.Body != p.page.Body ||
 		indexed.RendererVersion != p.page.RendererVersion {

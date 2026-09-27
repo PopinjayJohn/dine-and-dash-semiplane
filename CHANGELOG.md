@@ -21,13 +21,46 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
-- **The read predicate's ownership test is no longer `1 = 0`.** It is an `EXISTS`
-  over `principal_characters`, correlated on `pc.character_page_id = p.id` — the
-  correlation is the whole of it, and the version without it is shorter and admits
-  every player to every `dm-and-owner` page in their campaign. The test that used to
-  assert the placeholder was still `1 = 0` — the only way to catch somebody tidying
-  away a fail-closed branch — is now a test of the behaviour: a bound player reads
-  their own `dm-and-owner` page and an unbound one does not.
+- **`pages.owner_character_page_id`, and the sync resolving to it.** M4 worked out a
+  page's owner on every sync, validated it, reported the problems and then threw
+  the answer away, because there was nowhere to put it. It is a *page id* and not a
+  slug, and that is the design: the read predicate asks a question about a page
+  and answers it by joining, and a slug would put a second rule — how a slug
+  becomes a page — inside the one place that must have exactly one.
+- **The whole subtree has the character's own page as its owner, not itself**, and
+  the read predicate now correlates on that owner rather than on the page. This is
+  the difference between "Alice may read her character's backstory" and "Alice may
+  read exactly the one file she happens to be bound to", and it is the spec's form
+  of the ownership test; M6 had to correlate on the page itself because the column
+  did not exist yet.
+- **`internal/access`, the one place that answers "what may this principal do with
+  this page".** `For(p, page) Decision` is pure — no store, no clock — because the
+  rights matrix has 36 cells and the only way to be sure all 36 behave as
+  documented is to be able to write down all 36 and run them in a millisecond. Its
+  two arguments are the two facts the matrix uses, which is why they are not
+  `domain.Principal` and `domain.Page`: a resolver holding a campaign id has a
+  temptation to check it, and that check is a rule the store already applies to
+  every query.
+- **`TestForDecisionMatrix` writes every cell out by hand** — 24 of them: §8's two
+  principals, three audiences, two ownership states, two archived states.
+  Generated would have been a matrix and a generator, and when they disagree the
+  generator reads as authoritative, which is how a table of tests becomes a
+  restatement of the code. It **caught a disclosure in the resolver two minutes
+  after it was written**: the ownership shortcut was applied before the `dm-only`
+  check, so a player bound to a character page the DM had marked `dm-only` could
+  read it, edit it and see its secrets. §8 says `dm-only` is *absolute*, and the
+  only reason that is written down rather than implied is that somebody eventually
+  writes the matrix.
+- **`TestStoreReadPredicateMatchesResolver`, the named test this project has been
+  deferring since M5.** The SQL predicate and the Go resolver answer the same
+  question about the same matrix, and the two disagreeing is a leak in one
+  direction and a missing feature in the other, so the answer to "which one is
+  right" is that both are required to say the same thing. Thirty-six cells, §8's two
+  principals plus the row the matrix does not have, compared through both the read
+  scope and the stricter secret scope. It is worth more than the code it checks,
+  because it is the only place the matrix, the column default, `ON DELETE SET
+  NULL`, the archived rule and SQL's own NULL handling are compared against the
+  thing the documentation says.
 - **A player can now find their own character's secrets.** The private index was
   readable by the DM and by nobody else, so before this milestone a player's own
   character page's secrets were findable by nobody at all. A binding is what makes

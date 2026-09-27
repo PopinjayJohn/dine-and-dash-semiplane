@@ -231,7 +231,7 @@ func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 	// is what 0005 does to `sessions` — has to name the index and not the table,
 	// because a down migration that dropped the table would take away a version's
 	// work as well as its own.
-	for _, name := range []string{"principal_characters", "principal_characters_page", "sessions_expires"} {
+	for _, name := range []string{"pages_owner"} {
 		if slices.Contains(got, name) {
 			t.Errorf("%q survived the down migration", name)
 		}
@@ -242,7 +242,7 @@ func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 	for _, name := range []string{
 		"campaigns", "pages", "page_links", "page_targets",
 		"pages_fts", "pages_secrets_fts",
-		"principals", "sessions", "audit_log",
+		"principals", "sessions", "audit_log", "principal_characters",
 		"schema_migrations",
 	} {
 		if !slices.Contains(got, name) {
