@@ -681,3 +681,75 @@ func ownedPages(t *testing.T, s *store.Store, id string) []string {
 	}
 	return owned
 }
+
+// TouchSession is the slide, and the rule about it that matters is that it never
+// moves an expiry backwards.
+//
+// The rule belongs next to the column rather than only in the caller: a clock
+// that goes backwards is a machine whose battery died or whose time was wrong, and
+// the failure is a player logged out mid-session with no cause. A caller in
+// another package that reads "set the expiry" rather than "extend the expiry" will
+// get this wrong, and the wrong version is quiet — the row just has an earlier
+// date on it.
+func TestTouchSessionOnlyExtends(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := newStore(t)
+	c := mustCreateCampaign(t, s)
+	owner := mustCreatePrincipal(t, s, c.ID, "Alice (Ranger)", "hash-of-alice")
+
+	until := testTime.Add(8 * time.Hour)
+	created, err := s.CreateSession(ctx, liveSession(owner.ID, until))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Later: the slide, and it lands.
+	later := until.Add(30 * 24 * time.Hour)
+	if err := s.TouchSession(ctx, created.ID, later); err != nil {
+		t.Fatalf("TouchSession: %v", err)
+	}
+	if got := sessionExpiresAt(t, s, created.ID); !got.Equal(later) {
+		t.Errorf("the expiry is %v, want %v", got, later)
+	}
+
+	// Earlier: refused, and the row is untouched.
+	earlier := until.Add(-24 * time.Hour)
+	if err := s.TouchSession(ctx, created.ID, earlier); err != nil {
+		t.Fatalf("TouchSession backwards: %v", err)
+	}
+	if got := sessionExpiresAt(t, s, created.ID); !got.Equal(later) {
+		t.Errorf("a backwards touch moved the expiry from %v to %v", later, got)
+	}
+
+	// The same instant is a no-op rather than a write, and is not an error.
+	if err := s.TouchSession(ctx, created.ID, later); err != nil {
+		t.Fatalf("TouchSession to the same instant: %v", err)
+	}
+	if got := sessionExpiresAt(t, s, created.ID); !got.Equal(later) {
+		t.Errorf("touching a session to its current expiry changed it to %v", got)
+	}
+
+	// A session that is not there is not an error, because the caller has just
+	// read it and one revoked between the read and the write is a session the
+	// caller was never entitled to keep. Returning nil is what makes it safe to
+	// slide on an already-authenticated request.
+	if err := s.TouchSession(ctx, "no-such-session", later); err != nil {
+		t.Errorf("TouchSession of a session that is not there: %v", err)
+	}
+}
+
+// sessionExpiresAt reads one session's expiry.
+func sessionExpiresAt(t *testing.T, s *store.Store, id string) time.Time {
+	t.Helper()
+
+	sess, found, err := s.SessionByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("SessionByID(%q): %v", id, err)
+	}
+	if !found {
+		t.Fatalf("session %q is not in the table", id)
+	}
+	return sess.ExpiresAt
+}

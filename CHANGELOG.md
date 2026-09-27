@@ -418,6 +418,31 @@
 
 ### Changed
 
+- **A session now slides, and its lifetime is a config setting defaulting to 30
+  days.** Every authenticated request pushes the expiry out to now plus the
+  lifetime, so a player who plays every week is never asked for their link again.
+  A DM who plays once a year wants a week and one who plays weekly wants a month,
+  so the number is configuration rather than a constant in a package they do not
+  read; a week is one line, and a DM who sets it logs their players out
+  periodically on purpose.
+- The trade is written down in `docs/security.md` rather than left to be
+  discovered: **a leaked *cookie* can no longer be aged out by waiting, only ended
+  by revoking.** A fixed window would let thirty days of doing nothing retire one
+  by itself. What still ends a session immediately is a revocation, a role change
+  or a binding change, and all three are row deletes rather than something the
+  clock has to agree with — so a DM who suspects a cookie is in the wrong hands
+  revokes, and does not wait.
+- **Only a success slides.** A wrong cookie must not extend anything, or a script
+  guessing session ids keeps sessions alive by trying them.
+- **An expiry never moves backwards**, and the rule is enforced in the store next
+  to the column rather than only in the caller that has to remember it. A clock
+  that goes backwards is a machine whose battery died, and the failure is a player
+  logged out mid-session with no cause.
+- The slide is one `UPDATE` on a row that has just been read. The alternative —
+  refreshing only when the remaining life drops below half — bounds the writes at
+  the price of an effective session length that is not a number a person can state,
+  which is the wrong trade for a security-relevant value.
+
 - The migration names in the spec were wrong, and §5 now says which is which:
   `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both
   earlier than the `0002_access.sql` the spec planned, and `0004_access.sql` is

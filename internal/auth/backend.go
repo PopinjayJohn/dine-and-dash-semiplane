@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"time"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 )
@@ -22,6 +23,7 @@ type Backend interface {
 	RevokePrincipal(ctx context.Context, id string) error
 	CreateSession(ctx context.Context, sess domain.Session) (domain.Session, error)
 	SessionByID(ctx context.Context, id string) (domain.Session, bool, error)
+	TouchSession(ctx context.Context, id string, expiresAt time.Time) error
 	DeleteSession(ctx context.Context, id string) error
 	EndSessions(ctx context.Context, principalID string) (int, error)
 	TouchPrincipal(ctx context.Context, id string) error

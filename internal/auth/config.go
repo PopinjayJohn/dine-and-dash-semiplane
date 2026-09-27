@@ -40,16 +40,27 @@ type Config struct {
 	// link stopped working" with no cause.
 	LinkExpiry time.Duration
 
-	// SessionLifetime is how long a redeemed link is good for.
+	// SessionLifetime is how long a session is good for, and it **slides**: every
+	// authenticated request pushes the session's expiry out to now plus this, so
+	// somebody who plays every week is never asked for their link again.
 	//
-	// A fortnight, which is long enough that nobody at a table is logged out
-	// mid-session and short enough that a link pasted somewhere public has gone
-	// stale on its own even if the DM never gets round to revoking it. A player
-	// who has not played in a month clicks their link again and it works, which is
-	// the whole point of a capability link rather than a password.
+	// Thirty days by default. That is long enough that a player who opens the wiki
+	// between sessions is not logged out, and short enough that a laptop left
+	// closed for a month and then opened does not resume a session. The window is
+	// a configuration setting because the right answer depends on a campaign: one
+	// played weekly at a table wants thirty days, one played once a year wants
+	// seven, and neither of them should have that decided in a constant in a
+	// package they do not read.
 	//
 	// Zero means the default, not "never": a session that does not expire is a
-	// credential that outlives the reason it was issued.
+	// credential that outlives the reason it was issued, and "never" is what
+	// revoking the link is for.
+	//
+	// Sliding is a real trade rather than a free improvement, and it is written
+	// down in docs/security.md: a leaked *cookie* can no longer be aged out by
+	// waiting, only ended by revoking. What still ends one immediately is a
+	// revocation, a role change, or a character-binding change, and all three are
+	// row deletes rather than something the clock has to agree with.
 	SessionLifetime time.Duration
 }
 
@@ -60,8 +71,8 @@ const (
 	// looking for the default does not have to infer it from a zero literal.
 	DefaultLinkExpiry time.Duration = 0
 
-	// DefaultSessionLifetime is a fortnight; see Config.SessionLifetime.
-	DefaultSessionLifetime = 14 * 24 * time.Hour
+	// DefaultSessionLifetime is thirty days; see Config.SessionLifetime.
+	DefaultSessionLifetime = 30 * 24 * time.Hour
 )
 
 func (c Config) now() time.Time {

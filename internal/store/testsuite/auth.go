@@ -253,6 +253,54 @@ func aStoredSessionAlwaysExpires(t *testing.T, factory Factory) {
 	}
 }
 
+// The slide, and the rule about it that is not obvious: an expiry never moves
+// backwards. A clock that goes backwards is a machine whose battery died, and the
+// failure is a player logged out mid-session with no cause — so the rule lives next
+// to the column rather than only in the caller that has to remember it.
+func touchSessionOnlyExtends(t *testing.T, factory Factory) {
+	ctx := context.Background()
+	s := factory(t)
+	campaign := createCampaignWithSlug(t, s, "blackwater")
+	alice := createPrincipal(t, s, campaign.ID, "Alice (Ranger)", "hash-of-alice")
+
+	created, err := s.CreateSession(ctx, liveSessionFor(alice.ID))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	later := created.ExpiresAt.Add(30 * 24 * time.Hour)
+	if slideErr := s.TouchSession(ctx, created.ID, later); slideErr != nil {
+		t.Fatalf("TouchSession: %v", slideErr)
+	}
+	after, found, err := s.SessionByID(ctx, created.ID)
+	if err != nil || !found {
+		t.Fatalf("SessionByID = %+v, %t, %v", after, found, err)
+	}
+	if !after.ExpiresAt.Equal(later) {
+		t.Errorf("after the slide the expiry is %v, want %v", after.ExpiresAt, later)
+	}
+
+	backwards := created.ExpiresAt.Add(-24 * time.Hour)
+	if backErr := s.TouchSession(ctx, created.ID, backwards); backErr != nil {
+		t.Fatalf("TouchSession backwards: %v", backErr)
+	}
+	after, _, err = s.SessionByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("SessionByID: %v", err)
+	}
+	if !after.ExpiresAt.Equal(later) {
+		t.Errorf("a backwards touch moved the expiry from %v to %v", later, after.ExpiresAt)
+	}
+
+	// A session that is not there is not an error: the caller has just read it,
+	// and one revoked between the read and the write is a session the caller was
+	// never entitled to keep. Returning nil is what makes sliding safe on a request
+	// that has already been authenticated.
+	if err := s.TouchSession(ctx, "no-such-session", later); err != nil {
+		t.Errorf("TouchSession of a session that is not there: %v", err)
+	}
+}
+
 // A binding is a statement about what a player owns now, and "now" is the whole
 // point: an add-only table is a table where a player who loses a character keeps
 // reading its pages.

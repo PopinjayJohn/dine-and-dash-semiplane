@@ -190,6 +190,25 @@ func (r Redeemer) Redeem(ctx context.Context, campaignSlug domain.Slug, token st
 // rather than in the router for the same reason the predicate is in one place in
 // the store: it is a rule about time, and two copies of a rule about time is a
 // rule that will be copied with one of the two bugs.
+//
+// # The slide
+//
+// A successful authentication moves the session's expiry out to now plus the
+// session lifetime, so somebody who plays every week never sees their link again.
+// Three things about that are worth stating because each of them is a way to get
+// it wrong:
+//
+//   - **Only a success slides.** A wrong cookie must not extend anything, or a
+//     script guessing ids would keep sessions alive by trying them.
+//   - **The expiry never moves backwards.** `now` is the injected clock and a
+//     machine's clock is not a fact, so a session that worked an hour ago still
+//     works. The store enforces that too, because the rule belongs next to the
+//     column rather than only in the caller.
+//   - **It is one UPDATE on a row that has just been read.** A write on the
+//     request path is a cost, and the alternative — refreshing only when the
+//     remaining life drops below half — bounds the writes at the price of an
+//     unpredictable effective session length. At this scale, on one machine, one
+//     UPDATE is cheaper than a rule nobody can state in one sentence.
 func (r Redeemer) Authenticate(ctx context.Context, sessionID string) (domain.Principal, error) {
 	if sessionID == "" {
 		return domain.Principal{}, ErrNoSession
@@ -203,7 +222,8 @@ func (r Redeemer) Authenticate(ctx context.Context, sessionID string) (domain.Pr
 		return domain.Principal{}, ErrNoSession
 	}
 
-	if session.Expired(r.Config.now()) {
+	now := r.Config.now()
+	if session.Expired(now) {
 		// A session that has lapsed is ended rather than left to be found and
 		// rejected on every request for the rest of its life. Revocation is a
 		// delete; expiry is the same idea for the clock's version of it.
@@ -231,7 +251,30 @@ func (r Redeemer) Authenticate(ctx context.Context, sessionID string) (domain.Pr
 		return domain.Principal{}, ErrRevoked
 	}
 
+	// The slide, last, so that it happens only for a session that has just been
+	// proved live and belongs to a principal that has just been proved un-revoked.
+	// A failure is not fatal: the session works, and an expiry that did not move
+	// means the player is asked for their link again in thirty days rather than
+	// being logged out of a game they are in the middle of.
+	if err := r.slide(ctx, session, now); err != nil {
+		return principal, nil //nolint:nilerr // a session that works beats a session that slides
+	}
+
 	return principal, nil
+}
+
+// slide moves a session's expiry out, if that is an extension.
+//
+// A session whose remaining life is already longer than the new expiry — a
+// machine whose clock went backwards — is left alone, and the store's own
+// "never move it backwards" clause means the two agree even if one of them is
+// wrong.
+func (r Redeemer) slide(ctx context.Context, session domain.Session, now time.Time) error {
+	until := now.Add(r.Config.sessionLifetime())
+	if !until.After(session.ExpiresAt) {
+		return nil
+	}
+	return r.Backend.TouchSession(ctx, session.ID, until)
 }
 
 // EndSession is a logout. A session that is not there is not an error: a browser

@@ -45,6 +45,9 @@ func Store(t *testing.T, factory Factory) {
 		revokingEveryPrincipalIsScopedToOneCampaign(t, factory)
 	})
 	t.Run("a stored session always expires", func(t *testing.T) { aStoredSessionAlwaysExpires(t, factory) })
+	t.Run("a slid session's expiry never moves backwards", func(t *testing.T) {
+		touchSessionOnlyExtends(t, factory)
+	})
 	t.Run("a character binding is a replace", func(t *testing.T) { aCharacterBindingIsAReplace(t, factory) })
 	t.Run("the audit log is appended and read newest first", func(t *testing.T) {
 		theAuditLogIsAppendedAndReadNewestFirst(t, factory)

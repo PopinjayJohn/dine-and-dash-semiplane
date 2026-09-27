@@ -94,6 +94,7 @@ type API interface {
 	SessionByID(ctx context.Context, id string) (domain.Session, bool, error)
 	SessionsForPrincipal(ctx context.Context, principalID string, now time.Time) ([]domain.Session, error)
 	DeleteSession(ctx context.Context, id string) error
+	TouchSession(ctx context.Context, id string, expiresAt time.Time) error
 	PurgeExpiredSessions(ctx context.Context, now time.Time) (int, error)
 
 	AppendAudit(ctx context.Context, entry domain.AuditEntry) (domain.AuditEntry, error)

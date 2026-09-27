@@ -112,6 +112,29 @@ func (s *Store) SessionsForPrincipal(ctx context.Context, principalID string, no
 	return sessions, nil
 }
 
+// TouchSession moves a session's expiry, which is the slide.
+//
+// It never moves an expiry *backwards*. A clock that goes backwards — a laptop
+// whose battery died, a machine that had the wrong time, a test that set its clock
+// to an earlier instant — would otherwise shorten a session that was working, and
+// the failure is a player logged out mid-session with no cause. So the row keeps
+// whichever of the two is later.
+//
+// A session with no row is not an error: the caller has just read it, and a
+// session that was revoked between the read and this write is a session the
+// caller was never entitled to keep. Returning nil for that is what makes it safe
+// to slide on a request that has already been authenticated.
+func (s *Store) TouchSession(ctx context.Context, id string, expiresAt time.Time) error {
+	const query = `UPDATE sessions SET expires_at = ?
+		WHERE id = ? AND (expires_at = '' OR expires_at < ?)`
+
+	if _, err := s.write.ExecContext(ctx, query,
+		expiresAt.UTC().Format(timeLayout), id, expiresAt.UTC().Format(timeLayout)); err != nil {
+		return writeError("extending session "+id, err)
+	}
+	return nil
+}
+
 // DeleteSession ends one session, which is a logout.
 //
 // A session that is not there is not an error. Logout is the one operation a
