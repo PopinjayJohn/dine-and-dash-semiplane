@@ -49,6 +49,12 @@ ldflags+=" -X ${module}/internal/version.Version=${version}"
 ldflags+=" -X ${module}/internal/version.Commit=${commit}"
 ldflags+=" -X ${module}/internal/version.Date=${built}"
 
+# **Cleared, not appended to.** `release.yml` attaches `dist/*.tar.gz` with a glob,
+# so one archive left over from an earlier run at an earlier version is a release
+# carrying a binary that is not the release. A fresh CI checkout cannot hit this
+# because `dist/` does not exist there; a maintainer dry-running the job's steps
+# locally can, and the count in the last line would be quietly wrong.
+rm -rf "$dist"
 mkdir -p "$dist"
 
 for platform in "${platforms[@]}"; do
