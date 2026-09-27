@@ -142,11 +142,13 @@ internet.
 
 | | |
 |---|---|
-| [docs/spec.md](docs/spec.md) | the specification, and the milestone breakdown |
+| [docs/spec.md](docs/spec.md) | the specification, and the milestone list |
+| [docs/pitfalls.md](docs/pitfalls.md) | the constraint behind each guard rail, and the test that holds it |
 | [docs/security.md](docs/security.md) | the threat model, and the test that enforces each control |
 | [docs/plugins.md](docs/plugins.md) | writing a plugin |
 | [docs/search.md](docs/search.md) | the search query language |
 | [docs/adr/](docs/adr/) | the decisions, and why each was made |
+| [docs/milestones.md](docs/milestones.md) | a historical record of what each shipped milestone did |
 | [CHANGELOG.md](CHANGELOG.md) | what each version was |
 
 ## The vault

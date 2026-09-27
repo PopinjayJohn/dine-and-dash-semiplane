@@ -7,14 +7,24 @@ the bar a change has to clear before it is done.
 
 Read, in this order:
 
-1. `AGENTS.md` — invariants and conventions.
+1. `AGENTS.md` — invariants, the guard rails, and the commands.
 2. `docs/spec.md` — the authoritative specification.
 3. `docs/adr/` — decisions already made. Do not re-litigate one without a new
    ADR that supersedes it.
+4. `docs/pitfalls.md` — the constraint behind each guard rail, the bug it caught
+   and the test that holds it. Read this when your change touches one of them.
 
 If a change seems to require breaking an invariant in `AGENTS.md`, one of two
 things is true: the change is wrong, or the invariant needs to change and that
 deserves its own ADR and an explicit decision by the maintainer.
+
+**Where a lesson goes.** `AGENTS.md` is loaded into every agent's context on
+every task, so it carries the one-line guard rail and nothing more. When you find
+out why a thing is the way it is — the bug, the disclosure, the test that holds it
+— that goes in `docs/pitfalls.md` with a link from the guard rail. It does not
+go in `AGENTS.md`, and it does not go in the spec. `docs/doclinks_test.go` fails
+the build when a citation or a link stops resolving, so a move that breaks one is
+caught rather than discovered.
 
 ## Workflow
 
@@ -74,7 +84,8 @@ above it.
 ## Architecture decisions
 
 Anything that constrains future work — a storage model, a security property, a
-dependency choice, a rejected alternative — gets an ADR in `docs/adr/`:
+dependency choice, a rejected alternative — gets an ADR in `docs/adr/`. So does
+a rule about how the documents themselves relate; ADR 0025 is one.
 
 ```
 docs/adr/0008-short-slug.md
