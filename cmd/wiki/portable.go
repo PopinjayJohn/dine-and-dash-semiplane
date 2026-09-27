@@ -287,10 +287,22 @@ func runImportObsidian(ctx context.Context, args []string, stdout io.Writer) err
 	// make by creating a folder. An import is a different verb — somebody else's
 	// directory arriving in a data directory — and a mistyped `--campaign` must not
 	// leave an empty campaign behind.
-	if _, _, openErr := openOneCampaign(ctx, dir, opts.campaign); openErr != nil {
+	// The campaign must exist, and **the store is closed**.
+	//
+	// The first version of this line was `if _, _, openErr := ...`, which
+	// throws the store away and leaves the database file open for the rest of the
+	// process. On Linux and macOS that is invisible — unlinking an open file is
+	// legal, so every test passed. On Windows it is not, and three import tests
+	// failed in the runner's own `TempDir` cleanup with "the file is being used
+	// by another process" and nowhere near an assertion. `openOneCampaignIn`
+	// closing on *its* error path does not help here, because the error path is
+	// not the one that ran.
+	_, s, openErr := openOneCampaign(ctx, dir, opts.campaign)
+	if openErr != nil {
 		return fmt.Errorf("%w\n--  an import copies files into a campaign that already "+
 			"exists; make one with `wiki sync` on an empty vault first", openErr)
 	}
+	defer func() { _ = s.Close() }()
 
 	candidates, skipped, err := importableFiles(source)
 	if err != nil {

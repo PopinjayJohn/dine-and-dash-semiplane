@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -142,12 +143,28 @@ func TestTheCertificateIsKeptSoTheWarningIsTheSameEveryVisit(t *testing.T) {
 	}
 
 	// Written, and `0600`, because it holds a private key.
+	//
+	// **The mode is only asserted on a filesystem that has one.** Windows has no POSIX
+	// permission bits: `os.WriteFile(path, data, 0o600)` writes the file and
+	// `FileMode.Perm()` reports `0666` for anything writable, so the assertion fails
+	// there for a file that is exactly as private as Windows can make it. The first
+	// version of this test asserted the mode unconditionally and the Windows runner
+	// was the one that found it.
+	//
+	// The check is therefore a `runtime.GOOS` rather than a skip of the whole test,
+	// because the *rest* of it — that the file is written at all, and that the
+	// certificate it holds is the same one next time — is the property and it holds
+	// everywhere.
 	info, err := os.Stat(firstSource)
 	if err != nil {
 		t.Fatalf("the certificate was not written: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("the certificate file is %o, want 600: it holds a private key", mode)
+	if runtime.GOOS != "windows" {
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("the certificate file is %o, want 600: it holds a private key", mode)
+		}
+	} else if info.Mode().IsRegular() == false {
+		t.Errorf("the certificate path is not a regular file")
 	}
 
 	second, _, err := lanCertificate(opts, dir)

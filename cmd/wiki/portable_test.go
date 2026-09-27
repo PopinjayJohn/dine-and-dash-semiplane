@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -390,4 +391,144 @@ func slicesContainsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestACommandDoesNotLeaveTheDatabaseOpen is the test for the class, not for the
+// instance, and it exists because of how the first one was found.
+//
+// `runImport` opened a store to check that the campaign existed and wrote
+// `if _, _, openErr := ...`, which throws the store away and leaves the database
+// file open for the rest of the process. **On Linux and macOS that is invisible** —
+// unlinking an open file is legal, so every local run passed and the Linux and macOS
+// CI legs were green. On Windows it is not legal, and the failure arrived as
+// `TempDir RemoveAll cleanup: unlinkat ... campaigns.db: The process cannot access
+// the file because it is being used by another process` — in the runner's own
+// cleanup, with no assertion anywhere near it.
+//
+// A bug that only reproduces on one platform is a bug that only one person finds, so
+// here is the check that works on the two platforms that can do it:
+//
+//   - on Windows, `os.Remove` on an open file fails, which is the whole mechanism;
+//   - on Linux, `/proc/self/fd` lists the process's open descriptors, and one
+//     pointing at the database is the same leak seen from the other side.
+//
+// It skips on macOS, where neither works, and says so rather than passing quietly.
+func TestACommandDoesNotLeaveTheDatabaseOpen(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("neither an unlink nor /proc can see an open file here; " +
+			"this class is caught on linux and windows")
+	}
+
+	dir := seed(t)
+	ok(t, "sync", "--data-dir", dir, "--campaign", "blackwater")
+
+	// **Every command that opens a store, `import` included** -- and the first
+	// version of this list did not include it, which is the version that passed
+	// while the leak was still in `runImport`. A leak test that omits the command
+	// that leaked is a leak test about a different command.
+	vault := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vault, "locations"), 0o750); err != nil {
+		t.Fatalf("making an import source: %v", err)
+	}
+	if err := writeFile(filepath.Join(vault, "locations", "new-page.md"),
+		"---\ntitle: \"New\"\n---\n\nA page.\n"); err != nil {
+		t.Fatalf("writing the import source page: %v", err)
+	}
+
+	commands := [][]string{
+		{"users", "list", "--data-dir", dir, "--campaign", "blackwater"},
+		{"backup", "--data-dir", dir},
+		{"export", "--zip", "--data-dir", dir, "--campaign", "blackwater",
+			"--out", filepath.Join(t.TempDir(), "out.zip")},
+		{"import", "obsidian", "--data-dir", dir, "--campaign", "blackwater",
+			"--yes", vault},
+	}
+
+	for _, command := range commands {
+		t.Run(command[0], func(t *testing.T) {
+			before := openDescriptorsFor(t, dir)
+			if _, stderr, code := runWiki(t, command...); code != exitOK {
+				t.Fatalf("wiki %s exited %d: %s", strings.Join(command, " "), code, stderr)
+			}
+			after := openDescriptorsFor(t, dir)
+
+			if after > before {
+				t.Errorf("wiki %s left %d descriptor(s) open on the data directory "+
+					"(was %d, now %d); on Windows this makes the directory "+
+					"impossible to move or delete",
+					strings.Join(command, " "), after-before, before, after)
+			}
+		})
+	}
+}
+
+// openDescriptorsFor is how many of this process's open descriptors point into a
+// data directory, or -1 when the platform cannot answer.
+//
+// It is `/proc/self/fd` on Linux, which is a real answer, and it is an **attempt** on
+// Windows, where the same question is "would `os.Remove` succeed" — and that answer
+// has to be given without actually removing the file, which is why Windows gets the
+// indirect version.
+func openDescriptorsFor(t *testing.T, dir string) int {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		return windowsOpenDescriptors(t, dir)
+	}
+
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("this platform cannot list open descriptors: %v", err)
+	}
+
+	// Resolve each descriptor and count the ones under the directory. A symlink's
+	// target is the file, so `/proc/self/fd/7` reads as the path the descriptor
+	// holds, and a deleted file reads as one too — which is the leak, since the
+	// descriptor survives the unlink on Linux.
+	count := 0
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(target, dir) {
+			count++
+		}
+	}
+	return count
+}
+
+// windowsOpenDescriptors is the Windows answer, and it uses the *same* mechanism the
+// failure did: the operating system will not rename a file this process holds.
+//
+// It is a rename rather than a delete because a rename is reversible and a probe that
+// deleted the fixture would be a test that destroys its own data directory. And it is
+// a rename rather than an `os.Open` handle because Go's `os` has no share mode, so a
+// handle this test opens would itself be the thing holding the file -- the question
+// cannot be asked from inside the process with the tools `os` offers.
+//
+// A `-wal` and a `-shm` are checked too, because WAL is on (ADR 0004) and those are
+// the files a WAL-mode store actually holds.
+func windowsOpenDescriptors(t *testing.T, dir string) int {
+	t.Helper()
+
+	held := 0
+	for _, name := range []string{"campaigns.db", "campaigns.db-wal", "campaigns.db-shm"} {
+		original := filepath.Join(dir, name)
+		if _, err := os.Stat(original); err != nil {
+			continue
+		}
+
+		moved := original + ".probe"
+		if err := os.Rename(original, moved); err != nil {
+			held++
+			continue
+		}
+		if err := os.Rename(moved, original); err != nil {
+			// A half-renamed fixture is worse than a failed test, so this is the one
+			// error that is not recoverable and says so.
+			t.Fatalf("putting %s back after the probe: %v", name, err)
+		}
+	}
+	return held
 }

@@ -10,7 +10,31 @@ it said on the day it shipped.
 
 ## [Unreleased]
 
-_Nothing yet. See `docs/spec.md` section 16 for what comes next._
+### Fixed
+
+- **`wiki import obsidian` left the campaign's database open for the rest of the
+  process.** It opened a store to check the campaign existed and wrote
+  `if _, _, openErr := ...`, which discards the store and drops the only handle that
+  closes it. On Linux and macOS that is invisible — unlinking an open file is legal,
+  so every local run and two of the three CI legs were green — and on Windows it makes
+  the data directory **impossible to move or delete**, because a held file cannot be
+  renamed. Windows CI found it as `TempDir RemoveAll cleanup: unlinkat
+  campaigns.db: The process cannot access the file`, which is in the runner's own
+  cleanup and near no assertion at all.
+- **A test for that class, on the two platforms that can see it.**
+  `TestACommandDoesNotLeaveTheDatabaseOpen` asks whether any of this process's
+  descriptors point into a data directory after a command: `/proc/self/fd` on Linux,
+  and a reversible rename on Windows, which is the same mechanism the failure used.
+  It skips on macOS, where neither works, and says so rather than passing quietly.
+  It has `import` in its list because **the first version did not, and that version
+  passed while the leak was still there** — a leak test that omits the command that
+  leaked is a leak test about a different command.
+- **The certificate's `0600` is no longer asserted on Windows**, where
+  `os.WriteFile`'s mode is a request and `FileMode.Perm()` reports `0666` for
+  anything writable. The rest of that test — that the file is written at all, and that
+  the certificate it holds is the same one next time — is the property, and it is
+  still asserted everywhere. The check is a `runtime.GOOS` rather than a skipped test
+  for that reason.
 
 ## [0.1.0] - 2026-09-27
 
