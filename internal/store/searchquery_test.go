@@ -48,7 +48,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) )))
-		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0), p.path
+		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0, 1.0), p.path
 		LIMIT ?`,
 		},
 		"the public index, filters only": {

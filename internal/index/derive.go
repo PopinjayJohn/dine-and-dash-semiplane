@@ -331,6 +331,7 @@ func (y *Syncer) planForBytes(ctx context.Context, pagePath string, data []byte)
 	}
 	p.links = y.linksFor(ctx, p.page.ID, doc)
 	p.index = indexEntryFor(doc, p.page)
+	p.index.Extra = extraColumn(ctx, p.page, y.log, y.fields)
 
 	settled, err := y.isSettled(ctx, p)
 	if err != nil {

@@ -6,19 +6,28 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuin/goldmark"
+
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
 
-// The capabilities that are pure declarations: a name, and what it means. They
-// are first because they are the two that need nothing from the rest of the
-// application — a page type and a frontmatter key are both strings, and refusing
-// one of them to collide with a core name is a check this package can make on its
-// own with no ordering, no recovery and no I/O.
+// The capabilities that are declarations — a name, and what it means — and the two
+// that reach into a render and an index.
 //
-// The capabilities that reach into a render, a decision, a route, an index or a
-// command are declared by the package that consumes them and registered through
-// the registry, and each arrives in the commit that gives the consumer its shape.
+// They are in one file because they share the one thing that makes them safe, which
+// is that **none of the registration functions below takes a lock.** [Registry.Add]
+// holds the write lock for the whole of a plugin's `Setup`, so a registration that
+// took the read lock to ask "is this name taken?" would deadlock, exactly as
+// [Registry.Owner] would. They are therefore lock-free by construction, and that is
+// only sound because a registry is *built* by one goroutine before anything reads
+// it — which is the same rule `Add` documents and the same one the mutex exists to
+// make a concurrent read wait rather than observe half of a build.
+//
+// The accessors at the bottom of the file do take the read lock, because those are
+// the ones a handler calls while other goroutines are rendering pages.
 
 // FieldType is a frontmatter key a plugin claims, and what its value is.
 //
@@ -41,8 +50,8 @@ import (
 // model by writing frontmatter, which is the one thing §12's "composition, not
 // override" is about and the one thing a claim list is the right place to forbid.
 type FieldType struct {
-	// Name is the frontmatter key, lower case and hyphenated like the core keys
-	// it sits beside.
+	// Name is the frontmatter key, lower case and hyphenated like the core keys it
+	// sits beside.
 	Name vault.Key
 
 	// Kind is what a value in the key is: "text", "number", "list", "ref", or
@@ -52,9 +61,9 @@ type FieldType struct {
 	// binary before a page may use it.
 	Kind string
 
-	// Summary is one line, for a `wiki help` and for the authoring guide. It is
-	// not optional because a claim nobody can read the meaning of is a claim
-	// nobody will make correctly.
+	// Summary is one line, for a `wiki help` and for the authoring guide. It is not
+	// optional because a claim nobody can read the meaning of is a claim nobody will
+	// make correctly.
 	Summary string
 }
 
@@ -80,10 +89,10 @@ func CoreFields() []vault.Key {
 //
 // A type is refused when it is one core owns, and refused *loudly* rather than
 // ignored: `domain.PageType.IsCore` already exists to tell the two apart, and a
-// plugin that claimed `character` would make that function answer about a page
-// type whose character-ownership rule does not apply to it. That is not a
-// cosmetic collision — it is a page whose owner is derived by a rule meant for a
-// different kind of page.
+// plugin that claimed `character` would make that function answer about a page type
+// whose character-ownership rule does not apply to it. That is not a cosmetic
+// collision — it is a page whose owner is derived by a rule meant for a different
+// kind of page.
 func (r *Registry) AddPageType(name domain.PageType, summary string) error {
 	if r == nil {
 		return errors.New("plugin: adding a page type to a nil registry")
@@ -107,11 +116,11 @@ func (r *Registry) AddPageType(name domain.PageType, summary string) error {
 
 // AddFieldType claims a frontmatter key for the plugin currently running Setup.
 //
-// The reservation check is the one that matters, and it is the reason this
-// function exists in this shape rather than as a field on a plugin struct: a
-// collision between two plugins and a collision between a plugin and the core are
-// the same accident with different consequences, and both have to be found before
-// startup rather than by whichever page a DM happens to write first.
+// The reservation check is the one that matters, and it is the reason this function
+// exists in this shape rather than as a field on a plugin struct: a collision
+// between two plugins and a collision between a plugin and the core are the same
+// accident with different consequences, and both have to be found before startup
+// rather than by whichever page a DM happens to write first.
 func (r *Registry) AddFieldType(field FieldType) error {
 	if r == nil {
 		return errors.New("plugin: adding a field type to a nil registry")
@@ -129,8 +138,10 @@ func (r *Registry) AddFieldType(field FieldType) error {
 		return fmt.Errorf("plugin: frontmatter key %q needs a summary", field.Name)
 	}
 
-	key := strings.ToLower(string(field.Name))
-	field.Name = vault.Key(key)
+	// Lower-cased here rather than left to the caller, because `AC:` and `ac:` being
+	// two keys would be a page whose frontmatter says both — and a key the vault
+	// does not own is a key the vault has never compared against anything.
+	field.Name = vault.Key(strings.ToLower(string(field.Name)))
 
 	if _, taken := r.fields[field.Name]; taken {
 		return fmt.Errorf("%w: frontmatter key %q", ErrDuplicateName, field.Name)
@@ -140,18 +151,115 @@ func (r *Registry) AddFieldType(field FieldType) error {
 	return nil
 }
 
+// AddSearchField contributes values to the public search index.
+//
+// It is the one capability here that reaches into a table, and two things come with
+// it for free: the values land in the *public* index only, so they go through the
+// same redaction a body does, and they go into one `extra` column rather than a
+// column of their own, so a plugin adding a field is not a migration. Both are
+// argued where they happen, in `internal/index/fields.go`.
+func (r *Registry) AddSearchField(indexer index.Indexer) error {
+	if r == nil {
+		return errors.New("plugin: adding a search field to a nil registry")
+	}
+	if isNil(indexer) {
+		return errors.New("plugin: a search field needs an indexer")
+	}
+
+	r.indexers = append(r.indexers, index.SearchField{Plugin: r.current, Indexer: indexer})
+	return nil
+}
+
+// AddRenderHook contributes a goldmark extension and a render hook in one call.
+//
+// They are one registration because they are one plugin's contribution to one
+// pipeline, and the alternative is a plugin registering an extension and then
+// forgetting the hook — a plugin that half works, in a way nobody can see from
+// either half.
+//
+// The hook's `Plugin` field is filled in from the registry's own record of who is
+// running, because a plugin cannot be trusted to spell its own name and a log line
+// that names the wrong plugin sends somebody to the wrong source file.
+func (r *Registry) AddRenderHook(hook render.RenderHook) error {
+	if r == nil {
+		return errors.New("plugin: adding a render hook to a nil registry")
+	}
+	if hook.Before == nil && hook.After == nil {
+		return errors.New("plugin: a render hook needs something to do")
+	}
+
+	if hook.Plugin == "" {
+		hook.Plugin = r.current
+	}
+
+	r.hooks = append(r.hooks, hook)
+	r.exts = append(r.exts, hook.Extensions...)
+	return nil
+}
+
+// AddGoldmarkExt contributes a goldmark extension and nothing else.
+//
+// It is a separate registration from [Registry.AddRenderHook] because an extension
+// is a *parse* capability and the failure-isolation guarantee is deliberately not
+// extended to one: there is no per-extension call site to recover at, because an
+// extension participates in the parse itself, and a panic there is a bug in a build
+// somebody can fix rather than a fact about a DM's markdown. That is a different
+// guarantee from a hook's and it is not one this package can make.
+func (r *Registry) AddGoldmarkExt(extension goldmark.Extender) error {
+	if r == nil {
+		return errors.New("plugin: adding a goldmark extension to a nil registry")
+	}
+	if extension == nil {
+		return errors.New("plugin: a goldmark extension cannot be nil")
+	}
+
+	r.exts = append(r.exts, extension)
+	return nil
+}
+
+// RenderHooks is every plugin's render contribution, in `(Priority, Name)` order.
+//
+// The order is the plugins' order rather than the registration order because a
+// plugin's position is decided in [Registry.Add]: one that asks for `PriorityLast`
+// runs after one that does not, whatever order they were registered in. The two
+// orders are the same today because the registry sorts on Add and every capability
+// is appended after that, but the sort is what makes it true and this accessor is
+// the one place that reads it.
+func (r *Registry) RenderHooks() render.Hooks {
+	if r == nil {
+		return render.Hooks{}
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return render.Hooks{Exts: slices.Clone(r.exts), Hooks: slices.Clone(r.hooks)}
+}
+
+// SearchFields is every plugin's search contribution, in the same order.
+func (r *Registry) SearchFields() []index.SearchField {
+	if r == nil {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return slices.Clone(r.indexers)
+}
+
 // PageTypes returns the page types the registered plugins contribute, keyed by the
 // name a page's frontmatter would use, with each one's summary.
 //
-// A nil registry contributes nothing and returns an empty map, so a caller can
-// range over the answer without asking whether there were plugins. The map is a
-// copy: it is built during Add and read afterwards by a sync and a handler, and a
-// map handed out by reference is a map two goroutines are one write away from a
-// race.
+// A nil registry contributes nothing and returns an empty map, so a caller can range
+// over the answer without asking whether there were plugins. The map is a copy: it
+// is built during Add and read afterwards by a sync and a handler, and a map handed
+// out by reference is a map two goroutines are one write away from a race.
 func (r *Registry) PageTypes() map[domain.PageType]string {
 	if r == nil {
 		return map[domain.PageType]string{}
 	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -168,6 +276,7 @@ func (r *Registry) FieldTypes() map[vault.Key]FieldType {
 	if r == nil {
 		return map[vault.Key]FieldType{}
 	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

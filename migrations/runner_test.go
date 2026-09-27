@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"strings"
 	"testing"
@@ -226,21 +227,17 @@ func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 
 	got := tableNames(t, db)
 
-	// Gone: the objects the version just rolled back created, and only those.
-	// A migration that adds an index to a table an earlier version created — which
-	// is what 0005 does to `sessions` — has to name the index and not the table,
-	// because a down migration that dropped the table would take away a version's
-	// work as well as its own.
-	for _, name := range []string{"pages_owner"} {
-		if slices.Contains(got, name) {
-			t.Errorf("%q survived the down migration", name)
-		}
-	}
-
-	// Still here: what the version below it created, which this down migration
-	// was never asked to touch.
+	// Still here: everything the down migration was not about.
+	//
+	// The list used to include a "gone" half naming `pages_owner`, and that half
+	// could not fire: `pages_owner` is an *index* and `tableNames` lists tables, so
+	// `slices.Contains` was always false. A test asserting an index is gone by
+	// looking for it among the tables is a test that passes when the index survives
+	// a down migration — which is the one thing a down migration must not do.
+	// `TestThePluginFieldsMigrationRollsBackTheColumnShape` is the real test for the
+	// version this milestone added, and it looks at the column set.
 	for _, name := range []string{
-		"campaigns", "pages", "page_links", "page_targets",
+		"campaigns", "pages", "page_links", "page_targets", "page_revisions",
 		"pages_fts", "pages_secrets_fts",
 		"principals", "sessions", "audit_log", "principal_characters",
 		"schema_migrations",
@@ -460,4 +457,76 @@ func TestTimeLayoutSortsAsText(t *testing.T) {
 	if !parsed.Equal(earlier) {
 		t.Errorf("parsing %q gave %v, want %v", earlierText, parsed, earlier)
 	}
+}
+
+// TestThePluginFieldsMigrationRollsBackTheColumnShape is 0007's own test, and it
+// looks at the *shape* rather than at which objects exist.
+//
+// 0007 is the one migration here that recreates a table rather than altering it,
+// because FTS5 has no `ALTER TABLE ... ADD COLUMN`. So both directions are a drop
+// and a create, and a test that asked "is `extra` gone" by listing tables could not
+// tell: the tables are there either way. What changes is their column set, and that
+// is the thing a down migration has to get right.
+//
+// The pair is a *shape* rollback, not a removal: after it, the public index is
+// exactly the one 0003 created, and `wiki reindex --full` fills it again.
+func TestThePluginFieldsMigrationRollsBackTheColumnShape(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	if _, err := migrations.Up(ctx, db, fixedClock()); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if got := columnNames(t, db, "pages_fts"); !slices.Contains(got, "extra") {
+		t.Fatalf("after Up, pages_fts has columns %v, want one of them to be `extra`", got)
+	}
+
+	if _, err := migrations.Down(ctx, db, 1); err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+
+	if got := columnNames(t, db, "pages_fts"); slices.Contains(got, "extra") {
+		t.Errorf("after Down, pages_fts still has an `extra` column; it has %v", got)
+	}
+
+	// And the columns 0003 declared are still all there, because a down migration
+	// that removed one of those would be taking away a version's work as well as its
+	// own — the rule the index half of the test above failed to check.
+	for _, want := range []string{"title", "aliases", "body", "tags", "kind"} {
+		if got := columnNames(t, db, "pages_fts"); !slices.Contains(got, want) {
+			t.Errorf("after Down, pages_fts is missing %q; it has %v", want, got)
+		}
+	}
+}
+
+// columnNames is one FTS5 table's column names, in declaration order.
+//
+// It is `pragma_table_info` rather than a query against `sqlite_master` because an
+// FTS5 virtual table's columns are not rows in it: the shadow tables are, and their
+// names are a SQLite implementation detail rather than this project's schema.
+func columnNames(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+
+	rows, err := db.QueryContext(t.Context(),
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+	if err != nil {
+		t.Fatalf("reading the columns of %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scanning a column of %s: %v", table, err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the columns of %s: %v", table, err)
+	}
+	return names
 }

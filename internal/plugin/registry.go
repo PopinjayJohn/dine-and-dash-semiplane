@@ -10,7 +10,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/yuin/goldmark"
+
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
 
@@ -48,6 +52,16 @@ type Registry struct {
 
 	// fields is the frontmatter keys the plugins claim, keyed by the key.
 	fields map[vault.Key]FieldType
+
+	// hooks and exts are the plugins' render contributions, in the plugins'
+	// `(Priority, Name)` order. The goldmark extensions are a flat list because
+	// goldmark registers them in the order it is given them and has no notion of a
+	// hook that could sit between two of them.
+	hooks []render.RenderHook
+	exts  []goldmark.Extender
+
+	// indexers are the plugins' search contributions, in the same order.
+	indexers []index.SearchField
 
 	// current is the name of the plugin whose Setup is running, and the empty
 	// string at every other time.
@@ -243,18 +257,24 @@ func normalise(name string) (string, error) {
 	return slug.String(), nil
 }
 
-// isNil reports whether a Plugin interface holds a nil pointer, which is the case a
-// `p == nil` check misses.
+// isNil reports whether an interface holds a nil pointer, which is the case a
+// `v == nil` check misses.
 //
-// A plugin is very likely to be registered as `&houseRules{}` from a slice of
-// pointers, and a slice of pointers is where a nil turns up. `isNil` is what turns
+// Every capability in this package is registered through an interface, and every
+// one of them is very likely to be handed a `&somePlugin{}` from a slice of
+// pointers — and a slice of pointers is where a nil turns up. `isNil` is what turns
 // that from a panic inside the first hook a DM's page reaches into a refusal at
 // startup, on the line that names the plugin.
-func isNil(p Plugin) bool {
-	if p == nil {
+//
+// It takes `any` rather than one of this package's own interface types so that
+// [index.Indexer] and `goldmark.Extender` get the same answer as `Plugin` does,
+// rather than each getting a second copy that is one field enumeration away from
+// disagreeing with the first.
+func isNil(v any) bool {
+	if v == nil {
 		return true
 	}
-	value := reflect.ValueOf(p)
+	value := reflect.ValueOf(v)
 	// Every kind that can be nil behind an interface, and nothing else. A struct
 	// plugin — `houseRules{}` rather than `&houseRules{}` — lands on the default and
 	// is never nil, which is correct: there is no such thing as a nil struct value

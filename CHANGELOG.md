@@ -149,6 +149,58 @@
   five queries rather than three hundred, and a build with no plugins never asks at
   all. `internal/http/decision.go` says which of the two costs is the one that
   mattered.
+- **A plugin may contribute values to the public search index, and there is one
+  column for all of them.** `migrations/0007_plugin_fields` adds `extra` to
+  `pages_fts` and nothing to `pages_secrets_fts`. One column rather than one per
+  plugin is not tidiness: **FTS5's column set is fixed when the table is created**,
+  so a per-plugin column would be a per-plugin migration, and "a plugin may
+  contribute an indexed field" would be true only for the plugins whose migrations
+  happen to have been written. Both tables are dropped and recreated, which is safe
+  for one reason and it is ADR 0001: they are projections.
+- **The private index is not extended, and that asymmetry *is* the capability.** A
+  plugin that could index into the private index could put a value in front of a
+  principal the read predicate never admitted, and no redaction afterwards would
+  help because the value was never in a body to redact. `SearchFields` reaches the
+  public index and stops there.
+- **A plugin's field value is treated as markdown and goes through `PublicText`,**
+  which catches the accident and not the intent: `PublicText` removes *blocks*, not
+  words, so a plugin that wanted to leak could simply type the secret. What it stops
+  is a plugin indexing a slice of the body it was handed, callouts and all.
+  `TestAPluginsFieldGoesThroughTheSameRedactionABodyDoes`.
+- **A field is written as `name value`,** so `extra:"words 1200"` and a bare `1200`
+  both find the page. A bare value alone would make a plugin's derived number
+  indistinguishable from a word in the page's body, which is how it starts
+  outranking a title match. And both spellings work *without* a new `is:` filter —
+  §11's filter table is a compatibility promise this milestone should not make on
+  behalf of a plugin nobody has written.
+- **A plugin that cannot run contributes nothing rather than half a truth.** Half a
+  set of fields would put some of a plugin's values in the index and not others, and
+  the settle check would then rewrite the row for ever, because the row on disk and
+  the row the index wants would disagree about whether the plugin ran. Nothing, on
+  every run, is at least a stable answer.
+- **The `extra` column is sorted before it is joined,** because an FTS5 row is a bag
+  of tokens and a column whose content depends on map iteration cannot be compared
+  against the row that is already there.
+- **`equalRow`'s nil-versus-empty comment turned out to be load-bearing**, for the
+  reason it was written: the four search statements' goldens are regenerated, and
+  `owner_character_page_id` is `COALESCE`d because a nullable column read into a
+  `string` fails.
+- **A test asserting an index is gone by looking for it among the *tables* cannot
+  fail.** `TestDownRollsBackTheVersionItIsGiven` had a "gone" half naming
+  `pages_owner` — which is an index — and `tableNames` lists tables, so
+  `slices.Contains` was always false. It had been passing while asserting nothing.
+  0007's own test is `TestThePluginFieldsMigrationRollsBackTheColumnShape`, which
+  looks at the column set, because 0007 is the one migration here that *recreates* a
+  table rather than altering it and so is the one whose down leaves every object in
+  place.
+- **`isNil` takes `any`, not `Plugin`,** so `index.Indexer` and `goldmark.Extender`
+  get the same answer rather than each getting a second copy one field enumeration
+  away from disagreeing with the first.
+- **The registration functions in the plugin registry take no lock at all.** `Add`
+  holds the write lock for the whole of a plugin's `Setup`, so a registration that
+  took the read lock to ask "is this name taken?" would deadlock — exactly as
+  `Owner` would. They are lock-free by construction, and sound because a registry is
+  built by one goroutine before anything reads it.
 - **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
   first version of it forgot `Path`.** The policy test that narrows on
   `locations/` passed anyway, because the tree in the sidebar is built from paths

@@ -31,6 +31,7 @@ func TestLoadEmbeddedMigrations(t *testing.T) {
 		{version: 4, name: "visibility"},
 		{version: 5, name: "character_bindings"},
 		{version: 6, name: "access"},
+		{version: 7, name: "plugin_fields"},
 	}
 
 	if len(loaded) != len(want) {

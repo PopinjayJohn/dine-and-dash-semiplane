@@ -22,9 +22,13 @@ import (
 // stay valid, and a hook mechanism that changed the bytes of a page nobody had
 // asked it to change would be a hook mechanism nobody could review.
 type Hooks struct {
-	// Exts are goldmark extensions, registered in order. They see the source
-	// before the core's own extensions have finished with it, which is goldmark's
+	// Exts are goldmark extensions, registered in order. They see the source before
+	// the core's own extensions have finished with it, which is goldmark's
 	// arrangement and not something this package reshapes.
+	//
+	// An extension that arrives on a [RenderHook] record is appended to this list, so
+	// a caller that wants extensions from plugins builds a [RenderHook] and a caller
+	// that has a bare `goldmark.Extender` sets `Exts` directly. Both end up here.
 	Exts []goldmark.Extender
 
 	// Hooks are the before/after records, in the order they run.
@@ -49,6 +53,12 @@ type RenderHook struct {
 
 	// After is the HTML hook, or nil for a hook that only transforms the tree.
 	After AfterRenderer
+
+	// Extensions are goldmark extensions the same plugin contributes, registered in
+	// order. They live on the record rather than in a separate list because a plugin
+	// that defines the node one of its own hooks looks for has to register both, and
+	// two registrations are two chances to register one of them.
+	Extensions []goldmark.Extender
 }
 
 // IsEmpty reports whether there is nothing to run, so that a caller can skip the
