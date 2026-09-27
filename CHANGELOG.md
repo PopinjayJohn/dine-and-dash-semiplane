@@ -1,28 +1,7 @@
-# Changelog
-
-All notable changes to this project are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-<!--
-House rules:
-
-  - `## [Unreleased]` is always the first section. Never retro-edit a released
-    section; add a new version header instead.
-  - Every commit that touches internal/, cmd/, plugins/, migrations/ or web/
-    must touch this file in the same commit. scripts/check-changelog.sh fails
-    the build otherwise.
-  - Write entries for humans reading release notes, not for a git log. "Fixed
-    the search" is not an entry; "search now ranks exact title matches first"
-    is.
-  - Each milestone from docs/spec.md lands its own section here, in the same
-    commit as the code.
--->
-
 ## [Unreleased]
 
 ### Added
+
 - **The sync keeps both search indexes in step.** A page is indexed from its file
   on the same pass that writes its row, and the settled check asks whether the
   index already holds what the file derives — so a page whose search rows were
@@ -78,7 +57,176 @@ House rules:
   0.09ms with no database in the process. The numbers are a baseline to compare
   against, not a target.
 
+- `render.SecretText` lifts a page's **unrevealed `[!SECRET]` text off the parse
+  tree**, which is what the private search index is fed. It is in `render` rather
+  than in the indexer because the `[!SECRET]` grammar has to be read the same way
+  twice — the renderer strips a secret and the indexer has to decide which side of
+  the split it belongs on — and two implementations of the same syntax is two
+  answers waiting for a DM to write the callout that separates them.
+- What goes in and what does not: a **revealed secret is public body, not secret
+  text**, and the walk carries on *into* it because a revealed block can contain a
+  secret that is not revealed. A blockquote with a secret's shape that the parser
+  could not read is included, for the same fail-closed reason the stripper removes
+  it — a secret that cannot be found is a secret the DM has lost. A secret inside
+  a secret is counted once, because the outer one already carries the inner one's
+  text.
+- Two things the first version of it got wrong, both found by the tests: goldmark
+  keeps a **code block's lines off the child nodes**, so a secret whose credential
+  is in a code block indexed as an empty string; and a **soft-wrapped line** —
+  which is every line a DM writes — arrives as two text nodes with the newline and
+  the `> ` marker between them and nothing to say so, so a two-line secret was
+  indexed as one run-on line whose phrases matched nothing. The boundary is now
+  recovered from the source offsets.
+
+- **Search runs against the public index**, filtered by the audience scope in
+  SQL. It finds pages by title, alias, tag and page type, ranks a title match
+  above a tag, an alias or a body match, and returns hits with a rank and an
+  excerpt rather than a score — because a BM25 number from one index means
+  nothing next to one from the other, and the fusion only uses the order.
+- **The private index is reachable only through the stricter scope**, and a
+  secret's excerpt is built from the private index. A DM can find their own
+  secret by content, which is a real need: the DM forgets which page they wrote a
+  name on. A player gets nothing, and the reason is not that the page is
+  unreadable — the town page is perfectly readable — but that the secret inside it
+  is not theirs to see.
+- `TestSecretNeverAppearsInAResult` is the named test, and it is blunt: a
+  forbidden-substring assertion over every field a hit carries, run for the
+  canary, for fragments of the canary, and for the three ways a `dm-only` page
+  could otherwise be listed. It also asserts the DM *does* find it, because a
+  test that only checks the canary is absent also passes against an index holding
+  no secret text at all.
+- **A player sees a subset of what the DM sees, for every query in the
+  language**, checked pairwise over the whole language rather than over chosen
+  cases. The audience scope is one-directional, and this is what says so.
+- **The FTS5 injection corpus.** FTS5 has a query language of its own and a
+  search box is a second one layered on top, so a hostile query is a security
+  problem before it is a relevance one. Every clause is quoted with FTS5's own
+  string quoting — an inner quote doubled, which is FTS5's rule and the reason a
+  naive quote breaks — and the whole expression is a bound parameter. A test
+  strips the literals back out and asserts nothing but this builder's own
+  operators are left, so `AND`, `NEAR/2`, `tags : "hub"`, `^toll`, `"*` and a
+  hand-written column filter all arrive as words. A fuzzer runs the same
+  assertion over arbitrary bytes.
+- `type:` and `is:` are SQL rather than FTS5 column filters, because an FTS5
+  column filter is itself a *match*: `type:homebrew-thing` would be the phrase
+  "homebrew thing", and a filter that quietly means something adjacent to what was
+  asked for cannot be debugged from the results. `is:` landing in the same
+  `WHERE` clause as the audience scope is also what makes it a filter rather than
+  a bypass.
+- An **empty search box asks for nothing.** "Show me everything" is a legitimate
+  question with a legitimate answer, but a search with an empty box in it is a
+  request for every title in the campaign, and that list is as disclosing as the
+  pages themselves. A caller that wants a listing asks for a listing.
+- The four search statements are **pinned by a test that prints them**, so a
+  change to how one is built shows up as a diff in the test rather than as a
+  change in what a search returns, and so a reviewer can read all the SQL this
+  package runs in one place.
+- Excerpts come back as **plain text with no markers**. FTS5's markers would have
+  to be HTML, and an excerpt of a DM's own markdown going into a response with a
+  `<script>` in it is a sanitiser decision the search package should not be making
+  silently. Highlighting is the view's, and it has the query terms in hand.
+
+- **A page's audience is now recorded on its row.** M4's sync already read every
+  `visibility` key, refused a value it did not recognise, and then threw the
+  readable ones away — a security-relevant field validated and discarded, which
+  left `visibility: dm-only` pages indexed as pages anyone could read. A read
+  predicate has to filter on something, and the `visibility` column is that
+  something. A blank audience is `players`, which is both the frontmatter default
+  and the column default, and an audience the application does not recognise is
+  refused rather than defaulted.
+- **The read predicate, written once in SQL** (`internal/store/acl.go`) and used
+  by both search indexes. A DM reads every page in the campaign; a player reads
+  the `players` pages and nothing else; a principal with no role reads the
+  `players` pages and nothing else, because a caller that forgot to look a
+  principal up gets the safe answer rather than a panic.
+- The ownership test is present, explicit and **false** for now (`1 = 0`),
+  because the table that answers it does not exist yet. That is the fail-closed
+  direction: leaving the branch out would silently widen every `dm-and-owner`
+  page, and admitting every player to one would be a disclosure the moment a DM
+  wrote one. A test asserts the branch is still there, which is what stops it
+  being "tidied away" by somebody who has not noticed the table is missing.
+- The audience test names the two levels that admit somebody and **does not name
+  `dm-only` at all**, because that is the one level no clause of it may admit and
+  the only way to write it down would be to exclude it — and an exclusion
+  somebody can delete is not a control.
+- A change to a page's audience re-indexes it. The audience is compared by name
+  alongside the other derived fields rather than being left to the content hash,
+  because it is a security field and a hash that happens to change when the file
+  does is not the same promise.
+
+- Two FTS5 indexes and the store methods that keep them in step with the pages
+  table, so search reads a projection rather than scanning bodies: `pages_fts`
+  for text nobody is barred from seeing, and `pages_secrets_fts` holding only
+  `[!SECRET]` text. A page is findable by its title, aliases, tags and public
+  body; a DM is additionally findable by what they wrote inside a secret.
+- `pages.body_public` — the single place to look when asking "is this text safe
+  to be findable?". **It is empty and stays empty until access control can
+  compute it**, because the only safe value before then is the empty string: a
+  body that reached the public index with a secret in it is a disclosure, and a
+  body that did not is a missing feature. `wiki reindex --full` rebuilds both
+  indexes from the files.
+- A page's search rows are **settled, not merely written**: `PageIndexMatches`
+  answers whether the index already holds what the file derives, so the sync
+  engine can leave a page alone. An index that could be written but not compared
+  would rot in place, and nothing in a wiki notices that for months.
+- The public body is recorded on the page row as well as in the index, in the
+  same transaction, so the column and the index row cannot disagree about what
+  the public half was built from.
+- Both index rows are part of the store contract suite, so a second `Store`
+  implementation is held to the same split and the same settled check.
+- The tokenizer clause in the migration is asserted by matching rather than by
+  reading the schema back: `Rivergate` finds `Rivergåte`, because the failure
+  mode of getting this wrong is an empty result set, which is indistinguishable
+  from a page that does not exist.
+
+- A search **query language**: bare words are ANDed, `"exact phrase"` is a
+  phrase, and `tag:`, `type:` and `is:` are filters. It is a pure value with no
+  database handle, so the relevance tests need no database and the parser can be
+  fuzzed on its own. Whatever the language does not recognise is searched for as
+  a word, because a search box that refuses input is worse than one that looks
+  for a strange word.
+- Every clause is quoted before it reaches FTS5 and the whole expression is
+  bound as a parameter, so a query cannot become a query *language*: `AND`,
+  `NOT`, `-`, `(`, `*` and a bare `"` are words, and `http://example.com` is a
+  word rather than a filter on its second colon.
+- `is:` is the one filter that is validated, and refusing `is:plyers` rather
+  than returning nothing is deliberate: a search that finds nothing looks exactly
+  like an index that has nothing to say, and a player cannot tell the two apart.
+  A player who searches `is:dm-only` gets no results, not a page.
+- A fuzzer for the language, which found two things worth fixing and kept both
+  as seeds: a byte that is not valid UTF-8 was riding through into a clause (and
+  would have made any response echoing the query invalid JSON), and a NUL inside
+  a term ended it as far as the tokenizer was concerned while not ending it as
+  far as the string was concerned. A filter value beginning with a colon is now
+  quoted on the way out as well, so `tag: :00` survives a round trip.
+
+
+### Fixed
+
+- **A test fixture's table keys were long enough to make two Go versions
+  disagree about the file.** `gofmt` aligns the values in a run of
+  composite-literal entries to the widest key, and which entries count as one
+  run changed in Go 1.26: a key far wider than its neighbours now goes in a
+  group of its own, where 1.25 aligned everything to the widest. One
+  42-character key in a table of 20-character ones was therefore a file that
+  `make fmt` on Go 1.27 wrote one way and CI's `gofmt` on Go 1.25 rewrote
+  another — a red build with no change to review, on the one check whose whole
+  job is a byte-for-byte comparison. The keys are now of a similar length, so
+  both versions agree and the table reads better for it.
+
+- A `tag:` filter asked whichever index the query was reading for a `tags`
+  column, and the private index has no `tags` column — so `tag:hub` was a SQL
+  error on every secret search. Tags are a property of the *page*, and the public
+  index is where a page's tags are indexed, so `tag:` is now a subquery against
+  the public index in both queries. It was found by the benchmark above, which is
+  the argument for having one.
+- `type:`, `is:` and now `tag:` are all SQL rather than FTS5 column filters,
+  because an FTS5 column filter is itself a *match*: `type:homebrew-thing` would
+  be the phrase "homebrew thing", and a filter that quietly means something
+  adjacent to what was asked for cannot be debugged from the results.
+
 ### Changed
+
 
 - The migration names in the spec were wrong, and §5 now says which is which:
   `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both
@@ -470,38 +618,6 @@ House rules:
 
 ### Fixed
 
-- **A lock that looks stale but will not be deleted was reported as a failure to
-  clean up, and now reports itself as held.** On Windows a file with an open
-  handle cannot be deleted at all, so a holder that is alive but has stopped
-  making progress — paused in a debugger, a machine asleep, a process that is
-  simply stuck — produces an `os.Remove` failure the moment the stale window
-  passes. The old message said "clearing the stale lock" and wrapped the
-  operating system's complaint, which told a DM nothing they could act on, and
-  it did not match `ErrHeld`, so a caller distinguishing "somebody else has this
-  campaign" from "the lock file is unreadable" — the whole reason `ErrHeld` is a
-  named error — could not tell which it had. It now says the lock is held, names
-  the process to stop, says how old the lock is and what the window was, and
-  **does not** tell the reader to delete the file, because that is the one thing
-  that will not work. The stale window was the wrong signal: it is about elapsed
-  time and this is about the handle.
-- **A stale lock could not be taken over on Windows, and the test that said so
-  was testing the wrong thing.** `TestAStaleLockIsTakenOver` acquired a lock and
-  then tried to take it over *while still holding it*, which works on Linux —
-  unlinking a file with an open handle is legal there — and fails on Windows,
-  where a file in use cannot be deleted at all. Windows was right and the test
-  was wrong: an open handle is exactly what a **live** holder has, and a lock
-  file with no handle on it belongs to a process that died, because the operating
-  system closed the handle when it died. So the test asserted a situation that
-  cannot arise in production, and it asserted it in the one way that is
-  unportable. The stale cases now write the file a dead process leaves behind,
-  and assert that the takeover actually *wrote* the new holder's record rather
-  than only that no error came back.
-- A repeated comment in `Lock.Release`, which said the same thing twice about
-  why the handle closes before the name is unlinked. The second one now says what
-  the first did not: that the order is not tidiness, because `errors.Join`
-  evaluates its arguments left to right and closing second would make `Release`
-  fail on the one platform where a stale lock cannot be taken over behind a dead
-  process's back.
 - Two `internal/vault` tests compared things the operating system decides, and
   so passed on Linux and failed on the CI matrix: one compared a *resolved*
   path against the unresolved one it was given (identical on Linux, different

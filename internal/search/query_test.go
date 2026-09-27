@@ -270,15 +270,22 @@ func TestParseBoundsTheClauses(t *testing.T) {
 func TestQueryStringRoundTrips(t *testing.T) {
 	t.Parallel()
 
+	// The keys are kept to a similar length on purpose. gofmt aligns the values
+	// in a run of composite-literal entries to the widest key, and which entries
+	// count as one run is a rule that changed in Go 1.26: a key far wider than its
+	// neighbours is now put in a group of its own, where 1.25 aligned everything
+	// to the widest. One long key in a table of short ones is therefore a file
+	// that two Go versions disagree about, and CI formats with the version
+	// `go.mod` names.
 	tests := map[string]string{
-		"words and a phrase":      `toll "toll collector"`,
-		"every filter":            `tag:hub type:npc is:dm-only`,
-		"several tags":            `tag:hub tag:"two words"`,
-		"a value with a quote in": `"the \"toll\" house"`,
-		"an empty one":            ``,
-		"a type with a space":     `type:"homebrew thing"`,
-		"a tag that looks like a word with a colon": `tag::00`,
-		"an accented value":                         `tag:rivergåte`,
+		"words and a phrase":         `toll "toll collector"`,
+		"every filter":               `tag:hub type:npc is:dm-only`,
+		"several tags":               `tag:hub tag:"two words"`,
+		"a value with a quote in":    `"the \"toll\" house"`,
+		"an empty one":               ``,
+		"a type with a space":        `type:"homebrew thing"`,
+		"a tag that reads as a word": `tag::00`,
+		"an accented tag":            `tag:rivergåte`,
 	}
 
 	for name, input := range tests {
