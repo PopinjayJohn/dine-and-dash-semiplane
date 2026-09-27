@@ -353,6 +353,12 @@
   installed added `wordcount`" is the first question a DM asks about a command they did
   not write, and ADR 0022 said the attribution would be printed; it was not, until a
   test that asserted it.
+- **The milestone table had one M12 doing two jobs.** It called "DX and release" M12
+  and listed the `dnd5e` plugin as one item in a list of nine, while §12's plugin
+  table had already assigned `dnd5e` to M12. The running state picked the plugin,
+  because §12 and `AGENTS.md` agreed with each other and the milestone table did not;
+  the table now has **M12 for `dnd5e`** and **M13 for DX and release**, and says why
+  in the place a reader of the table will find it.
 - **[ADR 0023](docs/adr/0023-a-fields-value-is-redacted-under-the-decision.md)
   records what a field's value is and who redacts it**, `docs/plugins.md` gains the
   field-renderer section, and §12 now carries what the field capability became rather

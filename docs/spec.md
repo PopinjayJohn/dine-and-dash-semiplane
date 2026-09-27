@@ -678,7 +678,7 @@ Core owns the generic page types (`note`, `location`, `npc`, `quest`, `item`,
 
 | Plugin | Demonstrates | Ships |
 |---|---|---|
-| `dnd5e` | page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | M12 (shipped) |
+| `dnd5e` | page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | M12 |
 | `house-rules` | render hook + event subscriber that invalidates the render cache | M11 |
 | `spoilerbox` | `access.Policies` contributor + render hook | M11 |
 | `wordcount` | Datastar fragment + `SearchFields` + CLI command | M11 |
@@ -797,7 +797,18 @@ Each milestone is one branch, one PR, one changelog section.
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages**, and the `users new` / `users revoke` buttons that mint and take back share links | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
 | **M11** | Plugin framework | `internal/plugin` and capabilities, `house-rules`, `spoilerbox`, `wordcount`, authoring guide | contract suite, ordering, panic isolation, duplicate rejection |
-| **M12** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, the **`dnd5e` plugin**, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
+| **M12** | The `dnd5e` ruleset | a plugin that is *about* a game rather than *for* one: page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | the field-renderer security tests, the `render.FieldRenderer` contract, plugin output reviewed as HTML |
+| **M13** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
+
+The milestone table numbers `dnd5e` as its own **M12** and DX and release as
+**M13**, and that is a correction. The table used to have one row, M12, carrying
+both — "DX and release" with the `dnd5e` plugin as one item in a list of nine.
+§12's plugin table had already assigned `dnd5e` to M12, so the same number was
+doing two jobs and the running state had to pick one. It picked the plugin,
+because §12's table and `AGENTS.md` agreed with each other and this table did
+not, and because a milestone that is nine items wide is not a milestone a
+commit sequence can be written for. The `dnd5e` work is done; the other nine
+items are M13 and none of them has been started.
 
 ### M0 commit sequence
 
