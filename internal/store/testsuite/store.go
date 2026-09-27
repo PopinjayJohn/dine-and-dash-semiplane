@@ -33,6 +33,8 @@ func Store(t *testing.T, factory Factory) {
 	t.Run("a page whose aliases were replaced answers only to the new ones", func(t *testing.T) { replacingAliases(t, factory) })
 	t.Run("an archived page answers to nothing", func(t *testing.T) { archivedAnswersToNothing(t, factory) })
 	t.Run("a target in one campaign is not found in another", func(t *testing.T) { targetsArePerCampaign(t, factory) })
+	t.Run("a page's two index rows are written, and replaced", func(t *testing.T) { indexRows(t, factory) })
+	t.Run("the index can be compared, so it can settle", func(t *testing.T) { indexSettles(t, factory) })
 }
 
 // roundTrip is the property every column has to satisfy: what goes in comes

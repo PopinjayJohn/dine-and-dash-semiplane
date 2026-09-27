@@ -27,6 +27,7 @@ func TestLoadEmbeddedMigrations(t *testing.T) {
 	}{
 		{version: 1, name: "init"},
 		{version: 2, name: "lookups"},
+		{version: 3, name: "search"},
 	}
 
 	if len(loaded) != len(want) {

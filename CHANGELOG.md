@@ -24,6 +24,31 @@ House rules:
 
 ### Added
 
+- Two FTS5 indexes and the store methods that keep them in step with the pages
+  table, so search reads a projection rather than scanning bodies: `pages_fts`
+  for text nobody is barred from seeing, and `pages_secrets_fts` holding only
+  `[!SECRET]` text. A page is findable by its title, aliases, tags and public
+  body; a DM is additionally findable by what they wrote inside a secret.
+- `pages.body_public` — the single place to look when asking "is this text safe
+  to be findable?". **It is empty and stays empty until access control can
+  compute it**, because the only safe value before then is the empty string: a
+  body that reached the public index with a secret in it is a disclosure, and a
+  body that did not is a missing feature. `wiki reindex --full` rebuilds both
+  indexes from the files.
+- A page's search rows are **settled, not merely written**: `PageIndexMatches`
+  answers whether the index already holds what the file derives, so the sync
+  engine can leave a page alone. An index that could be written but not compared
+  would rot in place, and nothing in a wiki notices that for months.
+- The public body is recorded on the page row as well as in the index, in the
+  same transaction, so the column and the index row cannot disagree about what
+  the public half was built from.
+- Both index rows are part of the store contract suite, so a second `Store`
+  implementation is held to the same split and the same settled check.
+- The tokenizer clause in the migration is asserted by matching rather than by
+  reading the schema back: `Rivergate` finds `Rivergåte`, because the failure
+  mode of getting this wrong is an empty result set, which is indistinguishable
+  from a page that does not exist.
+
 - A search **query language**: bare words are ANDed, `"exact phrase"` is a
   phrase, and `tag:`, `type:` and `is:` are filters. It is a pure value with no
   database handle, so the relevance tests need no database and the parser can be

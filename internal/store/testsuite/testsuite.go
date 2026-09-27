@@ -62,6 +62,15 @@ type API interface {
 	PageTargets(ctx context.Context, pageID string) (map[string][]string, error)
 	FindPageByAlias(ctx context.Context, campaignID, alias string) (domain.Page, bool, error)
 	FindPageByName(ctx context.Context, campaignID, name string) (domain.Page, bool, error)
+
+	// The two search indexes, added in M5. Both halves of a page's text are
+	// handed over rather than derived, because working out which half a
+	// principal may be shown is an access-control decision and this contract is
+	// about a projection. A store that derived the split itself would be hiding
+	// the ACL somewhere invariant 3 says it may not be.
+	ReplacePageIndex(ctx context.Context, entry store.IndexEntry) error
+	PageIndexMatches(ctx context.Context, entry store.IndexEntry) (bool, error)
+	DeletePageIndex(ctx context.Context, pageID string) error
 }
 
 // The two errors a caller must be able to recognise without reading a message.
