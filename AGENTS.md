@@ -228,13 +228,69 @@ re-litigate one without a new ADR that supersedes it.
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M11 — Plugins**. The plugin host: a compile-time registry, the
-capabilities interface, and the two plugins the spec names — dice and statline — as
-the first things that are not in this repository's own tree. M11 is the first
-milestone in which a `Render` hook or a contributed goldmark extension can sit
-between a page's markdown and its HTML, so it is the first in which "there is
-exactly one render path" is a statement about a *boundary* rather than about a
-function.
+- **M11 — Plugin framework is on `m11-plugins`.** `internal/plugin` is the
+  compile-time registry [ADR 0002](docs/adr/0002-plugin-registry-in-process.md)
+  described, with one accessor per capability rather than a `Capabilities` struct;
+  `internal/plugin/contract` is the suite every plugin runs; `plugins/` holds the
+  three the milestone names — `houserules`, `spoilerbox`, `wordcount` — and
+  `cmd/wiki/plugins.go` is the compile-time list. `docs/plugins.md` is the
+  authoring guide and [ADR 0021](docs/adr/0021-where-a-plugin-sits.md) is the
+  decision.
+- **A tree hook runs after the secret stripper, and an HTML hook before the
+  sanitiser.** Those two placements are the whole of M11's security argument. A
+  tree hook after the stripper is handed a tree with no secret text in it, so no
+  transform of it can put any back; a hook that ran *before* the stripper could
+  lift a `[!SECRET]` callout into the open body and the stripper would have
+  nothing left to remove. An HTML hook after `Sanitise` would be a way for a
+  plugin to put unsanitised HTML on a page a player reads — "a plugin is not an
+  author" is not an exception this codebase can make.
+- **A plugin's output is therefore filtered by the same allow-list as the DM's
+  own markdown**, which is also why `house-rules` needed no sanitiser change:
+  `callout-[a-z0-9-]+` is the one class shape the sanitiser admits on purpose,
+  and §12's callout type turned out to be the seam M3 left for this. A plugin
+  that needs an element or a class the core does not allow discovers it cannot
+  have one.
+- **A plugin may only *narrow* an access decision, and a failure denies.**
+  `access.Policies.Apply` ANDs the plugin's answer with the core's field by
+  field, so returning "granted" gets nothing. The failure direction is the
+  opposite of a render hook's — a panicking hook is skipped because the render is
+  still correct without it, and a panicking *policy* denies because the answer it
+  was going to give is the one keeping a page hidden.
+- **A plugin's policy narrows what is served and listed, in Go, on top of the
+  SQL read predicate.** The SQL is invariant 3 and a policy is a second, stricter
+  layer, never a looser one. Three surfaces apply it and each was found by a
+  test rather than by reading the code: the page route (which computes its
+  decision *before* branching to `?raw=1` and `?stream=1`, or the same page is
+  served two ways under two decisions), the editor (a save is a POST and a POST
+  is something a player can send without loading the form), and the two
+  listings. `search.Hit` carries `Visibility` and `OwnerCharacterPageID` because
+  a policy that cannot see a hit's audience can only say "hides everything", and
+  the dropdown is a list of page *titles* typed one character at a time.
+- **A plugin's search field reaches the public index and nothing else.** One
+  shared `extra` column, because FTS5's column set is fixed at table creation and
+  a per-plugin column would be a per-plugin migration. A plugin that could index
+  into the private index could put a value in front of a principal the read
+  predicate never admitted.
+- **The render cache key carries no plugin field, and `cache.go` argues why:** a
+  renderer's hooks are fixed at construction and each renderer owns its cache, so
+  two renderers with different plugins never consult the same map. What *would*
+  be unsafe is a persisted render, and nothing persists one. `CacheKey.Type` was
+  added late and for the same class of reason — a `type:` change with an
+  unchanged body is a change to the output, because a plugin's hook may render a
+  page differently according to it.
+- **`house-rules` was going to demonstrate an event subscriber that invalidates
+  the render cache, and there is no such capability.** The key already holds the
+  content hash, so a saved page is a new key and `Cache.Clear` has no caller for
+  the same reason. A capability that exists only to be demonstrated is not a
+  capability.
+
+Next milestone: **M12 — D&D 5e plugin and character sheets.** The `dnd5e` plugin as
+the first thing in this repository that is *about* a game rather than *for* one:
+the ruleset plugin the spec names, the `statline` field type, and a character sheet
+that is a page template with a field renderer. It is the first milestone whose
+demonstration is a plugin a user would actually want, which is also the first
+milestone where a plugin's *output* rather than a DM's markdown is the thing under
+review.
 
 **M10's optimistic fragments are the one piece of its list that is not finished.**
 `web/static/wiki.js` has the toast region and the patch handler, and the editor's
