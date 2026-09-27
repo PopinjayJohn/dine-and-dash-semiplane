@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The CI smoke test asserted a string the page cannot contain**, and the reason
+  is worth more than the fix. It grepped the campaign root for a page's
+  `title:`, and the root lists *path segments* — and the campaign's own name is
+  its slug. It also fetched the root with no session and expected to find a page in
+  it, and a request that has not redeemed a link identifies nobody, so the read
+  predicate admits nothing for nobody. Both assertions could never have passed, and
+  `set -e` turned a working wiki into a red build. The step now asserts what is
+  reachable without a link — a 200, the campaign, the "nothing here yet" notice —
+  and adds the one assertion that can actually fail: a page with no session is a
+  404.
+
 ### Added
 
 - **`make generate` and `make generate-check`, and `generate-check` is in
@@ -139,15 +152,6 @@
 
 ### Fixed
 
-- **The CI smoke test asserted a string the page cannot contain**, and the reason
-  is worth more than the fix. It grepped the campaign root for a page's
-  `title:`, and the root lists *path segments* — and the campaign's own name is its
-  slug. It also fetched the root with no session and expected to find a page in
-  it, and a request that has not redeemed a link identifies nobody, so the read
-  predicate admits nothing. Both assertions could never have passed, and `set -e`
-  turned a working wiki into a red build. The step now asserts what is reachable
-  without a link — a 200, the campaign, the "nothing here yet" notice — and adds
-  the one assertion that can actually fail: a page with no session is a 404.
 - **A share link is a reusable bearer credential, not a one-time code** — a
   finding, not a decision, and the first test to ask the question found that ADR
   0003's five steps do not rotate the token. The case it serves is a player who
