@@ -56,6 +56,20 @@
 - The alias and name lookups filter, so a `[[link]]` into a page a player may not
   read resolves to nothing rather than to a page.
 
+- **`internal/access` is the one place that answers "what may this principal do
+  with this page"**, and it is pure: no store, no clock, no mocks. That is not
+  minimalism, it is the property the rights matrix needs — 36 cells can only be
+  written down and run in a millisecond if deciding one is a function call.
+- **`TestStoreReadPredicateMatchesResolver`, deferred since M5.** The SQL
+  predicate and the Go resolver answer the same question about the same matrix,
+  and the two are two implementations for a reason: the predicate has to be SQL
+  and the resolver has to be a function. So the answer to "which one is right" is
+  that both are required to say the same thing, and this test is what makes it
+  true. Thirty-six cells, §8's two principals plus the row the matrix does not
+  have, compared through both the read scope and the stricter secret scope.
+- **The M6 placeholder `render.Decision` is now an alias for `access.Decision`.**
+  M3 promised this in a comment, and a comment is not a thing.
+
 - **`body_public` is no longer empty, so a page is findable by its prose.** It is
   filled from `render.PublicText`: the page's own text with its unrevealed secrets
   removed, as **plain text rather than markdown**, because the column is read by
