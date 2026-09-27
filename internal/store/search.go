@@ -89,9 +89,9 @@ func (q indexQuery) filterArgs() []any {
 // The FTS table is not aliased anywhere in this file.
 
 // The public index's ranking weights, one per column, in the order the table
-// declares them -- page_id, title, aliases, body, tags, kind -- with the page_id
-// weight ignored, because the column is UNINDEXED and contributes nothing to a
-// score.
+// declares them -- page_id, title, aliases, body, tags, kind, extra -- with the
+// page_id weight ignored, because the column is UNINDEXED and contributes nothing
+// to a score.
 //
 // A title match beats a tag, an alias or a body match. Those are not numbers
 // fitted to a corpus; they are an ordering of where in a page the thing somebody
@@ -100,9 +100,17 @@ func (q indexQuery) filterArgs() []any {
 // let a passing mention in somebody's session notes outrank it would be a search
 // that answers the question nobody asked.
 //
+// `extra` is weighted like a tag. It holds a plugin's contributed fields, which are
+// derived values -- a word count, a statline total -- and a DM searching for one is
+// usually narrowing a list rather than looking for the page called `1200`. Low
+// enough that a page whose own title matches does not lose to one whose word count
+// happens to be the same number, which is the failure a weight of 3.0 would have.
+//
 // The private index has one indexed column and no weights, so it has nothing to
-// weigh against anything.
-const bm25Weights = ", 10.0, 3.0, 4.0, 1.0, 2.0"
+// weigh against anything. It is not given an `extra` column at all, and that is the
+// capability's edge: a plugin that could index into the private index could put a
+// value in front of a principal the read predicate never admitted.
+const bm25Weights = ", 10.0, 3.0, 4.0, 1.0, 2.0, 1.0"
 
 // The two queries, by name. The statements themselves are built by indexQuery's
 // methods; a test prints all four of them so a reader can see every statement
@@ -152,7 +160,8 @@ const noExcerpt = `''`
 // excerpt, and no bm25 order -- and three places is one too many to keep in step
 // by hand across four statements. A test prints all four.
 func (q indexQuery) statement(withMatch bool) string {
-	return `SELECT p.id, p.path, p.title, p.type, ` + q.excerpt(withMatch) + `
+	return `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ` + q.excerpt(withMatch) +
+		`
 		FROM ` + q.table + `
 		JOIN pages p ON p.id = ` + q.table + `.page_id
 		WHERE ` + q.match(withMatch) + ` AND (` + q.sc.where + `)` + filters(q) + `
@@ -312,7 +321,11 @@ func scanHits(rows *sql.Rows, secrets bool, what string) ([]search.Hit, error) {
 	hits := []search.Hit{}
 	for rank := 1; rows.Next(); rank++ {
 		var hit search.Hit
-		if err := rows.Scan(&hit.PageID, &hit.Path, &hit.Title, &hit.Type, &hit.Snippet); err != nil {
+		if err := rows.Scan(
+			&hit.PageID, &hit.Path, &hit.Title, &hit.Type,
+			&hit.Visibility, &hit.OwnerCharacterPageID,
+			&hit.Snippet,
+		); err != nil {
 			return nil, fmt.Errorf("%s: %w", what, err)
 		}
 		hit.Rank = rank

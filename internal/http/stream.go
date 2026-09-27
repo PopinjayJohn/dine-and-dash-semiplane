@@ -192,6 +192,15 @@ func (a *app) pagePatch(r *http.Request, path, title string) (sse.Patch, error) 
 		return nil, err
 	}
 
+	// A policy that stops this principal reading the page ends the stream rather
+	// than continuing to hand them a rendered page they may not read. The rule is
+	// the one the store's not-found already follows: the subscriber's last frame is
+	// the last state that was allowed, and the page is not going to become readable
+	// again by waiting.
+	if !a.decisionFor(r.Context(), latest, req.Principal).CanRead {
+		return nil, errUnreadable
+	}
+
 	result, err := a.renderPage(r.Context(), req.Campaign, latest, req.Principal)
 	if err != nil {
 		return nil, err

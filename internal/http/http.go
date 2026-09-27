@@ -61,9 +61,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
@@ -158,6 +160,41 @@ type Config struct {
 	// process, where a per-process secret would mean a form written by one is
 	// refused by the other.
 	Secret []byte
+
+	// Hooks are the plugins' render hooks, and the editor is given the same set
+	// from `EditorFor` -- a caller that wires one and not the other has a preview
+	// that disagrees with the page it precedes, which is a bug that is reported as
+	// "the preview lies" rather than as a missing plugin.
+	//
+	// The zero value renders exactly what a build without plugins rendered, so
+	// every test that does not care about plugins does not have to say so.
+	Hooks render.Hooks
+
+	// Routes are the paths the plugins mount inside the campaign group, in the
+	// plugins' `(Priority, Name)` order. They are mounted before the catch-all page
+	// route, so a plugin's first segment beats a page at the same path — see
+	// [Route] for why the answer is a route rather than a query parameter and what a
+	// plugin author can do about it.
+	//
+	// A nil slice is the same application as an empty one, and a build with no
+	// plugins never reaches [app.mountRoutes] with anything in it.
+	Routes []Route
+
+	// Events is the bus the plugins subscribe to. A nil one is a bus with no
+	// subscribers, so every publisher calls it unconditionally rather than testing a
+	// configuration field on the path of a page view.
+	Events *events.Bus
+
+	// Policies are the plugins' access rules, composed with the rights matrix and
+	// never replacing it. A nil one is the same application as an empty one, so
+	// the three places that ask -- `decisionFor`, the page tree and the search
+	// dropdown -- ask unconditionally.
+	//
+	// A policy narrows what is *served and listed*, not what the store's read
+	// predicate admits. That is a real line and it is the safe side of it: the SQL
+	// is the invariant, and a policy is a second, stricter layer on top. See
+	// internal/access/policy.go.
+	Policies *access.Policies
 }
 
 // DefaultStreams is how many live page streams one server holds open. A campaign
@@ -391,6 +428,10 @@ func New(cfg Config) (http.Handler, error) {
 		c.Get("/", a.browse)
 		c.Post("/", a.rootPost)
 
+		// A plugin's routes, before the catch-all below, because the catch-all is
+		// `/*` and everything is behind it.
+		a.mountRoutes(c)
+
 		// A page. `?raw=1` is the same page as markdown, `?stream=1` is the same
 		// page as a stream, and `?edit=1` is the same page being edited. All
 		// three are query parameters and not path segments, because a path
@@ -453,7 +494,11 @@ func (a *app) rendererFor(slug domain.Slug) *render.Renderer {
 		return existing
 	}
 
-	built := render.NewWithLinks(index.NewResolver(a.cfg.Store, slug.String()))
+	built := render.NewWith(render.Options{
+		Links: index.NewResolver(a.cfg.Store, slug.String()),
+		Hooks: a.cfg.Hooks,
+		Log:   a.log,
+	})
 	a.renderers[slug] = built
 	return built
 }

@@ -45,6 +45,17 @@ func (t PageType) IsCore() bool {
 	return slices.Contains(corePageTypes, t)
 }
 
+// CorePageTypes returns the page types core owns, in the order the spec lists
+// them.
+//
+// It is exported for the two places that have to *print* the set rather than
+// test membership: the plugin authoring guide, and `wiki help`. A guide with its
+// own copy of the list is a guide that is out of step, which is the same
+// argument `vault.CoreKeys` makes.
+func CorePageTypes() []PageType {
+	return slices.Clone(corePageTypes)
+}
+
 // String returns the type as it appears in frontmatter and in a directory
 // name.
 func (t PageType) String() string {

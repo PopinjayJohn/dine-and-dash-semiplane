@@ -86,6 +86,26 @@ type Hit struct {
 	// the stricter scope, which asks whether the principal may see that page's
 	// secrets and not only whether they may read the page.
 	FromSecrets bool
+
+	// Visibility and OwnerCharacterPageID are the two facts a *plugin's* access
+	// policy needs about a hit, and they are here because without them a policy
+	// cannot narrow a search result.
+	//
+	// They were not here for M5, when the only answer a hit needed was "which pages
+	// may this principal read" and the scope had already answered it in SQL. They are
+	// here for M11, where a policy narrows *on top of* that scope — and a policy that
+	// cannot see a hit's audience can only say "hides everything", which is not a
+	// policy, it is a wiki with an empty dropdown.
+	//
+	// Two more columns in a SELECT that joins `pages` anyway. A `WHERE` clause
+	// cannot do this: FTS5's column set is fixed when the table is created, and a
+	// policy's rule is a Go function, so the answer to "is this hit still visible"
+	// is computed in Go from something the row has to carry.
+	//
+	// The scope is unaffected. `SearchPublic` and `SearchSecrets` return exactly what
+	// they returned before, and a policy can only take rows away from that list.
+	Visibility           string
+	OwnerCharacterPageID string
 }
 
 // Searcher is what a search needs from the store, and nothing more.

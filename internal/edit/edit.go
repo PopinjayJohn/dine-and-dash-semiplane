@@ -52,7 +52,9 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -69,6 +71,32 @@ type Editor struct {
 	campaign domain.Campaign
 	sync     *index.Syncer
 
+	// hooks are the plugins' render hooks, and they are here so that a preview is
+	// the page. A preview that rendered without a plugin's contribution would be a
+	// preview that disagreed with the save it precedes, which is the one thing a
+	// preview must not do.
+	hooks render.Hooks
+
+	// policies are the plugins' access rules, and they are asked here rather than
+	// only in the HTTP layer because a save is a POST and a POST is a thing a
+	// player can send without ever loading a form.
+	//
+	// The store's write gate is the invariant and it is still asked -- this is a
+	// second, stricter layer, never a looser one. `CheckWritableContentAs` answers
+	// "is this content allowed here"; a policy answers "is this principal allowed
+	// here at all", which is a different question and the one a plugin has.
+	policies *access.Policies
+
+	// events is the bus the plugins subscribe to, and a save is the only thing in
+	// this package that publishes on it.
+	//
+	// The editor is where a page is written, so a subscriber that wanted to know
+	// when a page changed learns it here and nowhere else. The index watcher is the
+	// other writer and it publishes nothing, because a change nobody made through
+	// the wiki is a change to a file — and a subscriber told about every one of
+	// those would be a subscriber told about a `git pull`.
+	events *events.Bus
+
 	// renderers is one renderer for this campaign's previews, built on first use
 	// for the same reason the HTTP layer keeps one per campaign: a renderer holds a
 	// link resolver and a resolver belongs to a campaign.
@@ -81,11 +109,19 @@ type Editor struct {
 // campaign, and a caller cannot pair an editor with another campaign's syncer by
 // accident.
 func New(v *vault.Vault, s *store.Store, campaign domain.Campaign) *Editor {
+	return NewWith(v, s, campaign, Options{})
+}
+
+// NewWith is [New] with the plugins' capabilities, for the caller that has them.
+func NewWith(v *vault.Vault, s *store.Store, campaign domain.Campaign, opts Options) *Editor {
 	return &Editor{
 		vault:     v,
 		store:     s,
 		campaign:  campaign,
 		sync:      index.New(v, s, campaign),
+		hooks:     opts.Hooks,
+		policies:  opts.Policies,
+		events:    opts.Events,
 		renderers: map[domain.Slug]*render.Renderer{},
 	}
 }
@@ -221,6 +257,17 @@ func (e *Editor) Save(ctx context.Context, in Save) (page domain.Page, previousR
 	if err != nil {
 		return domain.Page{}, previousRev, fmt.Errorf("saving %s: reading it back: %w", checked, err)
 	}
+
+	// The save has happened: the file is written, the row is derived, and the page
+	// has been read back. Publishing here rather than after the write is what makes
+	// the event mean what it says — a subscriber that re-reads the page finds the
+	// saved text, and one that invalidates something invalidates something that is
+	// already stale.
+	//
+	// A nil bus is a bus with no subscribers, so a build with no plugins does not
+	// test anything to find that out.
+	e.events.Publish(ctx, events.Saved(e.campaign, page, in.As))
+
 	return page, previousRev, nil
 }
 
@@ -448,7 +495,10 @@ func (e *Editor) rendererFor(_ string) *render.Renderer {
 		return existing
 	}
 
-	built := render.NewWithLinks(index.NewResolver(e.store, e.campaign.ID))
+	built := render.NewWith(render.Options{
+		Links: index.NewResolver(e.store, e.campaign.ID),
+		Hooks: e.hooks,
+	})
 	e.renderers[e.campaign.Slug] = built
 	return built
 }
@@ -463,7 +513,36 @@ func (e *Editor) MayWrite(ctx context.Context, path string, as domain.Principal)
 	if err != nil {
 		return err
 	}
+	if err := e.policiesDenyEdit(ctx, checked, as); err != nil {
+		return err
+	}
 	return e.sync.CheckWritableAs(ctx, checked, as)
+}
+
+// policiesDenyEdit asks the plugins whether this principal may write here, for a
+// path that may not exist yet.
+//
+// It is asked *before* the store's gate and not instead of it, and the order is the
+// same one `internal/http/policy_test.go` argues for: a plugin can only take a right
+// away, so asking it first is asking a stricter question and the answer is the
+// stricter of the two.
+//
+// A path that does not exist has no `PageMeta` to ask about, so the metadata is
+// built from the path alone. A policy that narrows on a page's *stored* audience
+// cannot narrow a page that has no row yet, which is the same limit the store's own
+// gate has and the reason the two are asked together rather than one or the other.
+func (e *Editor) policiesDenyEdit(ctx context.Context, path string, as domain.Principal) error {
+	if e.policies.IsEmpty() {
+		return nil
+	}
+
+	meta := access.PageMeta{Path: path}
+	decided := access.For(access.PrincipalOf(as), meta)
+	if e.policies.Apply(ctx, access.PrincipalOf(as), meta, decided).CanEdit {
+		return nil
+	}
+
+	return store.ErrNotAllowed
 }
 
 // short is a content hash in a message. A full hash is 64 characters and a message

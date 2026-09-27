@@ -31,12 +31,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/renderer/html"
 )
 
 // Version is the type of RendererVersion, so the cache key and the index column
@@ -74,6 +72,15 @@ type Renderer struct {
 	// links resolves what a wiki link points at. A nil resolver resolves
 	// nothing, and every link in the output is then visibly unresolved.
 	links LinkResolver
+
+	// hooks are the plugins' goldmark extensions and render hooks. They are fixed
+	// at construction and never change, which is the reason the cache key does
+	// not carry a plugin field: see cache.go.
+	hooks Hooks
+
+	// log is where a panicking hook is reported, and it is never nil so that the
+	// recovery cannot itself be the thing that fails.
+	log *slog.Logger
 }
 
 // NewWithLinks returns a renderer that resolves wiki links through a resolver.
@@ -84,9 +91,7 @@ type Renderer struct {
 // second way of saying "no links", and both are worse than saying it at the call
 // site.
 func NewWithLinks(links LinkResolver) *Renderer {
-	r := New()
-	r.links = links
-	return r
+	return NewWith(Options{Links: links})
 }
 
 // New returns a renderer with the goldmark pipeline this project commits to.
@@ -100,36 +105,12 @@ func NewWithLinks(links LinkResolver) *Renderer {
 // alternative -- dropping raw HTML at the renderer -- turns a DM's notes into a
 // page with holes in it, and the sanitiser is the thing that gets tested
 // against an XSS corpus.
+//
+// It is `NewWith(Options{})`, and it is kept because a golden file and a test that
+// does not care about links or plugins should not have to name a zero value to say
+// so.
 func New() *Renderer {
-	renderer := &Renderer{
-		md: goldmark.New(
-			goldmark.WithExtensions(
-				extension.GFM,
-				extension.Footnote,
-				NewWikiLinks(),
-				NewCallouts(),
-			),
-			goldmark.WithParserOptions(
-				// The id a heading gets is what the table of contents links to and
-				// what the HTML carries, so it is generated once, here, and read
-				// from the tree rather than guessed twice.
-				parser.WithAutoHeadingID(),
-			),
-			goldmark.WithRendererOptions(
-				html.WithUnsafe(),
-				html.WithXHTML(),
-				// Hard line breaks are deliberately *off*. A DM's notes are
-				// soft-wrapped, and turning every newline in the file into a <br>
-				// would break sentences at whatever column their editor wrapped
-				// at. Obsidian's live preview does not do it either; the setting
-				// that does is called "strict line breaks" and is off by default.
-			),
-		)}
-	renderer.saniti = NewSanitiser()
-
-	renderer.cache = NewCache(defaultCacheSize)
-
-	return renderer
+	return NewWith(Options{})
 }
 
 // Render turns a page into HTML.
@@ -146,6 +127,7 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		ReadsAll:      decision.ReadsAll,
 		Campaign:      page.Campaign,
 		Path:          page.Path,
+		Type:          page.Type,
 	}
 	if cached, found := r.cache.Get(key); found {
 		return cached, nil
@@ -181,12 +163,26 @@ func (r *Renderer) render(ctx context.Context, page Page, decision Decision) (Re
 	// the callout's own body is.
 	stripped := (&secretStripper{decision: decision}).strip(doc)
 
+	// A plugin's tree hook runs here, and the placement is the whole of the
+	// security argument: the stripper has already unlinked every secret subtree, so
+	// the tree this hook is handed contains no secret text and no transform of it
+	// can put any back. Before the stripper, a hook could lift a `[!SECRET]`
+	// callout's contents into the open body and the stripper would have nothing
+	// left to remove. See hook.go.
+	doc = r.runBefore(ctx, page, decision, doc)
+
 	toc := buildTOC(doc, source)
 
 	var rendered bytes.Buffer
 	if err := r.md.Renderer().Render(&rendered, source, doc); err != nil {
 		return Result{}, fmt.Errorf("rendering %s: %w", page.Path, err)
 	}
+
+	// And a plugin's HTML hook runs *before* the sanitiser, never after it, so
+	// that a plugin's bytes are filtered by the same allow-list the DM's own
+	// markdown is. An `AfterRender` after `Sanitise` would be a way for a plugin
+	// to put unsanitised HTML on a page a player reads.
+	r.runAfter(ctx, page, decision, &rendered)
 
 	// The sanitiser runs last, on every page, for every author. It is not a
 	// filter for untrusted input: a DM is the highest-value target in this

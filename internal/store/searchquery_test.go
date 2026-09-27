@@ -39,7 +39,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 	}{
 		"the public index, with a match": {
 			query: public, match: true,
-			want: `SELECT p.id, p.path, p.title, p.type, snippet(pages_fts, -1, '', '', '…', 12)
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), snippet(pages_fts, -1, '', '', '…', 12)
 		FROM pages_fts
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE pages_fts MATCH ? AND (p.is_deleted = 0
@@ -48,12 +48,12 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) )))
-		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0), p.path
+		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0, 1.0), p.path
 		LIMIT ?`,
 		},
 		"the public index, filters only": {
 			query: public, match: false,
-			want: `SELECT p.id, p.path, p.title, p.type, ''
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ''
 		FROM pages_fts
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
@@ -67,7 +67,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		},
 		"the private index, with a match": {
 			query: secret, match: true,
-			want: `SELECT p.id, p.path, p.title, p.type, snippet(pages_secrets_fts, -1, '', '', '…', 12)
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), snippet(pages_secrets_fts, -1, '', '', '…', 12)
 		FROM pages_secrets_fts
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE pages_secrets_fts MATCH ? AND (p.is_deleted = 0
@@ -82,7 +82,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		},
 		"the private index, filters only": {
 			query: secret, match: false,
-			want: `SELECT p.id, p.path, p.title, p.type, ''
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ''
 		FROM pages_secrets_fts
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0

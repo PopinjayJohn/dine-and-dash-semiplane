@@ -143,8 +143,21 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// again should not have to wait two minutes.
 	defer release()
 
+	// The plugins, built once and handed to everything that takes a capability.
+	// A failure here is a failure to start: a plugin that cannot register is a page
+	// rendered without its contribution, and a DM has no way to tell that from a
+	// plugin that was never written.
+	registry, err := buildRegistry(s, logger)
+	if err != nil {
+		return err
+	}
+
 	handler, err := wiki.New(wiki.Config{
-		Store: s,
+		Store:    s,
+		Hooks:    registry.RenderHooks(),
+		Policies: registry.Policies(),
+		Routes:   registry.Routes(),
+		Events:   registry.Events(),
 		Redeemer: auth.Redeemer{
 			Backend: s,
 			Config:  authConfigFor(baseURLOf(opts, listener)),
@@ -156,7 +169,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		EditorFor: func(campaign domain.Campaign) (*edit.Editor, error) {
 			for _, open := range served {
 				if open.row.Slug == campaign.Slug {
-					return edit.New(open.syncer.Vault(), s, campaign), nil
+					return edit.NewWith(open.syncer.Vault(), s, campaign, edit.Options{
+						Hooks:    registry.RenderHooks(),
+						Policies: registry.Policies(),
+						Events:   registry.Events(),
+					}), nil
 				}
 			}
 			// A campaign the server was not started for: a DM has added a folder
@@ -167,7 +184,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			if openErr != nil {
 				return nil, fmt.Errorf("opening the vault of %s: %w", campaign.Slug, openErr)
 			}
-			return edit.New(opened, s, campaign), nil
+			return edit.NewWith(opened, s, campaign, edit.Options{
+				Hooks:    registry.RenderHooks(),
+				Policies: registry.Policies(),
+				Events:   registry.Events(),
+			}), nil
 		},
 		Hub:           hub,
 		Logger:        logger,

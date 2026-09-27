@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 )
 
 // # Redemption
@@ -95,6 +96,16 @@ func (a *app) redeem(next http.Handler) http.Handler {
 			a.fail(w, r, "storing the session cookie", err)
 			return
 		}
+
+		// A share link was used, and the principal it produced exists. Published
+		// after the cookie is stored, because a redemption that could not store its
+		// credential has not happened -- a subscriber told about this one would be
+		// told about a session that does not work.
+		//
+		// It carries the principal and the campaign and no token, and a subscriber
+		// that wanted the token could not have it. See internal/events.
+		a.cfg.Events.Publish(r.Context(), events.Redeemed(
+			requestFrom(r.Context()).Campaign, redeemed.Principal))
 
 		a.redirect(w, a.afterRedeem(r, redeemed.RedirectTo))
 	})

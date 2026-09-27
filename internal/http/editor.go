@@ -161,6 +161,16 @@ func (a *app) editPage(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 
+	// The composed decision, not just the store's row. A policy that narrows
+	// `CanRead` has to narrow it here too, or the editor is the one surface that
+	// shows a player a page the page route has already decided they may not read.
+	// Same 404 as the page route and no log line, so there is no way to tell the
+	// two apart.
+	if !a.decisionFor(r.Context(), page, req.Principal).CanRead {
+		a.notFound(w, r)
+		return
+	}
+
 	// Read and write are two questions. A player may read a page they may not
 	// write — every player reads every `players` page in the campaign — and the
 	// editor is only for the second.

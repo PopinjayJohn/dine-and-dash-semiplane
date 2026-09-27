@@ -2,6 +2,285 @@
 
 ### Added
 
+- **The plugin registry, and the whole surface a plugin may touch.**
+  `internal/plugin` is the seam [ADR 0002](docs/adr/0002-plugin-registry-in-process.md)
+  described: a `Plugin` with a `Name`, a `Version` and a `Setup(*Registry) error`,
+  handed a `Registry` and nothing else. It is compiled in, not loaded — there is no
+  `Register` at init time and no package-level state, so a test can build a registry
+  with one plugin in it and know that nothing else in the process is reachable from
+  it. That is what "no ambient globals" has to mean if it is to mean anything, and
+  it is `TestTheRegistryHasNoAmbientState`.
+- **Capabilities run in `(Priority, Name)` order, and the name is the tie-break.**
+  Two plugins that both ask for the default priority are in the same relative order
+  in every binary, every run and every test, because a hook whose winner is decided
+  by a linker cannot be tested. `TestCapabilitiesRunInPriorityThenNameOrder`
+  registers the same five plugins in five orders and asserts the same answer five
+  times, which is the only version of that test that would notice a registry which
+  appended and left it there.
+- **Startup is loud.** A duplicate name, a name that is not a name, a plugin with no
+  version, a redefinition of something core owns and a `Setup` that returns an error
+  all stop the process, and the message names the plugin. None of them is resolved by
+  "whoever was added first", because that is a coin toss decided by an import graph.
+- **A plugin's name is its slug.** `Name()` goes through the same `domain.NewSlug` a
+  campaign's does, so a name is safe in a URL, in a log line and in a
+  `class="callout-<name>"` without a second escaping step anywhere — and two plugins
+  whose names differ only in spelling are one plugin, with the loser told why.
+  `../../etc/passwd` normalises to `etc-passwd`; a name that reduces to nothing is
+  refused.
+- **Page types and frontmatter keys are claims, and a claim can be refused.**
+  `AddPageType` and `AddFieldType` reserve a name for the plugin making it. A plugin
+  may not redefine `character` or `visibility:`, and the reason is not politeness:
+  `domain.PageType.IsCore` exists so core can tell a plugin's type from its own, and
+  a plugin that claimed `character` would make that function answer about a type whose
+  ownership rule — a character page owns itself — does not apply to it. The reserved
+  frontmatter list is `vault.CoreKeys()` and nothing else; a copy of it would be wrong
+  the first time somebody added a key to the vault without adding it here.
+- **`domain.CorePageTypes()` and `vault.CoreKeys()`**, so the authoring guide and
+  `wiki help` can print the two closed sets from the code that owns them rather than
+  from a list in a document.
+- **A render hook, and the two places it may sit.** `render.BeforeRenderer` sees the
+  page's tree and returns the tree to render; `render.AfterRenderer` sees the HTML
+  and may change it. ADR 0002 and §12 both sketch *one* `RenderHook` with both
+  methods, and the sketch is worth taking apart: a hook that only post-processes the
+  HTML — which is what both of M11's bundled plugins do — would have to write a
+  `BeforeRender` that returns the tree it was given. A no-op with a signature somebody
+  has to get right, in a plugin written by somebody who does not read the source. So
+  they are two interfaces and a `render.RenderHook` record that carries either, both
+  or neither.
+- **A tree hook runs *after* the secrets are stripped, and that placement is the
+  whole of the security argument.** The hook is handed the tree at a point where the
+  links have already been resolved and the secret subtrees have already been
+  unlinked, so the tree contains no secret text and **no transform of it can put any
+  back**. A hook that ran before the stripper could lift a `[!SECRET]` callout's
+  contents into the open body and the stripper would then have nothing to remove —
+  which is not a bug in a plugin, it is the capability the placement would hand it.
+  The cost is that a hook cannot see a secret, and the DM, who can, is who writes
+  house rules. `TestATreeHookNeverSeesASecret`.
+- **An HTML hook runs *before* the sanitiser, never after it.** ADR 0002's
+  `AfterRender(ctx, p, out *bytes.Buffer)` is ambiguous about exactly this, and the
+  ambiguity is the decision: a hook that ran after `Sanitise` would be a way for a
+  plugin to put unsanitised HTML on a page a player reads, in a project whose fourth
+  invariant is that rendered markdown is sanitised for every author. "A plugin is not
+  an author" is not an exception this codebase can make. Before the sanitiser, a
+  plugin's bytes are filtered by exactly the allow-list the DM's own markdown is — and
+  that is also why a plugin that needs a new element or a new class discovers it
+  cannot have one. `TestAPluginRunsBeforeTheSanitiserIsTheWholeArgumentForThisFile`
+  puts the XSS corpus's payload in a plugin rather than in a DM's notes.
+- **A hook that fails or panics is logged and skipped; the page still renders.**
+  Both cases, deliberately treated as the same event, because from the render's point
+  of view "this hook did not manage to contribute" is one thing — and propagating the
+  error would make a plugin capable of denying service against every page in the
+  campaign. The caller's usable value is assigned *before* the call, which is what
+  makes a panic a no-op rather than an empty page.
+  `TestOneBrokenPluginDoesNotTakeTheOthersDownWithIt` is the version a DM would
+  notice: their word count works and the spoiler box does not.
+- **`internal/safe`**, the one place that answer is written down, and a `defer`-shaped
+  function rather than a wrapper so it can be applied to a function whose signature is
+  somebody else's to change. It is not a boundary: a plugin is compiled into the
+  binary and can read the vault and open the database, so what makes one survivable to
+  ship is that a panic is a bug in a build somebody can fix.
+- **A goldmark extension may be contributed, and the render cache key does not grow a
+  field for it.** A renderer's hook set is fixed at construction and every renderer
+  owns its own cache, so two renderers with different plugins never consult the same
+  map and a key field naming them would separate entries that were never in the same
+  bucket. `cache.go` now says so, and names the thing that *would* not be safe — a
+  persisted render, which nothing has. The cache is also given the logger it needs, so
+  a nil one cannot turn a hook's panic into a nil-pointer panic in the handler.
+- **A preview is the page.** `edit.Options` carries the same `render.Hooks` the HTTP
+  layer's renderer does, because a preview that rendered without a plugin's
+  contribution would be a preview that disagreed with the save it precedes — which is
+  reported as "the preview lies" rather than as a missing plugin. The third place a
+  plugin's capabilities have to be threaded is why it is a struct with one field
+  rather than a function parameter that will have two next milestone.
+- **An empty hook set renders byte for byte what a build before plugins rendered**,
+  which is the property that let every existing golden file stay valid. It is a test
+  because a hook mechanism that changed the bytes of a page nobody had asked it to
+  change would be a hook mechanism nobody could review.
+- **A plugin may add a rule to the rights matrix, and it may only take rights away.**
+  `access.Policies.Apply` ANDs the plugin's answer with the core's, field by field,
+  and there is no ordering in which a plugin runs first and the core takes its
+  answer. A policy that returns "granted" for a player gets nothing, and one that
+  returns "granted" for a page the matrix already refused cannot re-grant it.
+  `TestAPluginPolicyCanOnlyTakeRightsAway` is a table over all five fields, because a
+  composition that narrows four of them is a composition that widens the fifth.
+- **A policy that cannot run *denies*, which is the opposite of a render hook.** A
+  panicking render hook is logged and skipped, because the render already has a
+  correct answer without it. A panicking or erroring *policy* is a policy whose job
+  was to take a right away, and honouring the pre-crash decision would honour it by
+  accident. The two are opposite on purpose and the asymmetry is the reason the
+  failure cases are written down separately rather than sharing a helper.
+- **`access.PageMeta` gained `Type` and `Path`, which the matrix does not read.**
+  They are inputs for a *plugin's* rule, and the comment says so: a policy that
+  cannot see what kind of page it is looking at, or where the page lives, can only
+  ever write a rule about visibility. `TestForDecisionMatrix` is unchanged by their
+  existence, which is the point.
+- **A policy narrows what is served and what is listed, not what the store's read
+  predicate admits.** That is a real line and it is the safe side of it: the SQL is
+  the invariant and a policy is a second, stricter layer on top. It is applied in
+  three places, and each one was found by a test rather than by reading the code:
+  the page route, the editor, and the two listings.
+  `TestAPluginPolicyHidesAPageARowReaches` is the named test and it checks all three
+  surfaces a player can learn a page exists from.
+- **The page route computes its decision before it branches, not between the
+  branches.** `?raw=1` and `?stream=1` are the same resource in three shapes, and a
+  `CanRead` check placed after them would have narrowed the HTML and not the
+  markdown — so the same page would have been served two ways under two decisions.
+  A live stream ends rather than continuing, because the store's not-found already
+  ends one and the reader must not be able to tell the two apart.
+- **The campaign root had its own `ListPages` call, and the policy was not asked
+  there.** It is now the one `pagesIn` helper every sidebar goes through, which is
+  the whole argument for having a helper: the root was the one page in the
+  application whose tree listed a page a policy had hidden.
+- **A save is a POST, and a POST is something a player can send without loading the
+  form.** `edit.Options` carries the policies and `Editor.MayWrite` asks them, so the
+  write path is narrowed in Go on top of the store's gate rather than only in the
+  handler. A path that does not exist yet has no stored audience for a policy to
+  narrow on, which is the same limit the store's own gate has and the reason the two
+  are asked together rather than one or the other.
+- **`search.Hit` carries `Visibility` and `OwnerCharacterPageID`,** so a policy can
+  narrow a search hit. The dropdown is a list of page *titles* for somebody typing
+  one character at a time, and a title is the disclosure ADR 0020 spent a milestone
+  removing from a `[[link]]`; a policy that hides a page from a player and leaves its
+  title in the dropdown has not hidden it. The two extra columns ride along on a
+  `JOIN pages` that was already there, and the four search statements' goldens are
+  regenerated — `owner_character_page_id` is nullable, so it is `COALESCE`d.
+- **Listing a page's owner is memoised by owner, not by page.** A campaign has one
+  owner per character, so a sidebar of three hundred pages under five characters is
+  five queries rather than three hundred, and a build with no plugins never asks at
+  all. `internal/http/decision.go` says which of the two costs is the one that
+  mattered.
+- **A plugin may contribute values to the public search index, and there is one
+  column for all of them.** `migrations/0007_plugin_fields` adds `extra` to
+  `pages_fts` and nothing to `pages_secrets_fts`. One column rather than one per
+  plugin is not tidiness: **FTS5's column set is fixed when the table is created**,
+  so a per-plugin column would be a per-plugin migration, and "a plugin may
+  contribute an indexed field" would be true only for the plugins whose migrations
+  happen to have been written. Both tables are dropped and recreated, which is safe
+  for one reason and it is ADR 0001: they are projections.
+- **The private index is not extended, and that asymmetry *is* the capability.** A
+  plugin that could index into the private index could put a value in front of a
+  principal the read predicate never admitted, and no redaction afterwards would
+  help because the value was never in a body to redact. `SearchFields` reaches the
+  public index and stops there.
+- **A plugin's field value is treated as markdown and goes through `PublicText`,**
+  which catches the accident and not the intent: `PublicText` removes *blocks*, not
+  words, so a plugin that wanted to leak could simply type the secret. What it stops
+  is a plugin indexing a slice of the body it was handed, callouts and all.
+  `TestAPluginsFieldGoesThroughTheSameRedactionABodyDoes`.
+- **A field is written as `name value`,** so `extra:"words 1200"` and a bare `1200`
+  both find the page. A bare value alone would make a plugin's derived number
+  indistinguishable from a word in the page's body, which is how it starts
+  outranking a title match. And both spellings work *without* a new `is:` filter —
+  §11's filter table is a compatibility promise this milestone should not make on
+  behalf of a plugin nobody has written.
+- **A plugin that cannot run contributes nothing rather than half a truth.** Half a
+  set of fields would put some of a plugin's values in the index and not others, and
+  the settle check would then rewrite the row for ever, because the row on disk and
+  the row the index wants would disagree about whether the plugin ran. Nothing, on
+  every run, is at least a stable answer.
+- **The `extra` column is sorted before it is joined,** because an FTS5 row is a bag
+  of tokens and a column whose content depends on map iteration cannot be compared
+  against the row that is already there.
+- **`equalRow`'s nil-versus-empty comment turned out to be load-bearing**, for the
+  reason it was written: the four search statements' goldens are regenerated, and
+  `owner_character_page_id` is `COALESCE`d because a nullable column read into a
+  `string` fails.
+- **A test asserting an index is gone by looking for it among the *tables* cannot
+  fail.** `TestDownRollsBackTheVersionItIsGiven` had a "gone" half naming
+  `pages_owner` — which is an index — and `tableNames` lists tables, so
+  `slices.Contains` was always false. It had been passing while asserting nothing.
+  0007's own test is `TestThePluginFieldsMigrationRollsBackTheColumnShape`, which
+  looks at the column set, because 0007 is the one migration here that *recreates* a
+  table rather than altering it and so is the one whose down leaves every object in
+  place.
+- **`isNil` takes `any`, not `Plugin`,** so `index.Indexer` and `goldmark.Extender`
+  get the same answer rather than each getting a second copy one field enumeration
+  away from disagreeing with the first.
+- **The registration functions in the plugin registry take no lock at all.** `Add`
+  holds the write lock for the whole of a plugin's `Setup`, so a registration that
+  took the read lock to ask "is this name taken?" would deadlock — exactly as
+  `Owner` would. They are lock-free by construction, and sound because a registry is
+  built by one goroutine before anything reads it.
+- **`internal/events`: three events, a bus, and a rule that an event is a notice.**
+  `PageSaved` (from the editor), `PageViewed` and `ShareLinkUsed` (from the HTTP
+  layer). A subscriber cannot affect a render, because nothing is rendered in a
+  subscriber — which is the difference from a hook and the reason there are two
+  things. The bus is its own package because there are two publishers and either
+  ordering of the imports would have been a cycle; a bus declared in `internal/plugin`
+  would make the HTTP layer import the plugin registry to publish a page view.
+- **An event carries no timestamp.** The project has a hard rule about time and a bus
+  with a clock in it is a bus with an ambient dependency. A subscriber that wants the
+  time has the request's context and its own `clock.Clock`.
+- **A plugin's route hangs off `/c/{slug}`, which is the only place it can hang.**
+  The three middlewares a page gets are the three a plugin handler gets, so a plugin
+  that asks who is asking gets the same answer through the same code. A bad chi
+  pattern is refused at startup by *asking chi* in a throwaway router rather than by
+  a regexp of our own — a second validator for a third party's syntax is a second
+  answer, and the one this project would write is the one that is wrong about a
+  pattern chi accepts today.
+- **A plugin route claims a first segment a page could also use, and that is the
+  other answer to `?raw=1` and `?edit=1`.** The honest version of the argument is in
+  `internal/http/route.go`: a *view* should be a query parameter, and what a route
+  buys over one is that it can be a fragment, a redirect, a download or a sub-path.
+  A plugin that wants no claim on the namespace mounts a sub-path.
+- **A plugin may add a `wiki` subcommand, and may not take a core one.** The
+  reserved list is `internal/plugin`'s, and the name is validated against the same
+  shape a plugin's own name normalises to — a command name appears in a shell
+  completion, a help listing and a log line, and a name needing quoting in any of
+  those is a name nobody will type. Attribution is filled in by the registry, so
+  `wiki help` can say which of four plugins added a word and cannot get it wrong.
+- **`plugins/`: house-rules, spoilerbox and wordcount**, the three the milestone
+  names, each demonstrating a different set of capabilities. `house-rules` is a render
+  hook, an event subscriber and a command; `spoilerbox` is an access policy and a
+  render hook; `wordcount` is a search field, a route and a command.
+- **`house-rules` needs no goldmark extension and no sanitiser change,** because
+  `callout-[a-z0-9-]+` is the class shape the sanitiser admits on purpose and the
+  core's callout parser already renders `> [!anything]`. §12's answer for how a
+  plugin ships a callout of its own type is the one M3 left for it, and this is the
+  first plugin to use it.
+- **`spoilerbox` narrows the secrets on a page type, not the reading of a page.** A
+  `spoiler-note` is a page the table may read whose `[!SECRET]` blocks are still the
+  DM's, *even for the player who owns the character it is about* — which is narrower
+  than the core's `dm-and-owner` and narrower on purpose, because a character page is
+  written *about* its reader and a plot note is not. Its test is a table over the
+  `dm-and-owner` cells specifically, because a plain player on a `players` page never
+  sees secrets either way and that case would pass with no plugin registered.
+- **`wordcount` says out loud that a count leaks a little.** A page's length is not
+  a secret the way its contents are, and no amount of redaction changes it; what makes
+  it acceptable is that a DM who would rather their players' search did not narrow on
+  length can remove the plugin from the build. The alternative — an index with no
+  derived values in it — is a worse wiki.
+- **`render.Page` gained a `Type`, and `CacheKey` gained one with it.** A plugin's
+  render hook that could only look at a path would be guessing with a regexp, and the
+  first draft of `spoilerbox`'s notice did exactly that: it keyed on a `spoilers/`
+  prefix, which would have shown a spoiler notice on `locations/gm-notes.md` because
+  of where somebody filed it. A `type:` change with an unchanged body is a change to
+  the output, so the key has to know it.
+- **A route's response body goes through nothing, and that is not the hook's
+  arrangement.** A render hook's output is filtered by `render.Sanitiser`; a route is
+  not a render, so `wordcount` escapes its own values. The doc comment says so, and
+  says it where a plugin author will read it.
+- **`internal/plugin/contract` is the suite every plugin runs against itself**, in one
+  function taking one value: `contract.Run(t, New())`. It follows
+  `internal/store/testsuite`, which is the same arrangement, because a suite a
+  plugin author has to *configure* is a suite somebody will configure wrong.
+- **`cmd/wiki/plugins.go` is the compile-time list, and it is a function.** No
+  scanning, no `init()`, no `go:generate`. The registry cannot be a package variable
+  — "no ambient globals" is a guarantee `internal/plugin` makes and a test enforces
+  — and the plugin commands are merged into the dispatcher by `allCommands()` rather
+  than written into `commands` at init, because the map holds `runServe`, which builds
+  a registry: the initialisation cycle is the dependency graph being honest about the
+  fact that a command and a server are the same thing here.
+- **[ADR 0021](docs/adr/0021-where-a-plugin-sits.md) records where a plugin sits and
+  what it may take away**, and **`docs/plugins.md` is the authoring guide.** Four of
+  §12's answers turned out to be wrong and three of them were wrong the same way:
+  the sketch left a *placement* open and the code had to close it. §12 now carries
+  the corrections rather than the sketch, the way §8 and §9 do.
+- **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
+  first version of it forgot `Path`.** The policy test that narrows on
+  `locations/` passed anyway, because the tree in the sidebar is built from paths
+  and never contained the title the test was asserting on — a test that cannot fail
+  is worth the helper that was supposed to stop the bug it was hiding.
 - **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
   of candidates and nothing else, so the page's chrome is not re-rendered
   underneath a reader's cursor. The candidates are the ACL's answer and not a

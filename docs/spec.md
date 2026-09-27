@@ -456,6 +456,41 @@ for _, path := range playerReachableRoutes {
 - Both go through the `access.Policies` plugin capability, so the 5e plugin can
   add rules without touching core.
 
+**What §12's plugin capability actually became.** The `Plugin` interface is as
+sketched — `Name`, `Version`, `Setup(*Registry) error` — and four of the answers
+around it are not, because the code had to decide them and the sketch left them
+open. The decisions are [ADR 0021](adr/0021-where-a-plugin-sits.md) and the short
+version is:
+
+- **The `Capabilities` struct is an accessor set, not a struct.** `Registry` has
+  `RenderHooks()`, `SearchFields()`, `Policies()`, `Routes()`, `Commands()`,
+  `Events()`, `PageTypes()` and `FieldTypes()`. A struct is a list of fields and
+  a caller can read the value and forget one; eight accessors cannot be
+  half-used. `Capabilities.Markdown` and `Capabilities.Render` merged, because
+  they are wired in at the same moment and a plugin that contributed an extension
+  and forgot the hook is a plugin that half works.
+- **`BeforeRender`/`AfterRender` are two interfaces, not one.** A hook that only
+  post-processes the HTML would otherwise have to write a no-op `BeforeRender`.
+- **A tree hook runs *after* the secret stripper**, so the tree it is handed has
+  no secret text and no transform of it can put any back. An HTML hook runs
+  *before* the sanitiser, so a plugin's output goes through the same allow-list
+  as the DM's own markdown. The rule above ("removed from the response bytes")
+  is now a rule about the pipeline's **position** and not only about its
+  existence, and the diagram above is the specification of where a plugin may
+  sit in it.
+- **A policy may only narrow**, and a policy that errors or panics **denies** —
+  the opposite of a render hook, which is skipped. A policy narrows what is
+  served and listed, in Go, on top of the SQL read predicate; the SQL is
+  invariant 3 and a policy is a second, stricter layer, never a looser one.
+- **A search field reaches the public index and nothing else.** One shared
+  `extra` column, because FTS5's column set is fixed when the table is created
+  and a per-plugin column would be a per-plugin migration.
+- **There is no cache-invalidation capability.** The cache key holds the content
+  hash, so a saved page is a new key, and a capability that exists only to be
+  demonstrated is not a capability.
+
+The authoring guide is [docs/plugins.md](plugins.md).
+
 **Known limitation:** a DM cannot share a secret with two players but not a
 third. Accepted for v1; per-principal ACLs are the natural extension.
 
@@ -1100,6 +1135,39 @@ decision, so a DM's render cannot reach a player's stream. The obvious design �
 render once, hand the same component to everyone — has no correct version, because
 a DM and a player can be watching the same page and the publisher can only pick
 one decision.
+
+### M11 commit sequence
+
+```
+feat(plugin): the registry, and the whole surface a plugin may touch
+feat(render): a render hook, on the one path, and where in it
+feat(access): a policy a plugin may compose with, and never replace
+feat(index): a plugin's search field, and the one column they all share
+feat(http): a route, a command and an event bus, which are requests
+feat(plugins): the three the milestone names, and the contract they run
+docs(adr): record where a plugin sits, and what it may take away
+chore: record where the project actually is
+```
+
+M11 is a milestone of two placements, and the seven feature commits are
+arrangement around them. **The first two are `internal/plugin` and the render
+hook, and the interesting line in the second is "on the one path":** M11 is the
+first milestone in which something sits *between* a page's markdown and its HTML,
+so "there is exactly one render path" stops being a statement about a function
+and becomes a statement about a boundary. The boundary is narrower than the
+sketch in §12 said it would be, and the narrowing is the milestone.
+
+The fourth and fifth are the two capabilities whose cost turned out to be a
+store change and a router entry rather than an interface. `search.Hit` grew two
+columns so a policy can narrow a hit, because the dropdown is a list of page
+*titles* typed one character at a time and a policy that hid a page and left
+its title would not have hidden it. A plugin's route hangs off `/c/{slug}`
+because that is the only place it can hang, and behind the same three
+middlewares a page gets.
+
+The seventh is the ADR, and it is the one worth reading first: four of §12's
+answers were wrong and three of them were wrong the same way, which is that the
+sketch left a placement open and the code had to close it.
 
 ### Definition of Done
 

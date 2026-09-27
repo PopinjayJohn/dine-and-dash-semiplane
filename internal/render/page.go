@@ -28,6 +28,19 @@ type Page struct {
 	// built from.
 	Path string
 
+	// Type is the page's type, as the string the frontmatter spelled it.
+	//
+	// It is a `string` rather than a `domain.PageType` for the same reason the
+	// other four fields are: a plugin decides what to do with a page partly from
+	// what kind of page it is, and a hook that could only look at a path would be
+	// guessing with a regexp. A DM keeps their spoiler notes wherever they keep
+	// them.
+	//
+	// It is in [CacheKey] for the same reason the body is: a page whose `type:`
+	// changes without its body changing renders differently, and a cache that did
+	// not know that would serve the old page to the new type.
+	Type string
+
 	// Body is the whole markdown, frontmatter removed. Secrets included: this is
 	// the one place that sees the full body, and what it does with a secret is
 	// remove it.

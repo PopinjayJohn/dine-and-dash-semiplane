@@ -63,6 +63,19 @@ type IndexEntry struct {
 	// joined. A revealed block is not here: revealed means the DM chose to show
 	// it, and it belongs in the public half.
 	SecretText string
+
+	// Extra is what the plugins' search fields contribute, joined.
+	//
+	// One column for all of them rather than one per plugin, because FTS5's column
+	// set is fixed when the table is created and a per-plugin column would be a
+	// per-plugin migration — which would make "a plugin may contribute an indexed
+	// field" true only for the plugins whose migrations happen to have been
+	// written. See migrations/0007_plugin_fields.up.sql.
+	//
+	// It is joined here rather than in a view because the order has to be the
+	// plugins' `(Priority, Name)` order and that is a property of the *values*,
+	// not of the column.
+	Extra string
 }
 
 // validate reports whether an entry may be written.
@@ -172,6 +185,7 @@ func (e IndexEntry) publicRow() []any {
 		e.BodyPublic,
 		strings.Join(e.Tags, " "),
 		e.Kind,
+		e.Extra,
 	}
 }
 
@@ -195,7 +209,7 @@ const (
 // indexColumns is the indexed columns of each index, in the order the rows above
 // are written and read back.
 var indexColumns = map[string][]string{
-	publicIndex: {"title", "aliases", "body", "tags", "kind"},
+	publicIndex: {"title", "aliases", "body", "tags", "kind", "extra"},
 	secretIndex: {"secret_text"},
 }
 

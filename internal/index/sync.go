@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
@@ -19,15 +20,37 @@ type Syncer struct {
 	store    *store.Store
 	campaign domain.Campaign
 	resolver *Resolver
+
+	// fields are the plugins' search fields and log is where a plugin that fails is
+	// reported. Both are fixed at construction, and a syncer with neither is the
+	// ordinary one.
+	fields []SearchField
+	log    *slog.Logger
 }
 
 // New returns a syncer for one campaign of one vault.
 func New(v *vault.Vault, s *store.Store, campaign domain.Campaign) *Syncer {
+	return NewWith(v, s, campaign, Options{})
+}
+
+// NewWith is [New] with the plugins' search fields.
+//
+// A caller that has a registry builds one of these; a caller that does not — a test,
+// `wiki sync` on a build with no plugins — uses [New] and pays nothing. The
+// derivation asks `len(y.fields) == 0` before doing anything about them, so the cost
+// of the capability is a length check on a path that runs for every page.
+func NewWith(v *vault.Vault, s *store.Store, campaign domain.Campaign, opts Options) *Syncer {
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Syncer{
 		vault:    v,
 		store:    s,
 		campaign: campaign,
 		resolver: NewResolver(s, campaign.ID),
+		fields:   opts.Fields,
+		log:      log,
 	}
 }
 
