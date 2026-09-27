@@ -271,11 +271,16 @@
   than written into `commands` at init, because the map holds `runServe`, which builds
   a registry: the initialisation cycle is the dependency graph being honest about the
   fact that a command and a server are the same thing here.
-- **[ADR 0021](docs/adr/0022-where-a-plugin-sits.md) records where a plugin sits and
+- **[ADR 0022](docs/adr/0022-where-a-plugin-sits.md) records where a plugin sits and
   what it may take away**, and **`docs/plugins.md` is the authoring guide.** Four of
   §12's answers turned out to be wrong and three of them were wrong the same way:
   the sketch left a *placement* open and the code had to close it. §12 now carries
   the corrections rather than the sketch, the way §8 and §9 do.
+- **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
+  page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
+  only wrong once M10's ADR landed; the fix is in the file name rather than in a
+  note saying so, because an ADR numbered twice is an ADR two people have read and
+  remembered differently.
 - **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
   first version of it forgot `Path`.** The policy test that narrows on
   `locations/` passed anyway, because the tree in the sidebar is built from paths
