@@ -2,6 +2,7 @@ package render_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -403,5 +404,65 @@ func TestTheCacheKeyCarriesEveryFieldThatChangesTheBytes(t *testing.T) {
 	}
 	if none.SecretsStripped() != 1 {
 		t.Errorf("the render stripped %d secrets, want 1", none.SecretsStripped())
+	}
+}
+
+// TestTheCacheKeyNamesNoPrincipal is the guard on the argument that makes ADR
+// 0020's fix affordable, and it is a test over the *shape* of the key rather than
+// over its behaviour, because the behaviour is in `internal/index` and the shape is
+// here.
+//
+// A link now resolves for the reader in the context rather than for the DM, which
+// looks like it makes a page's rendered bytes depend on the principal. They do
+// not, and the reason is a property of the *decision*:
+//
+//   - The only things a renderer can observe about its reader are whether the
+//     page's secrets are shown and whether each link resolves.
+//   - Who may read a link's target is a function of the *target page*, not of the
+//     reader: a `players` page is readable by every player, a `dm-only` page by
+//     nobody but the DM, and a `dm-and-owner` page by the DM and by the one
+//     principal bound to its owner character — which is one principal, because the
+//     owner is one page.
+//   - So every page has exactly two classes of reader, those who may see its
+//     secrets and those who may not, and they resolve the same links: a
+//     `dm-and-owner` page's only secret-seeing player is its owner, and the owner
+//     reads everything the DM reads.
+//
+// Two classes, and `CanSeeSecrets` tells them apart. **Adding the principal to the
+// key would therefore be wrong**, not merely unnecessary: it would give every
+// player their own entry for byte-identical output, so four players watching one
+// page would hold four copies of it and the cache would be a quarter of the size
+// it is for nothing.
+//
+// This test is the day that happens. A key with a principal in it is not a
+// refactor, it is a cache that fills up four times as fast on the busiest page in
+// a campaign, and the field name is the only place the mistake is visible.
+func TestTheCacheKeyNamesNoPrincipal(t *testing.T) {
+	t.Parallel()
+
+	// Every field the key has, by name.
+	fields := reflect.TypeOf(render.CacheKey{})
+	names := make([]string, 0, fields.NumField())
+	for i := range fields.NumField() {
+		names = append(names, fields.Field(i).Name)
+	}
+
+	// A name that would mean the key is per-reader rather than per-class. Matched
+	// as whole names, lowercased, because matching on a substring is how
+	// `ContentHash` ends up flagged for containing "as" and a test that is wrong
+	// about a field it is meant to protect gets deleted.
+	forbidden := map[string]bool{
+		"principal": true, "principalid": true, "as": true, "asprincipal": true,
+		"reader": true, "readerid": true, "viewer": true, "viewerid": true,
+		"owner": true, "ownerid": true, "session": true, "sessionid": true,
+		"user": true, "userid": true, "cookie": true,
+	}
+
+	for _, name := range names {
+		if forbidden[strings.ToLower(name)] {
+			t.Errorf("the cache key has a %q field (%s), so a page's render is keyed by its reader "+
+				"rather than by its decision -- see the comment above for why that is wrong rather "+
+				"than merely wasteful", name, strings.Join(names, ", "))
+		}
 	}
 }

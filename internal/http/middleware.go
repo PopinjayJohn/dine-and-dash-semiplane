@@ -234,7 +234,12 @@ func (a *app) recoverPanics(next http.Handler) http.Handler {
 func (a *app) session(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := requestFrom(r.Context())
+		// **Cleared, not defaulted.** A request whose session is refused must not
+		// keep whatever was in the context already, and the context is reused down
+		// the chain; so the first thing this middleware does is put nobody there
+		// and the last thing is to put the answer there.
 		req.Principal = domain.Principal{}
+		r = r.WithContext(domain.WithPrincipal(r.Context(), domain.Principal{}))
 
 		sessionID, hasCookie := a.sessionCookieValue(r)
 		if hasCookie {
@@ -260,7 +265,12 @@ func (a *app) session(next http.Handler) http.Handler {
 			}
 		}
 
-		next.ServeHTTP(w, r.WithContext(withRequest(r.Context(), req)))
+		// The principal goes in the context as well as in the request, and the
+		// context is the copy that travels: the link resolver reads it from inside
+		// the renderer, which is not a handler and never will be (ADR 0020).
+		ctx := domain.WithPrincipal(r.Context(), req.Principal)
+
+		next.ServeHTTP(w, r.WithContext(withRequest(ctx, req)))
 	})
 }
 

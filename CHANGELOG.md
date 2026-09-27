@@ -2,6 +2,41 @@
 
 ### Fixed
 
+- **A link resolves for its reader, and the reader is the DM no more.**
+  [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md)'s fix, which M9
+  decided and did not build. `domain.PrincipalFrom(ctx)` is read by the resolver
+  instead of `store.AsDM`, the session middleware puts the principal in the
+  context it already owns, and a `[[link]]` to a `dm-only` page is **unresolved**
+  for a player and live for the DM — a page's *existence* was readable by anybody
+  who could type a path, and a campaign's private page tree could be enumerated by
+  trying paths and watching for links that came back resolved.
+- **The link graph is still the DM's, and that is not the bug above.** The graph
+  exists so backlinks work, so the sync can tell that a page whose link now
+  resolves must be re-indexed, and so the DM can see their campaign's structure —
+  three DM questions, and a graph built under a player's decision would be missing
+  every edge that leaves a `dm-only` page. A campaign holds both answers at once,
+  deliberately, and the two moments are named in `derive.go` and in the resolver.
+- **`access.Decision` has a fifth field, `ReadsAll`, and the render cache key has
+  it too.** This is the cost of the fix, and it was not the cost I predicted: a
+  `dm-and-owner` page's **owner and the DM have the same `CanSeeSecrets`** and
+  resolve the page's links differently, so on that page one cache class held two
+  readers. Without the field the cache serves whichever rendered first — a
+  disclosure one way, and a DM served their own link as unresolved the other, which
+  would be reported as a broken wiki rather than as a security problem. So the
+  reader's *role* is part of the output, and it is in the key.
+- **A render with no principal in its context resolves nothing.** The goldens in
+  `internal/render`, a plugin's render hook, a command rendering to a terminal:
+  they are not requests, nobody is reading, and they get the fail-closed answer
+  rather than a second behaviour to reason about.
+- **`TestTheCacheKeyNamesNoPrincipal` guards the alternative.** Adding a principal
+  to the key would be wrong rather than merely wasteful — every player would get
+  their own entry for byte-identical output, so the busiest page in a campaign
+  would fill the cache once per player. The test fails the day somebody adds a
+  `PrincipalID` field, and it is why the fix was one context value and not a
+  renderer per reader.
+
+### Fixed
+
 - **The CI smoke test asserted a string the page cannot contain**, and the reason
   is worth more than the fix. It grepped the campaign root for a page's
   `title:`, and the root lists *path segments* — and the campaign's own name is

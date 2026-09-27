@@ -191,3 +191,62 @@ func TestAnUnidentifiedRequestReadsNothing(t *testing.T) {
 		t.Errorf("the campaign root listed pages to an unidentified request:\n%s", root.body)
 	}
 }
+
+// TestALinkResolvesForTheReaderAndNotForTheDM is ADR 0020's fix as a player
+// meets it: one page, two readers, and a link in it that is live for one of them.
+//
+// The canary is the *href*, not the text. The link's text is what the DM wrote in
+// a page the player can read, so it is not a disclosure either way; what was a
+// disclosure is that the link was *live* — a player could tell that
+// `npcs/vel` was a page that exists, and could have enumerated the campaign's
+// private page tree by typing paths and watching for links that came back
+// resolved. The canary is deliberately named so this is a link to a `dm-only`
+// page, which is the case that has to be refused.
+func TestALinkResolvesForTheReaderAndNotForTheDM(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	// A public page with a link to the DM's page in it. The player's own copy of
+	// the fixture's `npcs/vel` is already the target.
+	// A new page, written through the editor — which writes the file itself, so
+	// there is nothing to write first. Writing it first and then creating it is a
+	// conflict, and correctly: a create against a path that already has a file is
+	// what a create is *for* catching.
+	linked := "---\ntitle: The Toll\ntype: " + domain.PageTypeNote.String() +
+		"\nvisibility: players\n---\n\nPay [[npcs/vel|the toll collector]] at the bridge.\n"
+	f.saveNew("notes/the-toll", linked)
+
+	player := f.playerSession()
+	dm := f.dmSession()
+
+	const live = `href="/c/blackwater/npcs/vel"`
+
+	asPlayer := f.get(f.pageURL("notes/the-toll"), player)
+	if asPlayer.status != http.StatusOK {
+		t.Fatalf("the page is %d for a player, want 200\nbody: %s", asPlayer.status, asPlayer.body)
+	}
+	if strings.Contains(asPlayer.body, live) {
+		t.Errorf("a player was given a live link to a DM's page:\n%s", asPlayer.body)
+	}
+	// And it is still a link they can see, with its text and its destination, which
+	// is what §9 asks for: a DM writes `[[the toll collector]]` and the link is
+	// there, saying where it was going.
+	if !strings.Contains(asPlayer.body, "the toll collector") {
+		t.Errorf("the player's link lost its text:\n%s", asPlayer.body)
+	}
+	if !strings.Contains(asPlayer.body, "unresolved") {
+		t.Errorf("the player's link is neither live nor marked unresolved:\n%s", asPlayer.body)
+	}
+
+	asDM := f.get(f.pageURL("notes/the-toll"), dm)
+	if !strings.Contains(asDM.body, live) {
+		t.Errorf("the DM's own link to their page is not live:\n%s", asDM.body)
+	}
+
+	// And the DM's page is still the DM's: the link resolving for them says
+	// nothing about reading it.
+	if got := f.get(f.pageURL("npcs/vel"), player); got.status != http.StatusNotFound {
+		t.Errorf("a player can read the DM's page: %d", got.status)
+	}
+}

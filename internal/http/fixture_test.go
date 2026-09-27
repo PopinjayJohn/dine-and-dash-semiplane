@@ -274,6 +274,23 @@ func (f *fixture) savePage(path, markdown string) { //nolint:unparam // the path
 	}
 }
 
+// saveNew writes a page that does not exist yet, through the editor, and indexes
+// it. A *save* needs an ETag and so needs the page to be there first, which is
+// why this is a second helper rather than a flag on the first: creating a page and
+// updating one are different requests and the editor treats them so.
+func (f *fixture) saveNew(path, markdown string) {
+	f.t.Helper()
+
+	if _, _, err := f.editor.Save(f.t.Context(), edit.Save{
+		Path:     path,
+		Markdown: markdown,
+		Creating: true,
+		As:       f.dm,
+	}); err != nil {
+		f.t.Fatalf("creating %s: %v", path, err)
+	}
+}
+
 // readFile is what is on disk, for a test that wants to know what a save did
 // rather than what the index says about it.
 func (f *fixture) readFile(path string) string {

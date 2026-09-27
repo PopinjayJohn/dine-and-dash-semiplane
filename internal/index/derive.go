@@ -380,7 +380,24 @@ func (y *Syncer) linksFor(ctx context.Context, pageID string, doc *vault.Documen
 		}
 
 		if _, err := vault.CheckPagePath(ref.Target); err == nil {
-			if target, found, err := y.resolver.ResolvePage(ctx, ref.Target, ref.Heading); err == nil && found {
+			// **The link graph is the DM's own view of their vault**, so it is
+			// resolved as the DM — explicitly, and while the store decides it.
+			//
+			// That looks like the bug ADR 0020 was about, and it is the opposite:
+			// the graph exists so that backlinks work, so that the sync can tell
+			// that a page whose link now resolves must be re-indexed, and so that
+			// the DM can see their campaign's structure. All three of those are the
+			// DM's questions, and a graph built under a player's decision would be
+			// missing every edge that leaves a `dm-only` page — which is most of
+			// them, and all of the interesting ones.
+			//
+			// The reader-specific answer is the *render*, and that is now a different
+			// question asked at a different moment: this is "what does this file
+			// point at", and a render is "what should this reader be shown". A
+			// campaign can hold both answers at once and must, or a DM's backlinks
+			// disappear the moment they share a machine with a player.
+			as := domain.WithPrincipal(ctx, domain.Principal{Role: domain.RoleDM, CampaignID: y.campaign.ID})
+			if target, found, err := y.resolver.ResolvePage(as, ref.Target, ref.Heading); err == nil && found {
 				link.DstPageID = target.ID
 				link.DstPath = target.Path
 			}

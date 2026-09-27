@@ -134,21 +134,36 @@ func (r *Resolver) ResolvePage(ctx context.Context, target, heading string) (dom
 		return domain.Page{}, false, nil
 	}
 
+	// **The reader**, from the context, and the campaign from the resolver.
+	//
+	// This one line is ADR 0020's whole fix. It used to be
+	// `store.AsDM(r.campaignID)` in all three lookups, so every link resolved for
+	// every reader and a `dm-only` page's *existence* was readable by anybody who
+	// could type a path. The context carries the reader because the renderer is not
+	// a handler and never will be, and passing a principal down through a
+	// `Render` call would have put a reader on every call site in the project and
+	// a forgotten one on any of them.
+	//
+	// A context with no principal in it is nobody, and nobody reads anything, so a
+	// render that is not a request -- a golden, a plugin hook, a test -- gets
+	// unresolved links for every link rather than a second behaviour.
+	as := domain.PrincipalFrom(ctx)
+
 	// An exact path that is *not* found is not a reason to try the other two
 	// fallbacks: a DM who wrote a path and has not written the page yet means
 	// the path, and falling through to a name lookup would resolve their
 	// deliberate placeholder to somebody else's page.
-	if page, err := r.store.GetPage(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err == nil {
+	if page, err := r.store.GetPage(ctx, r.campaignID, target, as); err == nil {
 		return page, true, nil
 	}
 
-	if page, found, err := r.store.FindPageByAlias(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err != nil {
+	if page, found, err := r.store.FindPageByAlias(ctx, r.campaignID, target, as); err != nil {
 		return domain.Page{}, false, err
 	} else if found {
 		return page, true, nil
 	}
 
-	if page, found, err := r.store.FindPageByName(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err != nil {
+	if page, found, err := r.store.FindPageByName(ctx, r.campaignID, target, as); err != nil {
 		return domain.Page{}, false, err
 	} else if found {
 		return page, true, nil
