@@ -2,6 +2,32 @@
 
 ### Added
 
+- **`internal/sse`: ADR 0006's four functions, and the hub behind them.** A
+  handler takes a `templ.Component` and never touches `text/event-stream`
+  headers, `data:` prefixes or event ids. The implementation is the standard
+  library one from the spike, and the spike stays a separate module run by
+  `make spike`, so the record that datastar-go produces the same bytes cannot rot
+  without CI noticing.
+- **The type is `Sender`, not `Stream`.** ADR 0006 writes
+  `func Stream(w, r) *Stream`, and Go has no room for a function and a type of
+  the same name in one package, so one of them had to give. The constructor gave,
+  because that is the name a handler writes.
+- **`Hub` fans one change out to every stream watching it**, per topic rather
+  than through one global channel: a handler for one page filtering out every
+  other page's updates is a correctness question wearing a performance
+  question's clothes.
+- **The hub is bounded and refuses rather than evicts.** A stream is a goroutine
+  and a socket, and a share link pasted somewhere reachable is a stream nobody is
+  counting. An eviction silently closes somebody's stream; a refusal is an error
+  the handler can turn into a `503`.
+- **A slow reader loses a frame, and that is safe here and would not be
+  elsewhere.** An update is a *whole element*, so the next one carries the page
+  as it is then and a skipped frame is one the reader would have replaced
+  anyway. A hub carrying deltas cannot drop, and the drops are counted rather
+  than swallowed so a test — or a curious DM — can see them.
+- **Closing the hub drains every stream** by closing its channels rather than
+  setting a flag, so a handler ranging over one ends without checking anything.
+  That is the shutdown property ADR 0006 asks for.
 - **A resolved link carries the campaign it is in.** `/c/locations/rivergate`
   became `/c/blackwater/locations/rivergate`, and the campaign is now a field of
   `render.Page` rather than a thing the link path assumed. A data directory holds
