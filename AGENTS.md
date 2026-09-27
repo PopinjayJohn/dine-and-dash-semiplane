@@ -19,9 +19,11 @@ re-litigate one without a new ADR that supersedes it.
 ## Current state
 
 - **M0 — Foundation is landed on `m0-foundation`.** `go.mod`, `Makefile`,
-  `.golangci.yml`, GitHub Actions, `.gitmessage`,
-  `scripts/check-changelog.sh` and the Datastar spike all exist and CI is
-  wired to run them.
+  `.golangci.yml`, GitHub Actions, `.gitmessage` and
+  `scripts/check-changelog.sh` all exist and CI is wired to run them. The
+  Datastar spike that stood in for `internal/sse` was deleted in M10, and the
+  formatting toolchain is now **templ as well as golangci-lint**: see
+  `make generate` below.
 - **M1 — Domain and store is on `m1-domain-store`.** `internal/domain`
   describes the world, `internal/clock` and `internal/idgen` are the injected
   sources of time and identity, `migrations/` holds the base schema and the
@@ -162,8 +164,6 @@ re-litigate one without a new ADR that supersedes it.
 - **The query string is not logged.** `?k=<token>` is the share-link credential
   and `r.URL.String()` would put it in every log line, in every proxy in front
   of the server, and in whatever a DM pastes into a bug report.
-- `spike/datastar/` is a separate Go module. `go test ./...` at the root does
-  not reach it; `make spike` does. It is deleted in M10.
 - **`internal/edit` is the only writer, and it checks before it writes.** The
   order is the design: read the file, compare its hash, **ask the store's gate
   about the content**, write the file, re-derive the row, keep the old text. The
@@ -198,21 +198,50 @@ re-litigate one without a new ADR that supersedes it.
 - **The users page mints a link and shows it once, and the list shows no token,
   no hash and no hint.** Four characters of a 32-byte credential is a
   fingerprint worth having in a list of six people at a table.
-- **Link resolution is campaign-wide, and that is a finding, not a decision.**
-  A player can tell which paths exist from whether a link resolved. It is not a
-  content disclosure, and the fix is decided and not built because M10 makes
-  links more visible and the conversation belongs there — see
-  [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md).
+- **A link resolves for its reader, and the reader is the DM no more.** The
+  resolver reads `domain.PrincipalFrom(ctx)` rather than `AsDM`, so a `[[link]]`
+  to a `dm-only` page is unresolved for a player and live for the DM. Before
+  this, a player could tell which paths *exist* by whether a link came back
+  resolved, and a search dropdown and a change log were two more ways to ask
+  the same question. See [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md).
+- **A rendered page is a function of (content, campaign, decision, role).**
+  `access.Decision` has a fifth field, `ReadsAll`, and the cache key has it
+  with it: on a `dm-and-owner` page the owner and the DM share a
+  `CanSeeSecrets` and resolve the page's links differently, so one cache class
+  held two readers. Adding a *principal* to the key would be wrong rather
+  than wasteful — every player would get an entry for identical bytes — and
+  `TestTheCacheKeyNamesNoPrincipal` is the guard on that.
+- **The link graph is still the DM's, deliberately.** The graph answers "what
+  does this file point at", which is the DM's question and the sync's. A
+  campaign holds both answers at once on purpose: the file says a link exists,
+  the render says whether *this* reader may follow it.
+- **The SSE hub still carries a notice and never content.** The session log is
+  a subscriber on a campaign-wide topic rather than a feature, and a stream's
+  patch handler honours one selector and drops any other — a hijacked stream
+  can at worst put a stale page on screen.
+- **A search box is a box: the last term is a prefix.** `fort` finds the
+  fortified town, or a box shows a result only after the last character of the
+  word that finds it. Only the *last* term, and only when asked for by name
+  (`search.WithPrefixLastTerm`), because the `*` is the one piece of FTS5 syntax
+  the match expression emits.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M10 — Datastar**. The interactive layer: search-as-you-type
-with resolved candidates, the session log, toasts, optimistic fragments, and
-**the fix for ADR 0020's link resolution** — which is why it is here rather than
-deferred again. The sparkline of a search result, a page's live update and a
-resolved link title are the same question asked three ways, and this milestone
-answers it once. `spike/datastar/` is deleted at the end of it.
+Next milestone: **M11 — Plugins**. The plugin host: a compile-time registry, the
+capabilities interface, and the two plugins the spec names — dice and statline — as
+the first things that are not in this repository's own tree. M11 is the first
+milestone in which a `Render` hook or a contributed goldmark extension can sit
+between a page's markdown and its HTML, so it is the first in which "there is
+exactly one render path" is a statement about a *boundary* rather than about a
+function.
+
+**M10's optimistic fragments are the one piece of its list that is not finished.**
+`web/static/wiki.js` has the toast region and the patch handler, and the editor's
+autosave, but the save button does not yet show an optimistic state — the
+`data-ds-*` attributes for it are M11's work, because an optimistic save is a claim
+about what the server will do and M11 is where a plugin can change that. The
+changelog says so where the milestone's scope is recorded.
 
 ## Non-negotiable invariants
 
@@ -274,7 +303,6 @@ make test     # tests only
 make lint     # golangci-lint run
 make cover    # coverage report, fails below the 80% gate
 make fuzz     # short fuzz runs
-make spike    # the Datastar spike, a separate module under spike/
 make run      # build and serve
 make reindex  # wiki reindex --full against the local data dir
 make generate # regenerate the templ templates from their .templ sources

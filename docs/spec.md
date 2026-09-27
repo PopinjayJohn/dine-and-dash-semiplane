@@ -958,6 +958,45 @@ by content hash alone is a channel from a DM's render to a player. Both are
 written down in [ADR 0014](adr/0014-secrets-leave-the-tree.md), which also
 corrects §11's two-field cache key.
 
+### M10 commit sequence
+
+```
+fix(resolve): a link resolves for its reader, and the reader is not the DM
+feat(http): search as you type, and the candidates a reader may see
+feat(http): the session log, which is the hub with a wider topic
+chore: delete the Datastar spike, which internal/sse has replaced
+docs(adr): record what M10 decided, and what it found in its own fixture
+docs: record where the project actually is
+```
+
+M10 is a milestone of one decision with everything else resting on it, and it is
+the fix [ADR 0020](adr/0020-link-resolution-is-campaign-wide.md) decided in M9
+and did not build. Everything else in the milestone — a search box, a live page, a
+change log — is a *reader*, and each of them was a way for the same disclosure to
+arrive again: a `dm-only` page's title in a dropdown, a DM's edit announced in a
+log. So the fix came first, and the three features then had a property to be
+tested against rather than a shape to be drawn.
+
+The cost was not the one ADR 0020 predicted. It said the render cache would need
+the principal in its key, and worked out that it would not, on a two-class
+argument. The argument was right about `CanSeeSecrets` and wrong about
+`dm-and-owner`: a page whose owner is a *player* rather than a *character* gives
+its owner and the DM the same `CanSeeSecrets` and resolves its links differently,
+so `access.Decision` grew a fifth field — `ReadsAll` — and the cache key grew it
+with it. **A rendered page is now a function of (content, campaign, decision,
+role) and nothing else**, and `TestTheCacheKeyNamesNoPrincipal` is the guard on the
+other direction, because a principal in the key would not be wasteful but wrong:
+every player would get their own entry for byte-identical output.
+
+The search work found two things in the fixture that were worth more than the
+search itself. The test fixture used to write rows with `UpsertPage` and files
+with hand-written frontmatter, and **the two had drifted** — `type:` was in the
+struct and missing from every block, and one title contained a colon that is a YAML
+error, so that page did not parse and was skipped entirely. Nothing failed loudly,
+because the rows came from the struct and the files were never read by anything.
+The fixture is built through the derivation now, like a real campaign, and that is
+what let the search test notice it was searching an index of nonsense.
+
 ### M9 commit sequence
 
 ```
