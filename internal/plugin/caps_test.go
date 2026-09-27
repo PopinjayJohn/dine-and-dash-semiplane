@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -8,8 +9,27 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/plugin"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
+
+// drawsSomething is a field renderer that returns nothing, which is a legal
+// `FieldRenderer`: it is what a plugin says for a key it claimed and has nothing to
+// say about yet, and the registry's job is to hold the claim rather than to judge
+// the drawing.
+//
+// It exists because the field tests in this file are about *claims* — the reserved
+// names, the duplicates, the key's shape — and none of them should have to invent
+// HTML to say so.
+type drawsNothing struct{}
+
+func (drawsNothing) RenderField(
+	context.Context, render.Page, render.Decision, render.Field,
+) (string, error) {
+	return "", nil
+}
+
+var drawsSomething drawsNothing
 
 // TestAPluginMayNotRedefineSomethingCoreOwns is the composition-not-override
 // guarantee at the only place it can be structural: a name.
@@ -56,7 +76,7 @@ func TestAPluginMayNotRedefineSomethingCoreOwns(t *testing.T) {
 				setup: func(r *plugin.Registry) error {
 					return r.AddFieldType(plugin.FieldType{
 						Name: core, Kind: "text", Summary: "mine now",
-					})
+					}, drawsSomething)
 				},
 			})
 			if !errors.Is(err, plugin.ErrReservedName) {
@@ -94,7 +114,7 @@ func TestTwoPluginsMayNotWantTheSameName(t *testing.T) {
 		claim := func(r *plugin.Registry) error {
 			return r.AddFieldType(plugin.FieldType{
 				Name: "AC", Kind: "number", Summary: "armour class",
-			})
+			}, drawsSomething)
 		}
 		if err := reg.Add(&stub{name: "dnd5e", version: "1.0.0", setup: claim}); err != nil {
 			t.Fatalf("first: %v", err)
@@ -129,19 +149,30 @@ func TestAClaimIsRefusedRatherThanAcceptedEmpty(t *testing.T) {
 		{
 			name: "a field with no name",
 			claim: func(r *plugin.Registry) error {
-				return r.AddFieldType(plugin.FieldType{Kind: "text", Summary: "something"})
+				return r.AddFieldType(plugin.FieldType{Kind: "text", Summary: "something"}, drawsSomething)
 			},
 		},
 		{
 			name: "a field with no kind",
 			claim: func(r *plugin.Registry) error {
-				return r.AddFieldType(plugin.FieldType{Name: "ac", Summary: "armour class"})
+				return r.AddFieldType(plugin.FieldType{Name: "ac", Summary: "armour class"}, drawsSomething)
 			},
 		},
 		{
 			name: "a field with no summary",
 			claim: func(r *plugin.Registry) error {
-				return r.AddFieldType(plugin.FieldType{Name: "ac", Kind: "number"})
+				return r.AddFieldType(plugin.FieldType{Name: "ac", Kind: "number"}, drawsSomething)
+			},
+		},
+		{
+			// The M12 half. A claim with no renderer is a key that renders as
+			// nothing, and refusing it at startup is the difference between a DM
+			// finding out from a log line and a DM finding out from a blank space.
+			name: "a field with no renderer",
+			claim: func(r *plugin.Registry) error {
+				return r.AddFieldType(plugin.FieldType{
+					Name: "ac", Kind: "number", Summary: "armour class",
+				}, nil)
 			},
 		},
 	}
@@ -175,7 +206,7 @@ func TestAClaimedFieldKeyIsNormalisedToLowerCase(t *testing.T) {
 		setup: func(r *plugin.Registry) error {
 			return r.AddFieldType(plugin.FieldType{
 				Name: "Spell-Slot", Kind: "text", Summary: "which slot",
-			})
+			}, drawsSomething)
 		},
 	})
 	if err != nil {
@@ -206,7 +237,7 @@ func TestTheRegistryHandsOutCopiesNotItsOwnMaps(t *testing.T) {
 			}
 			return r.AddFieldType(plugin.FieldType{
 				Name: "ac", Kind: "number", Summary: "armour class",
-			})
+			}, drawsSomething)
 		},
 	}); err != nil {
 		t.Fatalf("Add: %v", err)

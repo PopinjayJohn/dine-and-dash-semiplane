@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -114,14 +115,23 @@ func (r *Registry) AddPageType(name domain.PageType, summary string) error {
 	return nil
 }
 
-// AddFieldType claims a frontmatter key for the plugin currently running Setup.
+// AddFieldType claims a frontmatter key for the plugin currently running Setup, and
+// hands the core the renderer that will draw it.
 //
-// The reservation check is the one that matters, and it is the reason this function
-// exists in this shape rather than as a field on a plugin struct: a collision
-// between two plugins and a collision between a plugin and the core are the same
-// accident with different consequences, and both have to be found before startup
-// rather than by whichever page a DM happens to write first.
-func (r *Registry) AddFieldType(field FieldType) error {
+// **A claim and a renderer are one argument in M12 and were two in M11**, and the
+// change is the milestone. M11 let a plugin claim a key and stop there, because
+// nothing rendered fields; the doc comment said a claimed key was "readable today
+// and writable by nobody", and "readable" turned out to mean *readable and invisible*.
+// A claim with no renderer is a key that renders as nothing, which is a plugin that
+// half works in a way no test can see. So the renderer is required, and a plugin that
+// wants a claim it does not draw does not have one to register.
+//
+// The reservation check is unchanged and it is the reason this function exists in
+// this shape rather than as a field on a plugin struct: a collision between two
+// plugins and a collision between a plugin and the core are the same accident with
+// different consequences, and both have to be found before startup rather than by
+// whichever page a DM happens to write first.
+func (r *Registry) AddFieldType(field FieldType, renderer render.FieldRenderer) error {
 	if r == nil {
 		return errors.New("plugin: adding a field type to a nil registry")
 	}
@@ -137,6 +147,12 @@ func (r *Registry) AddFieldType(field FieldType) error {
 	if strings.TrimSpace(field.Summary) == "" {
 		return fmt.Errorf("plugin: frontmatter key %q needs a summary", field.Name)
 	}
+	if isNil(renderer) {
+		// A claim with no renderer is a key that renders as nothing, and refusing it
+		// at startup is the difference between a DM finding out from a log line and
+		// a DM finding out from an empty space on a page.
+		return fmt.Errorf("plugin: frontmatter key %q needs a renderer", field.Name)
+	}
 
 	// Lower-cased here rather than left to the caller, because `AC:` and `ac:` being
 	// two keys would be a page whose frontmatter says both — and a key the vault
@@ -148,6 +164,8 @@ func (r *Registry) AddFieldType(field FieldType) error {
 	}
 
 	r.fields[field.Name] = field
+	r.specs[string(field.Name)] = render.FieldSpec{Kind: field.Kind, Renderer: renderer}
+
 	return nil
 }
 
@@ -233,7 +251,11 @@ func (r *Registry) RenderHooks() render.Hooks {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	return render.Hooks{Exts: slices.Clone(r.exts), Hooks: slices.Clone(r.hooks)}
+	return render.Hooks{
+		Exts:   slices.Clone(r.exts),
+		Hooks:  slices.Clone(r.hooks),
+		Fields: maps.Clone(r.specs),
+	}
 }
 
 // SearchFields is every plugin's search contribution, in the same order.

@@ -459,7 +459,7 @@ for _, path := range playerReachableRoutes {
 **What §12's plugin capability actually became.** The `Plugin` interface is as
 sketched — `Name`, `Version`, `Setup(*Registry) error` — and four of the answers
 around it are not, because the code had to decide them and the sketch left them
-open. The decisions are [ADR 0021](adr/0021-where-a-plugin-sits.md) and the short
+open. The decisions are [ADR 0021](adr/0022-where-a-plugin-sits.md) and the short
 version is:
 
 - **The `Capabilities` struct is an accessor set, not a struct.** `Registry` has
@@ -488,6 +488,41 @@ version is:
 - **There is no cache-invalidation capability.** The cache key holds the content
   hash, so a saved page is a new key, and a capability that exists only to be
   demonstrated is not a capability.
+
+**What became of the field capability, in M12.** §12's
+`Fields FieldTypes // new field kinds: dice, statline, ref, ...` shipped in M11 as a
+*claim* — a plugin reserving a frontmatter key and saying what its value is — and the
+claim's own doc comment said the key would be "readable today and writable by nobody".
+**Readable turned out to mean readable and invisible**, because nothing rendered
+fields. M12 is the milestone that renders them, and
+[ADR 0023](adr/0023-a-fields-value-is-redacted-under-the-decision.md) records what
+that cost:
+
+- **`AddFieldType` takes a renderer as well as a claim.** A claim with no renderer is
+  a key that renders as nothing.
+- **A field's value is redacted under the decision before a plugin sees it**, with
+  the same `PublicText` that fills `body_public` and the same condition the body's
+  stripper uses. Redacting *unconditionally* is the version that looked right and
+  handed the DM `[…]` for a field the DM wrote and can read in the body of the same
+  page.
+- **A field's HTML goes into the page's buffer and the one sanitiser runs over it.**
+  No exemption, no second sanitiser, no pre-rendered string on a row.
+- **There is no fallback renderer.** A key nobody claimed renders as nothing, because
+  a page with a row for every frontmatter key the DM has ever typed is a page nobody
+  asked for. ADR 0013's "unknown keys are preserved" is about the *file*; preserving
+  is not displaying.
+- **The field block is at the top, before the body, in the DM's order** — before the
+  body because a spell's casting time and a character's hit points are both looked at
+  first, and in the DM's order because a page whose fields rearrange themselves
+  between builds is a page nobody can screenshot.
+- **A claimed key is read through a seam that bypasses the vault's *write-side*
+  closed set, and only the write side.** ADR 0013 closed the set so that "a bug that
+  writes `titel: Rivergate` into somebody's campaign" cannot reach the filesystem;
+  `Set` is still closed, and `AddFieldType` refuses a core key so a plugin cannot
+  shadow `visibility:`.
+- **A claim and a key the DM wrote are compared folded** — case, `_`, `.` and
+  spaces to `-`. A plugin claims `casting-time`; a DM writes `casting_time`; the
+  first version compared the strings and rendered nothing *and errored about nothing*.
 
 The authoring guide is [docs/plugins.md](plugins.md).
 
@@ -762,7 +797,18 @@ Each milestone is one branch, one PR, one changelog section.
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages**, and the `users new` / `users revoke` buttons that mint and take back share links | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
 | **M11** | Plugin framework | `internal/plugin` and capabilities, `house-rules`, `spoilerbox`, `wordcount`, authoring guide | contract suite, ordering, panic isolation, duplicate rejection |
-| **M12** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, the **`dnd5e` plugin**, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
+| **M12** | The `dnd5e` ruleset | a plugin that is *about* a game rather than *for* one: page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | the field-renderer security tests, the `render.FieldRenderer` contract, plugin output reviewed as HTML |
+| **M13** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
+
+The milestone table numbers `dnd5e` as its own **M12** and DX and release as
+**M13**, and that is a correction. The table used to have one row, M12, carrying
+both — "DX and release" with the `dnd5e` plugin as one item in a list of nine.
+§12's plugin table had already assigned `dnd5e` to M12, so the same number was
+doing two jobs and the running state had to pick one. It picked the plugin,
+because §12's table and `AGENTS.md` agreed with each other and this table did
+not, and because a milestone that is nine items wide is not a milestone a
+commit sequence can be written for. The `dnd5e` work is done; the other nine
+items are M13 and none of them has been started.
 
 ### M0 commit sequence
 
@@ -1168,6 +1214,32 @@ middlewares a page gets.
 The seventh is the ADR, and it is the one worth reading first: four of §12's
 answers were wrong and three of them were wrong the same way, which is that the
 sketch left a placement open and the code had to close it.
+
+### M12 commit sequence
+
+```
+feat(render): a field a plugin renders, and the value it is handed redacted
+feat(plugins): dnd5e, which is a ruleset rather than a demonstration
+docs(adr): record what a field's value is, and who redacts it
+chore: record where the project actually is
+```
+
+M12 is a two-commit milestone and the smallness is the finding. §12's
+`Fields` capability looked like a field *schema* and turned out to be one
+function: a plugin claims a frontmatter key, hands over a renderer, and the
+core decides which keys a page has, in what order, and whether a value may be
+shown. Everything else — a spell's level becoming a word, a statline keeping
+the DM's own rows, fifteen fields served by one renderer — is the plugin.
+
+The security question is the one §9's rule is about, asked of a *plugin's*
+output for the first time. A DM can mark a frontmatter field secret with a
+`[!SECRET]` callout inside its value, and the field block is plugin-authored
+HTML on a page a player reads. So the value is redacted **under the decision**
+before a plugin sees it, and the plugin's output is written into the page's
+own buffer so the one sanitiser runs over it. The first version redacted
+unconditionally and handed the DM `[…]` for a field they could read in the
+body of the same page — which is the asymmetry between a search index's
+`body_public` and a render's decision, and it is worth a named test.
 
 ### Definition of Done
 

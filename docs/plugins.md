@@ -4,7 +4,7 @@ A plugin is a Go package in `plugins/` that implements three methods and lists
 itself in `cmd/wiki/plugins.go`. It is compiled in, not loaded: there is no
 `Register`, no `init()`, no scanning and no marketplace.
 [ADR 0002](adr/0002-plugin-registry-in-process.md) recorded why, and
-[ADR 0021](adr/0021-where-a-plugin-sits.md) recorded where in the application a
+[ADR 0021](adr/0022-where-a-plugin-sits.md) recorded where in the application a
 plugin is allowed to sit — which is the document to read before you write one.
 
 ## The shortest plugin that compiles
@@ -70,10 +70,59 @@ Nine things, and every one of them is additive. There is no way for a plugin to
 | `AddRoute` | mount a path in `/c/{slug}` | `internal/http` |
 | `AddCommand` | add a `wiki` subcommand | `internal/plugin` |
 | `AddPageType` | claim a `type:` name | `internal/domain` |
-| `AddFieldType` | claim a frontmatter key | `internal/vault` |
+| `AddFieldType` | claim a frontmatter key, and draw its value | `internal/render` |
 
 The interfaces are declared by the packages that *consume* them, which is why this
 table's right-hand column is the answer to "where do I find the type".
+
+## Fields, which are their own thing
+
+A **field** is a frontmatter key somebody claimed, and a field renderer draws it.
+`AddFieldType` takes the claim *and* the renderer:
+
+```go
+return reg.AddFieldType(plugin.FieldType{
+    Name:    "statline",
+    Kind:    "statline",
+    Summary: "A block of labelled numbers, laid out as a stat block.",
+}, myRenderer)
+```
+
+Both are required. A claim with no renderer is a key that renders as nothing, and a
+plugin that registered one has half worked in a way no test can see.
+
+Three rules, and they are the render hooks' rules with one difference:
+
+**1. The value is redacted under the decision before you see it.** The same
+`PublicText` that fills `body_public`, applied only when the decision does not permit
+secrets. A DM can mark a field secret with a `[!SECRET]` callout inside the value, and
+a plugin is code compiled into the binary — so the redaction is the core's job, not a
+promise a plugin makes about itself. You get plain text, not markdown.
+
+**2. Your output goes through the one sanitiser.** It is written into the page's
+buffer before the body and `Sanitiser.Sanitise` runs over the result. There is no
+exemption and no second pass.
+
+**3. There is no fallback.** A key nobody claimed renders as nothing, so a page does
+not grow a row for `created:` and `tags:` and everything else the DM has ever typed.
+The claim is the switch. **Returning the empty string is the way to decline** — a
+field of yours that does not apply to this page type, which is how one renderer serves
+fifteen fields on four page types.
+
+Two things that are easy to get wrong:
+
+- **Your value arrives lower-cased and folded.** A claim on `casting-time` matches
+  `casting_time` and `castingTime` in the file. Matching on the key you were given is
+  what makes your renderer work whatever the DM's editor produced.
+- **A field is not writable through the application.** `vault.Set` still refuses it; a
+  DM sets it in Obsidian. Your claim makes the key *visible*, not editable, and a
+  plugin that could write one would be a second writer in a repository whose first
+  invariant is that the files are the source of truth.
+
+The field block goes **before the body**, in the order the DM wrote the keys. The
+ordering guarantee does not apply to fields — a key can be claimed once, so there is
+exactly one renderer per field — and the position does not depend on the order you
+registered in, so your field table can be reordered without moving a statline.
 
 ## The five rules
 
@@ -219,3 +268,8 @@ Read these before writing your own; between them they use every capability.
   findable by search, reportable by `wiki wordcount` and visible at
   `/c/<campaign>/wordcount`. It is also the one that says out loud that a count leaks
   a little, and why that is acceptable.
+- **`dnd5e`** — the ruleset, and the only one of the four that is a thing a DM would
+  install rather than a demonstration. Four page types, fifteen claimed fields, one
+  renderer that dispatches on the page type, and `wiki character-sheet` to print a
+  scaffold. Read it for the *decline* path: a field of yours that does not apply to
+  this page returns `""`, and that is what lets one renderer serve fifteen fields.

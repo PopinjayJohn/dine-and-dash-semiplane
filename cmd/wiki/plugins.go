@@ -6,6 +6,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/plugin"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/plugins/dnd5e"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/plugins/houserules"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/plugins/spoilerbox"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/plugins/wordcount"
@@ -45,6 +46,11 @@ func bundled(store *store.Store, logger *slog.Logger) []plugin.Plugin {
 		spoilerbox.New(),
 		// A search field, a route and a command.
 		wordcount.New(store),
+		// The ruleset: four page types, fifteen fields and a character-sheet
+		// scaffold. It is the only one of the four that is a thing a DM would
+		// install rather than a demonstration, which is why it is last -- a plugin
+		// that stops the build from starting is the first thing anybody notices.
+		dnd5e.New(logger),
 	}
 }
 
@@ -84,7 +90,11 @@ func buildRegistry(s *store.Store, logger *slog.Logger) (*plugin.Registry, error
 func pluginCommands(registry *plugin.Registry) map[string]command {
 	added := make(map[string]command)
 	for name, pluginCommand := range registry.Commands() {
-		added[name] = command{summary: pluginCommand.Summary, run: pluginCommand.Run}
+		added[name] = command{
+			summary: pluginCommand.Summary,
+			run:     pluginCommand.Run,
+			plugin:  pluginCommand.Plugin,
+		}
 	}
 	return added
 }

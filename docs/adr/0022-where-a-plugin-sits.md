@@ -1,4 +1,4 @@
-# 0021 — Where a plugin sits, and what it may take away
+# 0022 — Where a plugin sits, and what it may take away
 
 - **Status**: Accepted
 - **Date**: 2026-09-27
