@@ -389,6 +389,24 @@
   search-as-you-type for the duration, a log line says why, and nothing an attacker
   injected runs. The nonce source is `http.Config.Nonce` so the path is testable,
   because a `crypto/rand` call inside a middleware is a failure path with no test.
+- **`--log-format` and `DDSP_LOG_FORMAT`: `text` or `json`, refused otherwise.** The
+  application has logged through `log/slog` with named fields since M0 — `method`,
+  `path`, `status`, `request_id`, `principal` — so "structured logs" as an M13 item
+  turned out to be a *format switch* and nothing else. What was missing was that
+  `wiki serve` hardcoded `slog.NewTextHandler`, so a DM whose system log wanted JSON
+  had two bad options: post-process the text, or scrape it.
+- **An unknown log format stops the command, and the error names the two that
+  work.** A default here is the worst of the three answers: a refusal is thirty
+  seconds of reading, a default is an afternoon of wondering why a log shipper has
+  nothing to parse, and a panic is a support question. `DDSP_LOG_FORMAT` is validated
+  in `Resolve` rather than in `New`, so a command refuses before it opens a database
+  rather than after.
+- **The redaction survives every format, and that is the constraint on adding one.**
+  `internal/auth`'s redacting handler wraps whatever it is given and has no unwrapped
+  constructor to reach past — a M6 decision — so a format is a new *encoder* and it is
+  either wrapped in the same handler or it is not used.
+  `TestTheRedactionSurvivesTheFormat` is the test that would fail first if anybody ever
+  added a raw one.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

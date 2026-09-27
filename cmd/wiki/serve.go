@@ -23,6 +23,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/logfmt"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
@@ -38,6 +39,14 @@ type serveOptions struct {
 	prod     bool
 	noWatch  bool
 	debounce time.Duration
+
+	// logFormat is the encoding the log is written in: `text` or `json`, and the
+	// empty string is the environment's decision or the default's.
+	//
+	// It is a field rather than a `--log-format` on the shared parse because
+	// `logfmt.Resolve` is where the precedence lives and a command that resolved it
+	// itself would be a third place with its own idea of the order.
+	logFormat string
 }
 
 // defaultAddr is loopback and not `0.0.0.0`, deliberately.
@@ -84,6 +93,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	flags.BoolVar(&opts.noWatch, "no-watch", false,
 		"do not watch the vaults for changes; `wiki sync` is the only way the index moves")
 	flags.DurationVar(&opts.debounce, "debounce", defaultDebounce, "how long to wait for a vault to stop changing")
+	flags.StringVar(&opts.logFormat, "log-format", "",
+		"the log encoding, text or json ("+logfmt.EnvVar+" overrides the default)")
 
 	if err := parseFlags(flags, args, "wiki serve"); err != nil {
 		return err
@@ -92,7 +103,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return errors.New("wiki serve: --streams must be at least 1")
 	}
 
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	format, err := logfmt.Resolve(opts.logFormat)
+	if err != nil {
+		return fmt.Errorf("wiki serve: %w", err)
+	}
+	encoding, err := logfmt.New(stderr, format, slog.LevelInfo)
+	if err != nil {
+		return fmt.Errorf("wiki serve: %w", err)
+	}
+	logger := slog.New(encoding)
 
 	dir, err := datadir.Resolve(opts.dataDir)
 	if err != nil {

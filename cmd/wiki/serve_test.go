@@ -575,3 +575,28 @@ func between(t *testing.T, body, prefix, suffix string) string {
 	}
 	return html.UnescapeString(value)
 }
+
+// TestTheLogFormatFlagIsRefusedRatherThanIgnored: the flag exists, so a DM who
+// mistypes it has to be told. A wiki that started anyway would be logging in a format
+// the DM did not ask for, and the discovery would be a log shipper with nothing to
+// parse.
+func TestTheLogFormatFlagIsRefusedRatherThanIgnored(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	err := runServe(t.Context(),
+		[]string{"--data-dir", dir, "--addr", "127.0.0.1:0", "--log-format", "logfmt"},
+		&stdout, &stderr)
+
+	if err == nil {
+		t.Fatal("wiki serve --log-format logfmt started")
+	}
+	if !strings.Contains(err.Error(), "logfmt") {
+		t.Errorf("the refusal does not name what was typed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "text") || !strings.Contains(err.Error(), "json") {
+		t.Errorf("the refusal does not say what is accepted: %v", err)
+	}
+}
