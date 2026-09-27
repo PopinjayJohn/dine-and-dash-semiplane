@@ -2,6 +2,41 @@
 
 ### Added
 
+- **`wiki serve`: the HTTP server, the index watchers, and the lock that keeps two
+  of either off one data directory.** The listener comes up *before* the index is
+  read, so the port a DM is told about is a port that is already accepting
+  connections — binding late is how a server prints an address and then refuses
+  connections for two seconds.
+- **The default address is `127.0.0.1:8080`, not `0.0.0.0`.** This is a wiki on a
+  DM's own machine, and the Go default of every interface is the right default for
+  a service and the wrong one for a thing holding a campaign's secrets behind a
+  share link and nothing else. A DM who wants it on their LAN types
+  `--addr 0.0.0.0:8080`, which is a decision they make rather than one they
+  inherit.
+- **`WriteTimeout` is deliberately not set.** A stream is a response that never
+  ends, and a write timeout would cut every live page in the campaign at exactly
+  the timeout. `ReadHeaderTimeout` and `IdleTimeout` are set, because a phone that
+  went to sleep mid-request is a real thing at a table.
+- **The shutdown is the reverse of the startup, and the hub is closed first.** That
+  is the step that matters: closing it ends every open stream, so `Shutdown` has
+  nothing long-running left to wait for. A `Ctrl-C` is a graceful shutdown and not
+  a kill, because a kill leaves a lock file behind and the next start waits out the
+  stale window before it can run.
+- **A campaign's write lock is released on the way out, and `openCampaigns`
+  returns the function that does it** so that a caller who drops it is a caller
+  who has leaked a lock — the kind of leak that only shows up as a confusing error
+  two minutes later.
+- **Every campaign is synced once at startup**, so a vault that has never been
+  synced is servable without a second command, and a campaign that cannot be
+  opened is a warning rather than a refusal: a DM with two campaigns and one
+  unreadable directory still gets to play the other one.
+- **One watcher goroutine per campaign, and a watcher that fails logs and
+  returns.** A wiki whose live updates stopped is still a wiki that can be read,
+  and that is the right thing to be left with.
+- **A sync that changed nothing sends nobody a fresh copy of themselves.** The
+  watcher fires on every filesystem event, and Obsidian's save is several writes;
+  pushing a frame per event would be a render per reader per keystroke.
+
 - **A live page.** `?stream=1` on a page URL is a stream of that page's changes,
   and each frame patches the `#page` article and nothing else — so a reader who is
   halfway down the page keeps their scroll position and their place in the sidebar,
@@ -24,8 +59,8 @@
   `internal/sse` has four functions and none of them is a comment, and inventing a
   fifth is a change to ADR 0006 rather than a detail. The handler is the one place
   in the application that knows the framing's spelling, and the comment says so.
-- **`PageChanged` is a function taking the hub, not a method on the application,
-** because the hub is the caller's — the same rule that says the caller closes the
+- **`PageChanged` is a function taking the hub, not a method on the application,**
+  because the hub is the caller's — the same rule that says the caller closes the
   store it opened — and the only other thing it needs is the rule for a topic's
   name, which is a rule about how this package spells a page.
 - **`Config.Hub` is required rather than optional,** for the same reason: a hub the
