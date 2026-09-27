@@ -1,28 +1,371 @@
-# Changelog
-
-All notable changes to this project are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-<!--
-House rules:
-
-  - `## [Unreleased]` is always the first section. Never retro-edit a released
-    section; add a new version header instead.
-  - Every commit that touches internal/, cmd/, plugins/, migrations/ or web/
-    must touch this file in the same commit. scripts/check-changelog.sh fails
-    the build otherwise.
-  - Write entries for humans reading release notes, not for a git log. "Fixed
-    the search" is not an entry; "search now ranks exact title matches first"
-    is.
-  - Each milestone from docs/spec.md lands its own section here, in the same
-    commit as the code.
--->
-
 ## [Unreleased]
 
 ### Added
+
+- **The sync keeps both search indexes in step.** A page is indexed from its file
+  on the same pass that writes its row, and the settled check asks whether the
+  index already holds what the file derives — so a page whose search rows were
+  deleted behind the sync's back is rewritten even though nothing in the vault
+  moved and every hash still matches. That is the rot-in-place failure one layer
+  up from the page row, and comparing the hashes would not have seen it.
+- **An archived page is not findable**, and only its findability went: the row
+  survives so the archive stays recoverable, but a search must not name a page no
+  read can open, because the error a player gets for opening it says the page does
+  not exist, which is a different answer from "you may not see it".
+- A page is findable end to end from a file on disk: **title, aliases, tags and
+  type today; prose once the redaction lands.** The body is *not* in the public
+  index yet, and that is a missing feature rather than an oversight — working out
+  which text a principal may be shown needs access control, and until that exists
+  the only safe value for `body_public` is the empty string.
+- **Secret text *is* indexed now**, because which text is secret is a *parsing*
+  question and the parser already answers it. A DM can find their own secrets by
+  content from this milestone on, which is the feature ADR 0009 exists for: the DM
+  forgets which page they wrote a name on.
+- A test that runs the whole chain — file, sync, query — because the chain is where
+  a decision made in one package quietly fails to reach another, and no unit test
+  in either package would notice.
+
+- **Reciprocal Rank Fusion** merges the two ranked lists: a page's score is
+  `Σ 1 / (60 + rank)` over the lists it appears in, so a page whose title matches
+  *and* whose secret contains the phrase outranks a page whose title matches
+  alone. BM25 scores from two indexes over two corpora of different sizes are not
+  comparable, and any normalisation that made them agree would be a constant
+  fitted to one corpus. `60` is the published default and is not tuned.
+- Where a page matched in both, the **excerpt from the private index wins** — it
+  is the more specific answer, and it is safe because the page is in the private
+  list at all only if the stricter scope admitted this principal.
+- Ranks are **renumbered** after the merge, because rank 2 of two lists is not
+  rank 2 of one. Ties break on the best rank any list gave, then on the order the
+  pages arrived in — not on the id, which a reader cannot see. Two identical
+  requests give the same list.
+- `search.Run` is the entry point: parse, refuse or stop early, one query per
+  index, fuse, cut. It takes the backend as an argument and holds nothing, so the
+  whole of it is testable with a fixture and no database — which is what makes
+  the relevance and ordering tests as many as they are.
+- Each index is read **five times deeper than the requested result count**,
+  because RRF can lift a page that was eleventh in one list and first in the other
+  and a fusion over two lists of exactly N cannot find it. A bound rather than a
+  fit, and not tuned.
+- A filter that names something the caller may not see is not information, so
+  `is:dm-only` for a player is the empty intersection rather than an error, and a
+  failure in either query is reported with the index named rather than dropping
+  the private half and answering with a list that looks complete.
+- **Benchmarks**, which is what ADR 0009 asks for where it says "kilobytes" and
+  "roughly double". Over 400 synthetic pages of 200 words, on the machine this
+  was written on: writing both indexes 229ms, the settled check 84ms, a one-word
+  search 5.3ms, a search that matches nothing 0.4ms, and the fusion itself
+  0.09ms with no database in the process. The numbers are a baseline to compare
+  against, not a target.
+
+- `render.SecretText` lifts a page's **unrevealed `[!SECRET]` text off the parse
+  tree**, which is what the private search index is fed. It is in `render` rather
+  than in the indexer because the `[!SECRET]` grammar has to be read the same way
+  twice — the renderer strips a secret and the indexer has to decide which side of
+  the split it belongs on — and two implementations of the same syntax is two
+  answers waiting for a DM to write the callout that separates them.
+- What goes in and what does not: a **revealed secret is public body, not secret
+  text**, and the walk carries on *into* it because a revealed block can contain a
+  secret that is not revealed. A blockquote with a secret's shape that the parser
+  could not read is included, for the same fail-closed reason the stripper removes
+  it — a secret that cannot be found is a secret the DM has lost. A secret inside
+  a secret is counted once, because the outer one already carries the inner one's
+  text.
+- Two things the first version of it got wrong, both found by the tests: goldmark
+  keeps a **code block's lines off the child nodes**, so a secret whose credential
+  is in a code block indexed as an empty string; and a **soft-wrapped line** —
+  which is every line a DM writes — arrives as two text nodes with the newline and
+  the `> ` marker between them and nothing to say so, so a two-line secret was
+  indexed as one run-on line whose phrases matched nothing. The boundary is now
+  recovered from the source offsets.
+
+- **Search runs against the public index**, filtered by the audience scope in
+  SQL. It finds pages by title, alias, tag and page type, ranks a title match
+  above a tag, an alias or a body match, and returns hits with a rank and an
+  excerpt rather than a score — because a BM25 number from one index means
+  nothing next to one from the other, and the fusion only uses the order.
+- **The private index is reachable only through the stricter scope**, and a
+  secret's excerpt is built from the private index. A DM can find their own
+  secret by content, which is a real need: the DM forgets which page they wrote a
+  name on. A player gets nothing, and the reason is not that the page is
+  unreadable — the town page is perfectly readable — but that the secret inside it
+  is not theirs to see.
+- `TestSecretNeverAppearsInAResult` is the named test, and it is blunt: a
+  forbidden-substring assertion over every field a hit carries, run for the
+  canary, for fragments of the canary, and for the three ways a `dm-only` page
+  could otherwise be listed. It also asserts the DM *does* find it, because a
+  test that only checks the canary is absent also passes against an index holding
+  no secret text at all.
+- **A player sees a subset of what the DM sees, for every query in the
+  language**, checked pairwise over the whole language rather than over chosen
+  cases. The audience scope is one-directional, and this is what says so.
+- **The FTS5 injection corpus.** FTS5 has a query language of its own and a
+  search box is a second one layered on top, so a hostile query is a security
+  problem before it is a relevance one. Every clause is quoted with FTS5's own
+  string quoting — an inner quote doubled, which is FTS5's rule and the reason a
+  naive quote breaks — and the whole expression is a bound parameter. A test
+  strips the literals back out and asserts nothing but this builder's own
+  operators are left, so `AND`, `NEAR/2`, `tags : "hub"`, `^toll`, `"*` and a
+  hand-written column filter all arrive as words. A fuzzer runs the same
+  assertion over arbitrary bytes.
+- `type:` and `is:` are SQL rather than FTS5 column filters, because an FTS5
+  column filter is itself a *match*: `type:homebrew-thing` would be the phrase
+  "homebrew thing", and a filter that quietly means something adjacent to what was
+  asked for cannot be debugged from the results. `is:` landing in the same
+  `WHERE` clause as the audience scope is also what makes it a filter rather than
+  a bypass.
+- An **empty search box asks for nothing.** "Show me everything" is a legitimate
+  question with a legitimate answer, but a search with an empty box in it is a
+  request for every title in the campaign, and that list is as disclosing as the
+  pages themselves. A caller that wants a listing asks for a listing.
+- The four search statements are **pinned by a test that prints them**, so a
+  change to how one is built shows up as a diff in the test rather than as a
+  change in what a search returns, and so a reviewer can read all the SQL this
+  package runs in one place.
+- Excerpts come back as **plain text with no markers**. FTS5's markers would have
+  to be HTML, and an excerpt of a DM's own markdown going into a response with a
+  `<script>` in it is a sanitiser decision the search package should not be making
+  silently. Highlighting is the view's, and it has the query terms in hand.
+
+- **A page's audience is now recorded on its row.** M4's sync already read every
+  `visibility` key, refused a value it did not recognise, and then threw the
+  readable ones away — a security-relevant field validated and discarded, which
+  left `visibility: dm-only` pages indexed as pages anyone could read. A read
+  predicate has to filter on something, and the `visibility` column is that
+  something. A blank audience is `players`, which is both the frontmatter default
+  and the column default, and an audience the application does not recognise is
+  refused rather than defaulted.
+- **The read predicate, written once in SQL** (`internal/store/acl.go`) and used
+  by both search indexes. A DM reads every page in the campaign; a player reads
+  the `players` pages and nothing else; a principal with no role reads the
+  `players` pages and nothing else, because a caller that forgot to look a
+  principal up gets the safe answer rather than a panic.
+- The ownership test is present, explicit and **false** for now (`1 = 0`),
+  because the table that answers it does not exist yet. That is the fail-closed
+  direction: leaving the branch out would silently widen every `dm-and-owner`
+  page, and admitting every player to one would be a disclosure the moment a DM
+  wrote one. A test asserts the branch is still there, which is what stops it
+  being "tidied away" by somebody who has not noticed the table is missing.
+- The audience test names the two levels that admit somebody and **does not name
+  `dm-only` at all**, because that is the one level no clause of it may admit and
+  the only way to write it down would be to exclude it — and an exclusion
+  somebody can delete is not a control.
+- A change to a page's audience re-indexes it. The audience is compared by name
+  alongside the other derived fields rather than being left to the content hash,
+  because it is a security field and a hash that happens to change when the file
+  does is not the same promise.
+
+- Two FTS5 indexes and the store methods that keep them in step with the pages
+  table, so search reads a projection rather than scanning bodies: `pages_fts`
+  for text nobody is barred from seeing, and `pages_secrets_fts` holding only
+  `[!SECRET]` text. A page is findable by its title, aliases, tags and public
+  body; a DM is additionally findable by what they wrote inside a secret.
+- `pages.body_public` — the single place to look when asking "is this text safe
+  to be findable?". **It is empty and stays empty until access control can
+  compute it**, because the only safe value before then is the empty string: a
+  body that reached the public index with a secret in it is a disclosure, and a
+  body that did not is a missing feature. `wiki reindex --full` rebuilds both
+  indexes from the files.
+- A page's search rows are **settled, not merely written**: `PageIndexMatches`
+  answers whether the index already holds what the file derives, so the sync
+  engine can leave a page alone. An index that could be written but not compared
+  would rot in place, and nothing in a wiki notices that for months.
+- The public body is recorded on the page row as well as in the index, in the
+  same transaction, so the column and the index row cannot disagree about what
+  the public half was built from.
+- Both index rows are part of the store contract suite, so a second `Store`
+  implementation is held to the same split and the same settled check.
+- The tokenizer clause in the migration is asserted by matching rather than by
+  reading the schema back: `Rivergate` finds `Rivergåte`, because the failure
+  mode of getting this wrong is an empty result set, which is indistinguishable
+  from a page that does not exist.
+
+- A search **query language**: bare words are ANDed, `"exact phrase"` is a
+  phrase, and `tag:`, `type:` and `is:` are filters. It is a pure value with no
+  database handle, so the relevance tests need no database and the parser can be
+  fuzzed on its own. Whatever the language does not recognise is searched for as
+  a word, because a search box that refuses input is worse than one that looks
+  for a strange word.
+- Every clause is quoted before it reaches FTS5 and the whole expression is
+  bound as a parameter, so a query cannot become a query *language*: `AND`,
+  `NOT`, `-`, `(`, `*` and a bare `"` are words, and `http://example.com` is a
+  word rather than a filter on its second colon.
+- `is:` is the one filter that is validated, and refusing `is:plyers` rather
+  than returning nothing is deliberate: a search that finds nothing looks exactly
+  like an index that has nothing to say, and a player cannot tell the two apart.
+  A player who searches `is:dm-only` gets no results, not a page.
+- A fuzzer for the language, which found two things worth fixing and kept both
+  as seeds: a byte that is not valid UTF-8 was riding through into a clause (and
+  would have made any response echoing the query invalid JSON), and a NUL inside
+  a term ended it as far as the tokenizer was concerned while not ending it as
+  far as the string was concerned. A filter value beginning with a colon is now
+  quoted on the way out as well, so `tag: :00` survives a round trip.
+
+
+### Fixed
+
+- **A test fixture's table keys were long enough to make two Go versions
+  disagree about the file.** `gofmt` aligns the values in a run of
+  composite-literal entries to the widest key, and which entries count as one
+  run changed in Go 1.26: a key far wider than its neighbours now goes in a
+  group of its own, where 1.25 aligned everything to the widest. One
+  42-character key in a table of 20-character ones was therefore a file that
+  `make fmt` on Go 1.27 wrote one way and CI's `gofmt` on Go 1.25 rewrote
+  another — a red build with no change to review, on the one check whose whole
+  job is a byte-for-byte comparison. The keys are now of a similar length, so
+  both versions agree and the table reads better for it.
+
+- A `tag:` filter asked whichever index the query was reading for a `tags`
+  column, and the private index has no `tags` column — so `tag:hub` was a SQL
+  error on every secret search. Tags are a property of the *page*, and the public
+  index is where a page's tags are indexed, so `tag:` is now a subquery against
+  the public index in both queries. It was found by the benchmark above, which is
+  the argument for having one.
+- `type:`, `is:` and now `tag:` are all SQL rather than FTS5 column filters,
+  because an FTS5 column filter is itself a *match*: `type:homebrew-thing` would
+  be the phrase "homebrew thing", and a filter that quietly means something
+  adjacent to what was asked for cannot be debugged from the results.
+
+### Changed
+
+
+- The migration names in the spec were wrong, and §5 now says which is which:
+  `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both
+  earlier than the `0002_access.sql` the spec planned, and `0004_access.sql` is
+  left with the owner column and the bindings. The reasons are in
+  [ADR 0015](docs/adr/0015-search-records-the-audience.md): a read predicate
+  filters on an audience, M4 was already reading and discarding one, and the
+  public index is fed from a column that has to exist before the index does.
+- [ADR 0009](docs/adr/0009-two-index-search-with-rrf.md) claimed the public
+  search path has "no ACL in it at all". That is about secret *text* and it
+  stands; it is not about pages, and a `dm-only` page's title is in that index.
+  Both indexes now go through the read predicate, as invariant 3 names search,
+  and the ADR says so rather than being left to be misread.
+- The store's package comment now says which queries filter and which do not,
+  rather than saying there is no access control at all. A commit that adds a
+  page query must not ship with that comment removed and nothing in its place.
+- The query language is written down once, in `docs/search.md`, which is where
+  ADR 0009 said it would be. It is a user-facing language with sharp edges and
+  reimplementing it in prose would be how it drifts.
+
+### Added
+
+- A `page_targets` table and three store methods, so a wiki link can resolve the
+  way it does in Obsidian: the exact path, then an alias, then a case-insensitive
+  file name. The aliases and the file name live in the index rather than being
+  read out of `frontmatter`, because SQL cannot read YAML and a `LIKE` against
+  the block would make `[[river]]` find `[[the toll on the river]]`. The table
+  is entirely derived from the files and a full reindex rebuilds it.
+- Two rules the lookups are explicit about, because both are ways a link
+  outlives what it pointed at. An **alias is matched exactly**: case-insensitive
+  alias matching would make `Rear; the Toll` and `rear; the toll` two pages with
+  one reachable. A **file name is matched case-insensitively**, folded in Go
+  rather than by SQLite's `LOWER()`, which only folds ASCII and would index
+  `Ölbach` one way and search for it another.
+- A page answers to the name of its own file from the moment its row exists:
+  `UpsertPage` writes that target in the same transaction as the row. The store
+  owns it because a page's name is a property of its path, and the alternative
+  is every writer having to remember — a forgotten line is a link that quietly
+  stops resolving.
+- The lookups are part of the store contract suite, not only of the store's own
+  tests, so a second implementation is held to the same rules.
+
+- `internal/index`, and with it the resolver the renderer asked for in M3 and
+  nothing had been put behind. It answers a wiki link in Obsidian's order — the
+  exact path, then an alias, then a case-insensitive file name — and it is a
+  **per-campaign object**, because every table in the index is campaign-scoped and
+  `[[rivergate]]` means a different page in each of a DM's two campaigns.
+- A sync engine: one campaign's vault read into its index, with a `Report` that
+  says what it did. **It never writes a file** — that is not a limitation but
+  the property ADR 0001 is about, and a test hashes every file's contents *and*
+  modification time before and after a sync to keep it that way.
+- A page whose frontmatter is malformed is **skipped** and the rest of the
+  campaign is still indexed. A page whose `visibility` key is not one the
+  application knows is **refused** and never reaches the index at all. They look
+  like the same failure and are opposites: the first is a page the DM has to fix
+  and nobody should wait for, the second is a page whose audience is unknown,
+  and a row that exists is a row a later render may treat as `players`.
+- A page with no `type:` is indexed as a `note`, the least claiming type there
+  is. A DM who wrote no `type:` has not claimed a page as an NPC, and guessing
+  one would give it behaviour it never asked for.
+- A page is left alone when its content hash is unchanged **and** none of its
+  links would resolve today. The obvious version of that test — "no unresolved
+  links" — settles nothing for a page linking to a page the DM has not written
+  yet, which is most pages of an early campaign: every sync would rewrite all of
+  them, for ever, with the same bytes.
+- One `wiki sync` is enough for a fresh vault. The walk repeats while the
+  previous one wrote something, because a page indexed late in a pass is the
+  target of a page the pass had already passed. A vault that is already in step
+  takes one pass, and `Report.Passes` says which.
+- `wiki sync` and `wiki reindex --full`, and the Makefile's `reindex` target now
+  does something. `wiki sync` reads a campaign's vault into its index and takes
+  that campaign's lock first; `wiki reindex --full` throws the index away and
+  rebuilds it, and the flag is required, because it is work worth typing on
+  purpose rather than something that happens to you. A campaign exists when its
+  directory does — a vault on disk with no row in the index is drift the sync
+  repairs, and importing somebody else's vault is M12's job and has a
+  confirmation step of its own. An empty directory is skipped silently, because
+  somebody's `Downloads` folder is not a campaign.
+- `wiki sync --check` answers a question and answers it in the **exit code** as
+  well as on stdout, because a script asking whether the index is in step cannot
+  read stdout. It changes nothing, and a refused page counts as *not* in step.
+- A watcher, so a page the DM just saved in Obsidian is the page they see when
+  they reload. It watches every directory including the reserved ones (a
+  directory renamed *into* the vault is one event, and a filter would throw it
+  away), learns about new directories as they appear, and debounces: an Obsidian
+  save is a write, a rename, a rename back and a modify, and syncing on each
+  would do the same work four times and race the editor's own writes. What
+  counts as a page is asked of the same `vault.CheckPagePath` the sync uses, so
+  there is no second list of reserved names to drift — revisions, attachments,
+  Obsidian's own directory and in-flight temporary files are all ignored.
+- An archive that tolerates being done already. Two syncs — a watcher's pass
+  and a `wiki sync` in the same campaign — can each have listed a page a moment
+  before the other archived it, and the second one reporting an error for work
+  that is already finished is an error a DM learns to ignore.
+- A per-campaign lock, `internal/lockfile`, so a `wiki sync` in a terminal cannot
+  interleave with the server's watcher — or with another `wiki sync`, which is
+  what happens when a DM presses the up arrow. It is a file and not a row in the
+  database, so holding it is holding a handle and a process that dies releases
+  it. A lock that has not been refreshed inside a stale window belongs to
+  something that is no longer running and is taken over, and a lock file this
+  application did not write is left alone until the window passes: a file it
+  cannot reason about is not one it should decide is rubbish.
+- Drift detection and `ReindexFull`, the repair of last resort. **Drift is a
+  state, not an error**: the projection has stopped describing what it projects,
+  and ADR 0001's answer is to rebuild it from the files.
+- A page is **settled** when re-deriving it from its file would produce exactly
+  the row, aliases and links that are already there. One function decides that,
+  and both `Sync` and `Check` ask it, so "would change" and "changed" cannot
+  disagree. Settling on the content hash alone — which is cheaper, and which the
+  schema's `content_hash` looks built for — is wrong in two ways that only show up
+  months later: a row can rot in place with its hash still matching, and a
+  milestone that changes how a body is derived leaves every row stale with hashes
+  that match their files perfectly, so no incremental sync would ever repair
+  them and every campaign would need a manual full rebuild.
+- Ownership resolution, from docs/spec.md §8: a page is character-owned when
+  its path begins with `characters/<slug>/` **or** its frontmatter declares
+  `character: <slug>`, and the path wins where they disagree. The column
+  (`pages.owner_character_page_id`) arrives with access control in M7; the rule
+  and its validation arrive here, because the rule decides which subtree a player
+  may write in and is easy to get subtly wrong and hard to notice. A
+  `character:` key that normalises to a path no page has, and a page under one
+  character whose key says another, are lines in the sync report — and the page is
+  still indexed, because a page the DM cannot open is worse than a page with a
+  wrong owner recorded.
+- `Report.InStep()`: the boolean `wiki sync --check` exits on. It counts a skip
+  and a **refusal** as out of step, because a page whose `visibility` cannot be
+  read changes no rows when it is refused — and a check that counted only rows
+  would report "in step" about a page the DM cannot see, which is the one answer
+  that must never be given.
+- `store.PurgePage`, the opposite of archiving: the row goes, and its revisions,
+  links and name targets with it. A sync never purges; a sync archives what it
+  cannot see, and only a human who has decided the row should go says so.
+- A page that both embeds and links the same target is **one edge**, and the
+  embed wins. The link graph's primary key is (source, destination), so a second
+  row would not be stored, and the stronger statement is the more useful one.
+- `render.LinkResolver` grows an error return. An index that could not answer is
+  not the same answer as a target nothing answers to, and a wiki full of
+  unresolved links because the database was briefly busy is a bug report about
+  links that do not exist — a much worse thing to be handed than a 500.
 
 - `internal/vault`, which reads and writes the markdown files a DM keeps in
   Obsidian. **A file the application did not change comes back out byte for
@@ -394,6 +737,25 @@ House rules:
   written. Assets in priority order, the threat actors, every control mapped
   to the named test that enforces it, and six accepted limitations stated
   rather than discovered.
+
+### Development
+
+- **The Go toolchain that formats the code is now pinned in the `Makefile`**, and
+  `make fmt` and `make fmt-check` run that toolchain's `gofmt` rather than
+  whatever is on `PATH`. Every other tool was already pinned this way; the one
+  that decides whether CI is green was not, and that is how the build failed — a
+  `gofmt` from the developer's Go rewriting a file CI's `gofmt` had just
+  accepted. `gofmt` may change its output in any release, on purpose, so this
+  cannot be left to chance when the check is a byte-for-byte comparison. It is
+  reached with `GOTOOLCHAIN` and `go env GOROOT`, because `gofmt` is a separate
+  binary from the `go` command and `GOTOOLCHAIN` does not reach the one on
+  `PATH`, and it is resolved inside the recipe so that `make help` does not
+  download a toolchain.
+- `make check-go-version` fails if the pin and the `go` line in `go.mod` drift
+  apart, because CI installs Go from `go.mod` and formats with the pin: a drift
+  is `fmt-check` failing on a file nobody changed, reached by the very mechanism
+  meant to prevent it. `fmt-check` depends on it, so any formatting check catches
+  it.
 
 ## [0.1.0] - TBD
 

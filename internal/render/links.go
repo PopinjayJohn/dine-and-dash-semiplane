@@ -28,7 +28,13 @@ type LinkResolver interface {
 	// target is what the DM wrote: a path without extension, an alias, or a
 	// filename. heading is the `#heading` part, which does not affect whether
 	// the page exists.
-	Resolve(ctx context.Context, target, heading string) (Link, bool)
+	//
+	// The error is for an index that could not answer -- a database failure, a
+	// closed store -- and is deliberately not folded into the boolean. A wiki
+	// full of unresolved links because the database was briefly busy is a bug
+	// report about links that do not exist, which is a much worse thing to be
+	// handed than a 500.
+	Resolve(ctx context.Context, target, heading string) (Link, bool, error)
 }
 
 // Link is a resolved wiki link target.
@@ -73,7 +79,10 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 
 		switch typed := node.(type) {
 		case *WikiLink:
-			resolved, ok := lookup(ctx, links, linkTarget(typed))
+			resolved, ok, err := lookup(ctx, links, linkTarget(typed))
+			if err != nil {
+				return ast.WalkStop, err
+			}
 			applyResolution(typed, resolved, ok)
 		case *ast.Link:
 			// A markdown link whose destination is a page path is a wiki link
@@ -81,11 +90,19 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 			// both and the index knows about both. A link to a URL is not, and
 			// asking the resolver about one is how a campaign page called
 			// "https" would come to be.
-			if target, ok := rewritePageLink(ctx, links, typed.Destination); ok {
+			target, ok, err := rewritePageLink(ctx, links, typed.Destination)
+			if err != nil {
+				return ast.WalkStop, err
+			}
+			if ok {
 				typed.Destination = []byte(target)
 			}
 		case *ast.Image:
-			if target, ok := rewritePageLink(ctx, links, typed.Destination); ok {
+			target, ok, err := rewritePageLink(ctx, links, typed.Destination)
+			if err != nil {
+				return ast.WalkStop, err
+			}
+			if ok {
 				typed.Destination = []byte(target)
 			}
 		}
@@ -96,17 +113,17 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 
 // rewritePageLink resolves a markdown link or image whose destination names a
 // page in this vault, and reports the destination it should have.
-func rewritePageLink(ctx context.Context, links LinkResolver, current []byte) (string, bool) {
+func rewritePageLink(ctx context.Context, links LinkResolver, current []byte) (string, bool, error) {
 	path, heading, isPagePath := pageDestination(current)
 	if !isPagePath {
-		return "", false
+		return "", false, nil
 	}
 
-	resolved, ok := lookup(ctx, links, destination{path: path, heading: heading})
-	if !ok {
-		return "", false
+	resolved, ok, err := lookup(ctx, links, destination{path: path, heading: heading})
+	if err != nil || !ok {
+		return "", false, err
 	}
-	return resolved.hrefFor(), true
+	return resolved.hrefFor(), true, nil
 }
 
 // destination is a target and its heading, which is what the resolver takes.
@@ -121,16 +138,22 @@ type destination struct {
 // A resolver that answers with an empty path is a bug in the resolver, and
 // resolving a link to an empty href is a link to the current page, so the empty
 // answer is refused here.
-func lookup(ctx context.Context, links LinkResolver, target destination) (Link, bool) {
+func lookup(ctx context.Context, links LinkResolver, target destination) (Link, bool, error) {
 	if target.path == "" {
-		return Link{}, false
+		return Link{}, false, nil
 	}
 
-	resolved, ok := links.Resolve(ctx, target.path, target.heading)
-	if !ok || resolved.Path == "" {
-		return Link{}, false
+	resolved, ok, err := links.Resolve(ctx, target.path, target.heading)
+	if err != nil {
+		return Link{}, false, err
 	}
-	return resolved, true
+	// A resolver that answers with an empty path has not found a page, whatever
+	// its boolean said, and turning that into an href would point at the current
+	// page.
+	if !ok || resolved.Path == "" {
+		return Link{}, false, nil
+	}
+	return resolved, true, nil
 }
 
 // applyResolution rewrites a wiki link's href and classes, or leaves it

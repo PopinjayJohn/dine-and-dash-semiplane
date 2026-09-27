@@ -41,26 +41,62 @@ func TestUpFromZero(t *testing.T) {
 		t.Fatalf("Up: %v", err)
 	}
 
-	if state.Version != 1 {
-		t.Errorf("Up left the schema at version %d, want 1", state.Version)
+	// The latest version, by name -- the version number is the migration
+	// set's business and a test that spells it out has to be edited every time
+	// a migration is added.
+	latest, err := migrations.Latest()
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
 	}
-	if state.Name != "init" {
-		t.Errorf("Up left the schema named %q, want %q", state.Name, "init")
+	loaded, err := migrations.Load(migrations.FS())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if state.Version != latest {
+		t.Errorf("Up left the schema at version %d, want the latest, %d", state.Version, latest)
+	}
+	if state.Name != loaded[latest-1].Name {
+		t.Errorf("Up left the schema named %q, want %q", state.Name, loaded[latest-1].Name)
 	}
 	if state.Dirty {
 		t.Error("Up left the schema dirty after a clean run")
 	}
 
-	// The recorded timestamp must be the clock's, in the layout the store
-	// writes every other timestamp in: a schema version and a row's
-	// created_at are read the same way.
-	var appliedAt string
-	err = db.QueryRowContext(ctx, `SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&appliedAt)
+	// Every version's recorded timestamp is one the clock produced, written in
+	// the layout the store writes every other timestamp in, and they increase
+	// with the version. The instants themselves are not asserted: the test clock
+	// steps a minute per call, so which migration gets which instant is a
+	// property of how many migrations there are and of nothing else.
+	stamps, err := appliedAtByVersion(ctx, db)
 	if err != nil {
-		t.Fatalf("reading the recorded migration time: %v", err)
+		t.Fatalf("reading the recorded migration times: %v", err)
 	}
-	if want := "2026-02-14T19:03:00.000000000Z"; appliedAt != want {
-		t.Errorf("applied_at = %q, want %q", appliedAt, want)
+	if len(stamps) != latest {
+		t.Errorf("the schema recorded %d timestamps, want one per version, %d", len(stamps), latest)
+	}
+
+	start := time.Date(2026, 2, 14, 19, 3, 0, 0, time.UTC)
+	previous := start.Add(-time.Hour)
+	for version := 1; version <= latest; version++ {
+		appliedAt, ok := stamps[version]
+		if !ok {
+			t.Errorf("version %d has no recorded timestamp", version)
+			continue
+		}
+
+		stamp, parseErr := time.Parse(migrations.TimeLayout, appliedAt)
+		if parseErr != nil {
+			t.Errorf("version %d recorded %q, which is not a timestamp in the store's layout: %v",
+				version, appliedAt, parseErr)
+			continue
+		}
+		if stamp.Before(start) {
+			t.Errorf("version %d recorded %v, which is before the test clock started at %v", version, stamp, start)
+		}
+		if !stamp.After(previous) {
+			t.Errorf("version %d recorded %v, which is not after version %d's %v", version, stamp, version-1, previous)
+		}
+		previous = stamp
 	}
 
 	after, err := migrations.Version(ctx, db)
@@ -72,7 +108,13 @@ func TestUpFromZero(t *testing.T) {
 	}
 }
 
-func TestUpCreatesTheSchemaM1Ships(t *testing.T) {
+// TestUpCreatesTheSchema is the list of objects a fresh database has after
+// every migration has been applied.
+//
+// It is an allow-list of names rather than a comparison against a dump, because
+// the question it answers is "is anything missing", and a missing table is a
+// migration that was written and not shipped.
+func TestUpCreatesTheSchema(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -83,8 +125,7 @@ func TestUpCreatesTheSchemaM1Ships(t *testing.T) {
 	}
 
 	want := []string{
-		// The tables of docs/spec.md §5 and §10. A missing one here is a
-		// migration that was written and not shipped.
+		// 0001: the tables of docs/spec.md §5 and §10.
 		"campaigns",
 		"pages",
 		"page_revisions",
@@ -94,11 +135,15 @@ func TestUpCreatesTheSchemaM1Ships(t *testing.T) {
 		"audit_log",
 		// The runner's own bookkeeping.
 		"schema_migrations",
-		// The indexes nothing would be fast without.
+		// 0001's indexes, without which nothing would be fast.
 		"page_links_dst",
 		"audit_log_campaign_at",
 		"principals_campaign",
 		"sessions_principal",
+		// 0002: the names a page answers to, so a wiki link can resolve by
+		// alias or file name the way it does in Obsidian.
+		"page_targets",
+		"page_targets_page",
 	}
 
 	got := tableNames(t, db)
@@ -143,17 +188,88 @@ func TestUpIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDownRollsTheSchemaBack(t *testing.T) {
+// TestDownRollsBackTheVersionItIsGiven: a down migration undoes its own
+// version and nothing else.
+//
+// The two halves matter in both directions. Everything the rolled-back version
+// created is gone -- otherwise a later Up fails on an object that already
+// exists -- and everything an earlier version created is still there, because a
+// down migration that dropped `campaigns` would be dropping the campaign
+// index along with it. This test said "nothing is left", which was true while
+// there was one migration and stopped being true the moment there were two.
+func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	if _, err := migrations.Up(ctx, db, fixedClock()); err != nil {
+	before, err := migrations.Up(ctx, db, fixedClock())
+	if err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
+	latest, err := migrations.Latest()
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if before.Version != latest {
+		t.Fatalf("Up left the schema at %v, want the latest version %d", before, latest)
+	}
+
 	state, err := migrations.Down(ctx, db, 1)
+	if err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+	if state.Version != latest-1 {
+		t.Errorf("Down left the schema at version %d, want %d", state.Version, latest-1)
+	}
+
+	got := tableNames(t, db)
+
+	// Gone: the objects the version just rolled back created. FTS5 tables show
+	// up in sqlite_master like any other, so the two indexes are checked here
+	// rather than by a query that would silently succeed against a table that
+	// was never created.
+	for _, name := range []string{"pages_campaign_visibility"} {
+		if slices.Contains(got, name) {
+			t.Errorf("%q survived the down migration", name)
+		}
+	}
+
+	// Still here: what the version below it created, which this down migration
+	// was never asked to touch.
+	for _, name := range []string{"campaigns", "pages", "page_links", "page_targets", "pages_fts", "pages_secrets_fts", "schema_migrations"} {
+		if !slices.Contains(got, name) {
+			t.Errorf("the down migration removed %q, which belongs to an earlier version", name)
+		}
+	}
+
+	// And up again works, which is the property that makes the pair usable in
+	// a test.
+	if _, err := migrations.Up(ctx, db, fixedClock()); err != nil {
+		t.Fatalf("Up after Down: %v", err)
+	}
+}
+
+// TestDownToZeroLeavesNothing: rolling all the way back leaves a database with
+// no schema in it at all, which is what `reindex --full` leans on when it
+// decides to start over.
+func TestDownToZeroLeavesNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	latest, err := migrations.Latest()
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+
+	if _, upErr := migrations.Up(ctx, db, fixedClock()); upErr != nil {
+		t.Fatalf("Up: %v", upErr)
+	}
+
+	state, err := migrations.Down(ctx, db, latest)
 	if err != nil {
 		t.Fatalf("Down: %v", err)
 	}
@@ -161,19 +277,11 @@ func TestDownRollsTheSchemaBack(t *testing.T) {
 		t.Errorf("Down left the schema at version %d, want 0", state.Version)
 	}
 
-	// Every object the up migration created is gone, and nothing is left
-	// behind to fail the next Up.
 	for _, name := range tableNames(t, db) {
 		if name == "schema_migrations" {
 			continue
 		}
-		t.Errorf("%q survived the down migration", name)
-	}
-
-	// And up again works, which is the property that makes the pair usable in
-	// a test.
-	if _, err := migrations.Up(ctx, db, fixedClock()); err != nil {
-		t.Fatalf("Up after Down: %v", err)
+		t.Errorf("%q survived rolling every migration back", name)
 	}
 }
 

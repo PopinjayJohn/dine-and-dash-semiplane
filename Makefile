@@ -7,6 +7,15 @@
 #
 # Pinned tool versions live here and nowhere else. CI reads them from this file
 # with `make print-<tool>-version`, so a bump is one edit.
+#
+# The Go toolchain is pinned here for the same reason, and it matters more than
+# the other two. gofmt may change its output in *any* release, on purpose, and
+# `make fmt-check` is a byte-for-byte comparison -- so a developer's gofmt and
+# CI's gofmt disagreeing is a red build over nothing, and the fix is never to
+# ignore the check. The version has to be named, and it has to be the one CI
+# runs. It must match the `go` line in go.mod, because `go-version-file: go.mod`
+# is what the CI jobs install; `make check-go-version` is the test that says so.
+GO_VERSION := 1.25.0
 
 SHELL := /bin/sh
 .DEFAULT_GOAL := help
@@ -105,6 +114,20 @@ spike: ## Run the Datastar spike, a separate module under spike/
 reindex: ## Rebuild the index from the vault, discarding the database
 	go run ./cmd/wiki reindex --full
 
+# The pin and go.mod have to agree, because CI installs Go from go.mod and
+# formats with the pin. If they drift, `make fmt-check` fails on a file nobody
+# changed -- which is the failure this whole mechanism exists to prevent, reached
+# by the mechanism itself.
+.PHONY: check-go-version
+check-go-version:
+	@declared=$$(awk '/^go /{print $$2; exit}' go.mod); \
+	if [ "$$declared" != "$(GO_VERSION)" ]; then \
+		echo "the pinned Go is $(GO_VERSION) and go.mod declares $$declared."; \
+		echo "CI installs go.mod's version and formats with the pin, so they have to match."; \
+		echo "Change GO_VERSION in the Makefile, or the go line in go.mod, not both."; \
+		exit 1; \
+	fi
+
 # ----------------------------------------------------------------- lint ----
 
 .PHONY: lint
@@ -115,13 +138,25 @@ lint: ## Run golangci-lint
 vet: ## Run go vet
 	go vet ./...
 
+# `gofmt` is a separate binary from the `go` command, so `GOTOOLCHAIN` does not
+# reach the one on PATH. `go env GOROOT` under the pin does, and that is how the
+# recipe below gets the right gofmt:
+#
+#     gofmt=$$(GOTOOLCHAIN=go$(GO_VERSION) go env GOROOT)/bin/gofmt
+#
+# It is a recipe and not a `$(shell)` so that `make help` does not resolve it,
+# and therefore does not download a toolchain on a machine that has not got it.
 .PHONY: fmt
 fmt: ## Rewrite files with gofmt and goimports
 	golangci-lint fmt
+	@gofmt=$$(GOTOOLCHAIN=go$(GO_VERSION) go env GOROOT)/bin/gofmt; \
+	"$$gofmt" -s -w $$(git ls-files '*.go' | grep -v '^spike/')
 
 .PHONY: fmt-check
-fmt-check: ## Fail if any file is not gofmt clean. Needs no installed tools.
-	@unformatted=$$(gofmt -s -l . | grep -v '^\.kilo/' || true); \
+fmt-check: check-go-version ## Fail if any file is not gofmt clean. Needs no installed tools.
+	@gofmt=$$(GOTOOLCHAIN=go$(GO_VERSION) go env GOROOT)/bin/gofmt; \
+	echo "fmt-check with go$(GO_VERSION)"; \
+	unformatted=$$("$$gofmt" -s -l . | grep -v '^\.kilo/' || true); \
 	if [ -n "$$unformatted" ]; then \
 		echo "not gofmt clean:"; echo "$$unformatted"; exit 1; \
 	fi
@@ -129,6 +164,10 @@ fmt-check: ## Fail if any file is not gofmt clean. Needs no installed tools.
 # --------------------------------------------------------------- version ---
 
 # CI reads these so that the pinned tool versions have exactly one home.
+.PHONY: print-go-version
+print-go-version:
+	@echo $(GO_VERSION)
+
 .PHONY: print-golangci-lint-version
 print-golangci-lint-version:
 	@echo $(GOLANGCI_LINT_VERSION)

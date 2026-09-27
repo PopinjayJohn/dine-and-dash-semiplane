@@ -30,47 +30,83 @@ re-litigate one without a new ADR that supersedes it.
 - **M2 — Obsidian storage is on `m2-obsidian-storage`.** `internal/vault`
   reads and writes the markdown files: a Document is the bytes it was read as,
   the frontmatter is a parse tree rather than a map, paths are checked and then
-  resolved through an `os.Root`, and every write is atomic. There is **no
-  `internal/http`, no plugins, no front end, no search and no access control**,
-  and the store and the vault do not talk to each other yet.
+  resolved through an `os.Root`, and every write is atomic. It has **no
+  `internal/http` and no plugins**, and it does not talk to the store or the
+  renderer yet.
 - **M3 — Renderer is on `m3-renderer`.** `internal/render` is the goldmark
   pipeline with the wiki-link and callout extensions, the table of contents, the
   secret stripper, the sanitiser and the render cache. It has **no
-  `internal/http` and no plugins**: nothing serves what it renders yet, and the
-  `LinkResolver` it asks about links is an interface M4 fills in.
+  `internal/http` and no plugins**: nothing serves what it renders yet.
+- **M4 — Index sync is on `m4-index-sync`.** `internal/index` reads a vault into
+  the store, notices drift, rebuilds on request and watches for changes;
+  `internal/lockfile` keeps two writers off one campaign; `wiki sync` and
+  `wiki reindex --full` are the commands, so the Makefile's `reindex` target does
+  something. It has **no `internal/http` and no plugins**: nothing serves the wiki
+  yet, and the watcher is what M8's server will run.
+- **M5 — Search is on `m5-search`.** `internal/search` is the query language, the
+  fusion and `Run`, all pure; `internal/store` owns the FTS5 grammar, the two
+  indexes and the read predicate. The two lists are merged with Reciprocal Rank
+  Fusion ([ADR 0009](docs/adr/0009-two-index-search-with-rrf.md)), and the ACL is
+  in SQL rather than in Go. The query language is documented once, in
+  `docs/search.md`. It has **no `internal/http`**: a search runs against a store,
+  and nothing serves one yet.
+- **A page's audience is recorded; it is not enforced yet.** `pages.visibility`
+  exists and the sync writes the value it reads, because M4 was already reading
+  and discarding it. **Every other page-returning store method is still
+  campaign-scoped and unfiltered** — `GetPage`, `GetPageByID`, `ListPages`,
+  `Backlinks`, the target lookups. Only the two search queries filter. That is
+  correct only while nothing outside the package can reach them, and M7 gives each
+  of them a principal. See [ADR 0015](docs/adr/0015-search-records-the-audience.md).
+- **`pages.body_public` is empty and stays empty until M7.** It is what the public
+  index is fed from, so a value in it is a value anybody can find. Working out
+  which text a *principal* may be shown needs access control; until that exists the
+  only safe value is the empty string. So a page is findable by title, aliases,
+  tags and type, and not by prose — a missing feature, in the safe direction.
+  **The secret index is populated**: which text is secret is a *parsing* question,
+  so a DM can find their own secrets by content today.
+- **The read predicate is written once, in `internal/store/acl.go`,** and both
+  search queries go through it. Its ownership test is `1 = 0` until
+  `principal_characters` exists, and a test asserts the branch is still there —
+  leaving it out would silently widen every `dm-and-owner` page. Never widen that
+  file without reading its header.
+- **Nothing a caller typed is concatenated into SQL.** Every query clause is
+  quoted with FTS5's own string quoting and the expression is a bound parameter.
+  There is a corpus and a fuzzer for it, and a test that strips the literals back
+  out and asserts nothing but the builder's own operators are left.
+- **The sync engine reads files and writes rows, and never writes a file.**
+  That is the property ADR 0001 is about, it is the first thing a change here
+  can break, and a test hashes every file's contents *and* modification time
+  before and after a sync to keep it that way. The editor (M9) and the importer
+  (M12) are the only things that will write markdown.
+- **A page is "settled" when re-deriving it from its file would produce the row
+  that is already there** — not when its content hash matches, and not only for
+  the page row: the aliases, the link graph and both search rows are compared the
+  same way. A hash says a file has not changed, which is a different thing, and
+  settling on the hash alone meant a row could rot in place unnoticed and a change
+  to how fields are derived would leave every row stale with matching hashes. One
+  function decides it, so `Sync` and `Check` cannot disagree about what is out of
+  step.
+- **Ownership is resolved but not stored.** A page is character-owned when its
+  path begins with `characters/<slug>/` or its frontmatter declares
+  `character: <slug>`, and the path wins where they disagree. The column arrives
+  with M7; the rule and its validation are here, because the rule decides which
+  subtree a player may write in and is easy to get subtly wrong.
 - **The renderer's `Decision` is not `access.Decision`, and its zero value
   permits no secrets.** That is the safe direction: a caller that has not
   decided anything gets a page with no secrets in it, which is a missing
   feature rather than a disclosure. M7 replaces the field with the real
   decision, and the render cache is keyed by it, so a render made for a DM can
   never be served to a player.
-- **The store has no access control yet, and says so.** There is no
-  `visibility` column, no `owner_character_page_id` and no principal, so
-  every page-returning method is campaign-scoped and unfiltered. That is
-  correct for a schema that has nothing to filter on and it is *not* correct
-  for a served application: M7 adds the columns and every one of those methods
-  gains a principal and routes through `page_acl_read`, per invariant 3. Until
-  then the store is reachable only from tests and from code that already knows
-  the answer. A commit that adds a page query to the store must not ship with
-  that comment removed and nothing in its place.
-- **The vault and the store are separate halves, on purpose.** Nothing in M2
-  knows what a `domain.Page` is, and nothing in the store knows what a file
-  is. M4 joins them, and it is the first place a change can break the
-  zero-byte-diff promise: anything that reads a page and writes it back must
-  write back the document it read, not a re-serialisation of the values it
-  took out of it.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M4 — Index sync**. The sync engine that walks a vault and
-keeps the index in step with it, the fsnotify watcher, the per-campaign lock,
-`wiki sync` and `wiki reindex --full`. It is the first milestone that joins the
-two halves, so it is the first one where a change can break the
-zero-byte-diff promise, and its key tests are the dual-write consistency and
-drift-repair cases in the store contract.
+Next milestone: **M6 — Auth and principals**. Token mint and verify, the cookie
+exchange, sessions, rate limits, revocation, the audit log, and **character
+binding** — which is the `principal_characters` table the ownership test has been
+waiting for. Its key tests are every hardening item in §10 as a named test.
 
 ## Non-negotiable invariants
 
@@ -139,6 +175,20 @@ make install-tools  # the pinned golangci-lint and templ
 `run` and `reindex` name subcommands that arrive in later milestones, so they
 do nothing yet. The pinned tool versions live in the `Makefile` and nowhere
 else; CI reads them from there with `make print-<tool>-version`.
+
+**The Go toolchain is pinned in the `Makefile` too, and it is pinned for
+formatting.** `gofmt` may change its output in any release, on purpose, and
+`make fmt-check` is a byte-for-byte comparison — so a developer's `gofmt` and
+CI's disagreeing is a red build over nothing. `make fmt` and `make fmt-check`
+run the *pinned* toolchain's `gofmt` (reached with `GOTOOLCHAIN` and
+`go env GOROOT`, because `gofmt` is a separate binary from the `go` command and
+`GOTOOLCHAIN` does not reach the one on `PATH`), and `make check-go-version`
+fails if the pin and the `go` line in `go.mod` drift apart, since CI installs Go
+from `go.mod` and formats with the pin. **Do not run a bare `gofmt` on this
+repository** — use `make fmt`, or `make fmt-check` to check. One consequence to
+know: a map or struct literal with a key far wider than its neighbours is
+formatted differently by Go 1.25 and Go 1.26+, so keep test-table keys of a
+similar width.
 
 ## Testing expectations
 

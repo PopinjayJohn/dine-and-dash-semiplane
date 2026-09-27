@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,27 @@ import (
 // one connection, so a second connection in the pool — which is what the store
 // does for reads — would find an empty database. That mistake is worth
 // designing out of every test rather than rediscovering it.
+// appliedAtByVersion reads the timestamps the runner recorded, keyed by version.
+func appliedAtByVersion(ctx context.Context, db *sql.DB) (map[int]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT version, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	stamps := map[int]string{}
+	for rows.Next() {
+		var version int
+		var appliedAt string
+		if err := rows.Scan(&version, &appliedAt); err != nil {
+			return nil, err
+		}
+		stamps[version] = appliedAt
+	}
+
+	return stamps, rows.Err()
+}
+
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

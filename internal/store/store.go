@@ -27,13 +27,18 @@
 // every timestamp in a result, and it is the reason this package takes a clock
 // and an ID generator rather than reaching for time.Now and a global counter.
 //
-// # Access control is not here yet
+// # Access control
 //
-// Every method below is campaign-scoped and returns everything in the campaign.
-// That is correct for a database that has no principals and no visibility
-// column, and it stops being correct the moment 0002_access.sql lands: in M7
-// each of these methods gains a principal and filters through
-// page_acl_read, as invariant 3 in AGENTS.md requires of every method that can
-// return a page. Until then the store is reachable only from tests and from
-// code that already knows the answer.
+// The read predicate is written once, in acl.go, and the two search indexes are
+// read through it — the public one through the audience scope, the private one
+// through the stricter scope that also asks whether the principal may see that
+// page's secrets. That is invariant 3 satisfied for the queries that exist.
+//
+// Everything else is still campaign-scoped and unfiltered: GetPage,
+// GetPageByID, ListPages, Backlinks and the target lookups return whatever is in
+// the campaign. That is correct only while nothing outside this package can reach
+// them, and it stops being correct the moment a handler does. The next milestone
+// gives each of those a principal and routes it through the same scopes; until
+// then the store is reachable only from tests and from code that already knows
+// the answer. Do not add a method here that returns a page without a scope.
 package store

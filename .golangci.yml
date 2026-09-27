@@ -64,9 +64,14 @@ linters:
       # goldmark exports Prioritized and PrioritizedSlice, and bluemonday exports
       # Sanitize. The rules are keyed on the lower-case typo, so that is what
       # goes here.
+      #
+      # `Vell` is a third: it is the toll-collector in the spec's own example
+      # vault, which several fixtures quote so that a test failure shows a name
+      # the reader can look up in docs/spec.md.
       ignore-rules:
         - prioritized
         - sanitize
+        - vell
     nakedret:
       max-func-lines: 30
     revive:

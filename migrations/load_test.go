@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,31 +17,54 @@ func TestLoadEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("Load(FS()) returned an error: %v", err)
 	}
 
-	if len(loaded) != 1 {
-		t.Fatalf("got %d migrations, want exactly the one M1 ships: %+v", len(loaded), loaded)
+	// The set is named rather than counted. "Exactly one migration" was true
+	// through M1 and false the moment M4 added one, and a test that pins a
+	// count is a test that has to be edited by every milestone -- which is how a
+	// test stops being about the thing it was written for.
+	want := []struct {
+		version int
+		name    string
+	}{
+		{version: 1, name: "init"},
+		{version: 2, name: "lookups"},
+		{version: 3, name: "search"},
+		{version: 4, name: "visibility"},
 	}
 
-	got := loaded[0]
-	if got.Version != 1 {
-		t.Errorf("version = %d, want 1", got.Version)
+	if len(loaded) != len(want) {
+		t.Fatalf("got %d migrations, want %d: %+v", len(loaded), len(want), versionsOf(loaded))
 	}
-	if got.Name != "init" {
-		t.Errorf("name = %q, want %q", got.Name, "init")
-	}
-	if strings.TrimSpace(got.Up) == "" {
-		t.Error("the up migration is empty")
-	}
-	if strings.TrimSpace(got.Down) == "" {
-		t.Error("the down migration is empty")
+
+	for i, expected := range want {
+		got := loaded[i]
+		if got.Version != expected.version || got.Name != expected.name {
+			t.Errorf("migration %d is version %d (%s), want version %d (%s)",
+				i, got.Version, got.Name, expected.version, expected.name)
+		}
+		if strings.TrimSpace(got.Up) == "" {
+			t.Errorf("version %d (%s) has an empty up migration", got.Version, got.Name)
+		}
+		if strings.TrimSpace(got.Down) == "" {
+			t.Errorf("version %d (%s) has an empty down migration", got.Version, got.Name)
+		}
 	}
 
 	latest, err := migrations.Latest()
 	if err != nil {
 		t.Fatalf("Latest() returned an error: %v", err)
 	}
-	if latest != got.Version {
-		t.Errorf("Latest() = %d, want %d", latest, got.Version)
+	if want := want[len(want)-1].version; latest != want {
+		t.Errorf("Latest() = %d, want the last version in the set, %d", latest, want)
 	}
+}
+
+// versionsOf is the migration set in one line, for a failure message.
+func versionsOf(loaded []migrations.Migration) []string {
+	versions := make([]string, 0, len(loaded))
+	for _, m := range loaded {
+		versions = append(versions, fmt.Sprintf("%d_%s", m.Version, m.Name))
+	}
+	return versions
 }
 
 func TestLoad(t *testing.T) {

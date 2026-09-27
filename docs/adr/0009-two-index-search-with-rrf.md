@@ -68,6 +68,15 @@ CREATE VIRTUAL TABLE pages_secrets_fts USING fts5(
 - **Diacritics are removed by the tokenizer**, so `Rivergate` matches
   `Rivergåte`. A DM typing an accented name is not a failed search.
 
+**Amended by [ADR 0015](0015-search-records-the-audience.md).** The claim above
+is about *secret text*, and it stands. It is not about pages: a `dm-only` page's
+title is in `pages_fts` along with everything else, and invariant 3 in AGENTS.md
+names search, so **both** indexes are read through the read predicate. The split
+filters which *text* an index holds; the predicate filters which *pages* a
+principal may see. They are different questions and the same answer — no caller of
+a page-returning query omits the predicate — which is why M5 writes one predicate
+in one file and uses it for both.
+
 ### The merge is rank-based, not score-based
 
 ```

@@ -2,6 +2,7 @@ package render_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,21 +13,25 @@ import (
 
 // The index M4 will provide, in miniature: a map of path to title, plus the
 // aliases Obsidian resolves a second.
+//
+// The error is the third value the interface grew in M4, and this fake is where
+// the reason shows: an index that cannot answer is not the same answer as a
+// target nothing answers to, and there is a test for the difference below.
 func testResolver(pages map[string]string, aliases map[string]string) render.LinkResolver {
-	return resolverFunc(func(_ context.Context, target, _ string) (render.Link, bool) {
+	return resolverFunc(func(_ context.Context, target, _ string) (render.Link, bool, error) {
 		if title, ok := pages[target]; ok {
-			return render.Link{Path: target, Title: title}, true
+			return render.Link{Path: target, Title: title}, true, nil
 		}
 		if path, ok := aliases[target]; ok {
-			return render.Link{Path: path, Title: pages[path]}, true
+			return render.Link{Path: path, Title: pages[path]}, true, nil
 		}
-		return render.Link{}, false
+		return render.Link{}, false, nil
 	})
 }
 
-type resolverFunc func(ctx context.Context, target, heading string) (render.Link, bool)
+type resolverFunc func(ctx context.Context, target, heading string) (render.Link, bool, error)
 
-func (f resolverFunc) Resolve(ctx context.Context, target, heading string) (render.Link, bool) {
+func (f resolverFunc) Resolve(ctx context.Context, target, heading string) (render.Link, bool, error) {
 	return f(ctx, target, heading)
 }
 
@@ -171,8 +176,8 @@ func TestNoResolverResolvesNothing(t *testing.T) {
 func TestResolverErrorsFailTheRender(t *testing.T) {
 	t.Parallel()
 
-	broken := resolverFunc(func(context.Context, string, string) (render.Link, bool) {
-		return render.Link{}, false
+	broken := resolverFunc(func(context.Context, string, string) (render.Link, bool, error) {
+		return render.Link{}, false, nil
 	})
 
 	// A resolver that reports everything as absent is indistinguishable from a
@@ -234,5 +239,37 @@ func TestGoldenResolvedLinks(t *testing.T) {
 
 	if got != string(want) {
 		t.Errorf("the rendered HTML is not the golden file\n got: %q\nwant: %q\n\nrun go test -update and read the diff", got, want)
+	}
+}
+
+// TestAnIndexThatCannotAnswerIsNotAnUnresolvedLink is the reason the resolver
+// interface has three return values.
+//
+// A wiki full of unresolved links because the database was briefly busy is a
+// bug report about links that do not exist, which is a much worse thing to be
+// handed than a 500. So a resolver that fails stops the render, and the test
+// says which of the two happened.
+func TestAnIndexThatCannotAnswerIsNotAnUnresolvedLink(t *testing.T) {
+	t.Parallel()
+
+	failing := resolverFunc(func(context.Context, string, string) (render.Link, bool, error) {
+		return render.Link{}, false, errors.New("the index is not answering")
+	})
+
+	renderer := render.NewWithLinks(failing)
+
+	result, err := renderer.Render(context.Background(), render.Page{
+		Path:        "locations/rivergate",
+		Body:        "See [[locations/rivergate]] for the town.",
+		ContentHash: "hash",
+	}, render.Decision{})
+	if err == nil {
+		t.Fatal("a render succeeded against a resolver that could not answer: the links are now silently unresolved")
+	}
+	if !strings.Contains(err.Error(), "the index is not answering") {
+		t.Errorf("error %q, want it to carry the resolver's", err)
+	}
+	if result.HTML != "" {
+		t.Errorf("a failed render returned HTML: %q", result.HTML)
 	}
 }
