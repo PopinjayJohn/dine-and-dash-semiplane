@@ -24,6 +24,54 @@ House rules:
 
 ### Added
 
+- **Search runs against the public index**, filtered by the audience scope in
+  SQL. It finds pages by title, alias, tag and page type, ranks a title match
+  above a tag, an alias or a body match, and returns hits with a rank and an
+  excerpt rather than a score — because a BM25 number from one index means
+  nothing next to one from the other, and the fusion only uses the order.
+- **The private index is reachable only through the stricter scope**, and a
+  secret's excerpt is built from the private index. A DM can find their own
+  secret by content, which is a real need: the DM forgets which page they wrote a
+  name on. A player gets nothing, and the reason is not that the page is
+  unreadable — the town page is perfectly readable — but that the secret inside it
+  is not theirs to see.
+- `TestSecretNeverAppearsInAResult` is the named test, and it is blunt: a
+  forbidden-substring assertion over every field a hit carries, run for the
+  canary, for fragments of the canary, and for the three ways a `dm-only` page
+  could otherwise be listed. It also asserts the DM *does* find it, because a
+  test that only checks the canary is absent also passes against an index holding
+  no secret text at all.
+- **A player sees a subset of what the DM sees, for every query in the
+  language**, checked pairwise over the whole language rather than over chosen
+  cases. The audience scope is one-directional, and this is what says so.
+- **The FTS5 injection corpus.** FTS5 has a query language of its own and a
+  search box is a second one layered on top, so a hostile query is a security
+  problem before it is a relevance one. Every clause is quoted with FTS5's own
+  string quoting — an inner quote doubled, which is FTS5's rule and the reason a
+  naive quote breaks — and the whole expression is a bound parameter. A test
+  strips the literals back out and asserts nothing but this builder's own
+  operators are left, so `AND`, `NEAR/2`, `tags : "hub"`, `^toll`, `"*` and a
+  hand-written column filter all arrive as words. A fuzzer runs the same
+  assertion over arbitrary bytes.
+- `type:` and `is:` are SQL rather than FTS5 column filters, because an FTS5
+  column filter is itself a *match*: `type:homebrew-thing` would be the phrase
+  "homebrew thing", and a filter that quietly means something adjacent to what was
+  asked for cannot be debugged from the results. `is:` landing in the same
+  `WHERE` clause as the audience scope is also what makes it a filter rather than
+  a bypass.
+- An **empty search box asks for nothing.** "Show me everything" is a legitimate
+  question with a legitimate answer, but a search with an empty box in it is a
+  request for every title in the campaign, and that list is as disclosing as the
+  pages themselves. A caller that wants a listing asks for a listing.
+- The four search statements are **pinned by a test that prints them**, so a
+  change to how one is built shows up as a diff in the test rather than as a
+  change in what a search returns, and so a reviewer can read all the SQL this
+  package runs in one place.
+- Excerpts come back as **plain text with no markers**. FTS5's markers would have
+  to be HTML, and an excerpt of a DM's own markdown going into a response with a
+  `<script>` in it is a sanitiser decision the search package should not be making
+  silently. Highlighting is the view's, and it has the query terms in hand.
+
 - **A page's audience is now recorded on its row.** M4's sync already read every
   `visibility` key, refused a value it did not recognise, and then threw the
   readable ones away — a security-relevant field validated and discarded, which
