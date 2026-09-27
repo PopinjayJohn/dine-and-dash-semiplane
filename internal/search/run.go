@@ -33,8 +33,24 @@ const FusionDepth = 5
 // then cut. Stopping before the queries matters — an empty search box is not a
 // search for every page, and running the queries for it would be the first half
 // of answering one.
-func Run(ctx context.Context, backend Searcher, campaignID string, as domain.Principal, input string, limit int) ([]Hit, error) {
+// Option is a setting on a search, and there is one because there is one thing
+// worth setting: whether the last term is a prefix. A variadic rather than a
+// parameter so that the six arguments a plain search needs are the six arguments a
+// plain search takes, and a caller that wants a prefix says so by name.
+type Option func(*Query)
+
+// WithPrefixLastTerm makes the query's last text term match as a prefix, which is
+// what a box somebody is typing into needs and what a page somebody has submitted
+// does not.
+func WithPrefixLastTerm() Option {
+	return func(q *Query) { q.PrefixLastTerm = true }
+}
+
+func Run(ctx context.Context, backend Searcher, campaignID string, as domain.Principal, input string, limit int, opts ...Option) ([]Hit, error) {
 	parsed, err := Parse(input)
+	for _, opt := range opts {
+		opt(&parsed)
+	}
 	if err != nil {
 		return nil, err
 	}

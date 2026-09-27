@@ -18,6 +18,10 @@ import (
 //   - without the decision, **a render made for a DM is served to a player**.
 //     That is the one. It is why the decision is in the key and why a cache
 //     miss is always safe and a cache *hit* has to be earned;
+//   - without `ReadsAll`, a render made for the *owner* of a `dm-and-owner` page
+//     is served to the DM, or the other way round, and which one is decided by
+//     which was rendered first. That is the same class of mistake as the line
+//     above and it arrived later, with link resolution becoming reader-specific;
 //   - without the campaign, one campaign's links are served inside another's
 //     HTML. The two pages have to be genuinely identical for that to happen --
 //     the same path and the same body in two campaigns -- and two DMs who both
@@ -50,6 +54,24 @@ type CacheKey struct {
 
 	// CanSeeSecrets is the decision the entry was made under.
 	CanSeeSecrets bool
+
+	// ReadsAll is the *other* half of the decision that changes the output, and it
+	// is here for a reason the other three are not.
+	//
+	// Since [ADR 0020](../docs/adr/0020-link-resolution-is-campaign-wide.md)'s fix
+	// a page's links resolve for the reader rather than for the DM, so who is
+	// reading is part of the bytes. On most pages that is already covered by
+	// `CanSeeSecrets` — the DM sees secrets, a player does not. On a
+	// `dm-and-owner` page it is not: the page's owner and the DM have the *same*
+	// `CanSeeSecrets` and resolve the page's links differently, because a link to a
+	// `dm-only` page is live for one of them and unresolved for the other.
+	//
+	// Without this field the two share a cache entry, and which one they get
+	// depends on who rendered first. That is a disclosure in one direction (a
+	// player served the DM's resolved links) and a bug in the other (a DM served
+	// their own link as unresolved, and no reader would report it as a security
+	// problem — they would report it as a broken wiki).
+	ReadsAll bool
 
 	// Campaign is the slug the entry was made in, because every URL in the
 	// HTML is campaign-scoped and two campaigns can hold byte-identical pages.

@@ -3,6 +3,7 @@ package http_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/idgen"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
@@ -92,6 +94,13 @@ type fixture struct {
 
 	// editor is the writer, and it is what the editor routes go through.
 	editor *edit.Editor
+
+	// syncer is the *derivation* the watcher uses, which is a different thing from
+	// the editor: the editor writes a file and then derives a row, and the syncer
+	// only derives. The fixture indexes through the syncer so that its rows, owner
+	// columns, link graph and search indexes all come from the one derivation the
+	// application uses.
+	syncer *index.Syncer
 
 	// dm is the campaign's DM as a principal, for a test that saves directly rather
 	// than over HTTP -- which is how a test sets up the *other* side of a conflict.
@@ -171,6 +180,14 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	}
 	f.hands = &fakeClock{at: now}
 
+	// The writer and the syncer, and then the pages -- in that order, because the
+	// pages are indexed through the syncer and a page written before it exists is a
+	// nil dereference rather than a test failure. `f.dm` is the *link's* principal
+	// and the link does not exist yet, so the indexing below goes through
+	// `store.AsDM`, which is the same thing and does not need an id.
+	f.editor = edit.New(campaignVault, s, campaign)
+	f.syncer = index.New(campaignVault, s, campaign)
+
 	f.writePages()
 
 	// Thirty days is the spec's outer bound, and the link and the session share
@@ -208,7 +225,6 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	// bug that a test about revoking yourself finds immediately and a test about
 	// anything else never does.
 	f.hub = sse.NewHub(wiki.DefaultStreams)
-	f.editor = edit.New(campaignVault, s, campaign)
 	f.dm = f.dmLink.Principal
 	f.cfg = wiki.Config{
 		EditorFor: func(campaign domain.Campaign) (*edit.Editor, error) {
@@ -233,6 +249,35 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 // rebuild re-assembles the handler after a test has changed the configuration, so
 // that a test can vary one field without rebuilding the whole fixture.
 func (f *fixture) rebuild() { f.handler = mustHandler(f.t, f.cfg) }
+
+// asFile is a page's *file*, and the frontmatter in it is **built from the same
+// fields the page value carries** rather than written out beside them.
+//
+// The fixture used to hand-write each block *and* set the struct's fields, and the
+// two drifted. `type:` was in the struct and missing from every block, so every
+// page derived as a `note`; one title contained a colon that is a YAML error, so
+// its page did not parse and was skipped entirely; and nothing failed loudly,
+// because the rows used to come from the struct and the files were never read by
+// anything.
+//
+// **Nothing failed loudly is the finding.** A fixture that writes files and derives
+// its rows is how a campaign actually exists, and it is the first version of this
+// one that can notice when a test's markdown is wrong. The search test is what
+// noticed: it found no pages at all, because the derived titles and audiences were
+// nonsense, and a route test failed for a reason nobody could see.
+func asFile(p domain.Page) string {
+	var block strings.Builder
+	block.WriteString("---\n")
+	// Quoted, because `Session 9: The Dragon Heist` is a YAML mapping followed by
+	// a colon and is not a string. The fixture had one of those in it and the page
+	// silently did not exist.
+	fmt.Fprintf(&block, "title: %q\n", p.Title)
+	fmt.Fprintf(&block, "type: %s\n", p.Type)
+	fmt.Fprintf(&block, "visibility: %s\n", p.Visibility)
+	block.WriteString("---\n")
+	block.WriteString(p.Body)
+	return block.String()
+}
 
 // writeFile puts a page in the campaign's vault, which is what a DM's editor does
 // and what the sync then indexes. The file is the truth (ADR 0001), so a test that
@@ -273,6 +318,63 @@ func (f *fixture) savePage(path, markdown string) { //nolint:unparam // the path
 		f.t.Fatalf("saving %s: %v", path, err)
 	}
 }
+
+// saveNew writes a page that does not exist yet, through the editor, which writes
+// the file and derives the row and the search indexes from it.
+//
+// It is a separate helper from `savePage` rather than a flag on it because creating
+// a page and updating one are different requests and the editor treats them so: a
+// create has no ETag and an update has nothing else.
+func (f *fixture) saveNew(path, markdown string) {
+	f.t.Helper()
+
+	if _, _, err := f.editor.Save(f.t.Context(), edit.Save{
+		Path:     path,
+		Markdown: markdown,
+		Creating: true,
+		As:       f.dm,
+	}); err != nil {
+		f.t.Fatalf("creating %s: %v", path, err)
+	}
+}
+
+// indexNew derives a row for a file the fixture wrote, by the same path a watcher
+// would take. It is the *sync* and not `UpsertPage` because the search indexes are
+// written by the derivation.
+func (f *fixture) indexNew(path string) {
+	f.t.Helper()
+
+	// As the DM, and by role rather than by principal: the fixture indexes its
+	// pages before the DM's link exists, and a principal is a row that a link
+	// mints. `store.AsDM` is the same answer for a fixture that has no sessions
+	// yet, and it is what the watcher uses.
+	if _, err := f.syncer.SyncPathAs(f.t.Context(), path, store.AsDM(f.campaign.ID)); err != nil {
+		f.t.Fatalf("indexing %s: %v", path, err)
+	}
+}
+
+// fileFor is a public note's file, for a test that needs a page that exists and
+// whose title the test knows.
+func fileFor(title, body string) string {
+	return fmt.Sprintf("---\ntitle: %q\ntype: %s\nvisibility: players\n---\n\n%s", title, domain.PageTypeNote, body)
+}
+
+// indexed is a row, for a test that wants to know what the index says — which is
+// the *only* way to learn when the index last changed a page, because that is not a
+// fact about any file.
+func (f *fixture) indexed(path string) domain.Page {
+	f.t.Helper()
+
+	page, err := f.store.GetPageArchived(f.t.Context(), f.campaign.ID, path, store.AsDM(f.campaign.ID))
+	if err != nil {
+		f.t.Fatalf("reading back %s: %v", path, err)
+	}
+	return page
+}
+
+// newTinyHub is a hub that will take one stream and refuse the second, for the
+// tests about what a full hub answers.
+func newTinyHub() *sse.Hub { return sse.NewHub(1) }
 
 // readFile is what is on disk, for a test that wants to know what a save did
 // rather than what the index says about it.
@@ -338,92 +440,54 @@ func (f *fixture) redeemIn(t *testing.T, campaign domain.Campaign, link auth.Iss
 func storeAsDM(campaignID string) domain.Principal { return store.AsDM(campaignID) }
 
 func (f *fixture) writePages() {
-	t := f.t
-	ctx := context.Background()
-
 	pages := []domain.Page{
 		{
-			Path:        "locations/rivergate",
-			Title:       "Rivergate",
-			Type:        domain.PageTypeLocation,
-			Visibility:  domain.VisibilityPlayers,
-			Frontmatter: "title: Rivergate\nvisibility: players\n",
+			Path:       "locations/rivergate",
+			Title:      "Rivergate",
+			Type:       domain.PageTypeLocation,
+			Visibility: domain.VisibilityPlayers,
 			Body: "# Rivergate\n\nA fortified town on the confluence.\n\n" +
 				"See [[locations/thornford]] across the water.\n",
-			ContentHash: "hash-rivergate",
 		},
 		{
 			// The hard case: readable by a player, with a secret inside it.
-			Path:        "sessions/09-the-dragon-heist",
-			Title:       "Session 9: The Dragon Heist",
-			Type:        domain.PageTypeSessionLog,
-			Visibility:  domain.VisibilityPlayers,
-			Frontmatter: "title: Session 9: The Dragon Heist\nvisibility: players\n",
+			Path:       "sessions/09-the-dragon-heist",
+			Title:      "Session 9: The Dragon Heist",
+			Type:       domain.PageTypeSessionLog,
+			Visibility: domain.VisibilityPlayers,
 			Body: "# Session 9: The Dragon Heist\n\nThey tried the postern gate.\n\n" +
 				"> [!SECRET] The vault\n> The key is " + canary + ".\n\n" +
 				"> [!SECRET]- Shown later\n> The wyrm answers to the canary too.\n",
-			ContentHash: "hash-session-nine",
 		},
 		{
-			Path:        "npcs/vel",
-			Title:       "Captain Vell",
-			Type:        domain.PageTypeNPC,
-			Visibility:  domain.VisibilityDMOnly,
-			Frontmatter: "title: Captain Vell\nvisibility: dm-only\n",
-			Body:        "# Captain Vell\n\n" + canary + " is the canary, and this page is DM's only.\n",
-			ContentHash: "hash-vel",
+			Path:       "npcs/vel",
+			Title:      "Captain Vell",
+			Type:       domain.PageTypeNPC,
+			Visibility: domain.VisibilityDMOnly,
+			Body:       "# Captain Vell\n\n" + canary + " is the canary, and this page is the DM's only.\n",
 		},
 		{
-			// A character page, which is its own owner -- the second write below
-			// says so, because the owner column holds a page id and a page is not
-			// one until it has been stored.
-			Path:        "characters/aria",
-			Title:       "Aria",
-			Type:        domain.PageTypeCharacter,
-			Visibility:  domain.VisibilityDMAndOwner,
-			Frontmatter: "title: Aria\ncharacter: aria\nvisibility: dm-and-owner\n",
-			Body:        "# Aria\n\nAria's own notes, which are hers.\n",
-			ContentHash: "hash-aria",
+			// A character page, which is its own owner because the *path* says so --
+			// `characters/aria` is the page that character is, and the derivation
+			// resolves that without a `character:` key.
+			Path:       "characters/aria",
+			Title:      "Aria",
+			Type:       domain.PageTypeCharacter,
+			Visibility: domain.VisibilityDMAndOwner,
+			Body:       "# Aria\n\nAria's own notes, which are hers.\n",
 		},
 		{
-			Path:        "campaign",
-			Title:       "The Blackwater",
-			Type:        domain.PageTypeNote,
-			Visibility:  domain.VisibilityPlayers,
-			Frontmatter: "title: The Blackwater\nvisibility: players\n",
-			Body:        "# The Blackwater\n\nWelcome. The party is Aria and the collector.\n",
-			ContentHash: "hash-campaign",
+			Path:       "campaign",
+			Title:      "The Blackwater",
+			Type:       domain.PageTypeNote,
+			Visibility: domain.VisibilityPlayers,
+			Body:       "# The Blackwater\n\nWelcome. The party is Aria and the collector.\n",
 		},
 	}
 
 	for _, page := range pages {
-		page.CampaignID = f.campaign.ID
-
-		// The file first, because that is the order a DM's editor has and the
-		// order the file is the truth in (ADR 0001).
-		f.writeFile(page.Path, page.Frontmatter+page.Body)
-
-		stored, err := f.store.UpsertPage(ctx, page, store.AsDM(f.campaign.ID))
-		if err != nil {
-			t.Fatalf("UpsertPage(%q): %v", page.Path, err)
-		}
-		if page.Path == "characters/aria" {
-			// The owner column is a page id, and a page is its own owner, so
-			// this is the second write that says so.
-			if _, err := f.store.UpsertPage(ctx, domain.Page{
-				CampaignID:           f.campaign.ID,
-				Path:                 stored.Path,
-				Title:                stored.Title,
-				Type:                 stored.Type,
-				Visibility:           stored.Visibility,
-				OwnerCharacterPageID: stored.ID,
-				Frontmatter:          stored.Frontmatter,
-				Body:                 stored.Body,
-				ContentHash:          stored.ContentHash,
-			}, store.AsDM(f.campaign.ID)); err != nil {
-				t.Fatalf("UpsertPage for the character owner: %v", err)
-			}
-		}
+		f.writeFile(page.Path, asFile(page))
+		f.indexNew(page.Path)
 	}
 }
 

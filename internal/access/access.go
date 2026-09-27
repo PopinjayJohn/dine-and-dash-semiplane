@@ -59,6 +59,25 @@ type Decision struct {
 	// a character-owned page's secrets are readable by the owning player, and a
 	// DM-owned page's are not, and both can be the same visibility level.
 	CanSeeSecrets bool
+
+	// ReadsAll is whether the principal may read *every* page in the campaign, which
+	// in this application means "is the DM".
+	//
+	// It is here and not as a separate concern because it is a fifth thing a
+	// decision has to say, and it is needed for a reason the other four do not
+	// cover: **link resolution is a function of it.** A page's rendered links
+	// resolve for the reader ([ADR 0020](../../docs/adr/0020-link-resolution-is-campaign-wide.md)),
+	// so a `[[link]]` to a `dm-only` page is live for a DM and unresolved for a
+	// player — and a player who *owns* a `dm-and-owner` page has the same
+	// `CanSeeSecrets` as the DM on that page while resolving its links
+	// differently. Two readers in one cache class is a cache that serves one
+	// reader's links to the other, so the class has two axes rather than one.
+	//
+	// It is on the decision rather than read out of the role at the point of use
+	// because the decision is the thing that travels, and a renderer reaching for
+	// a role from somewhere else would be the second implementation of "who is
+	// this".
+	ReadsAll bool
 }
 
 // String is the decision as a log line reads it, and it is one line because
@@ -67,16 +86,17 @@ func (d Decision) String() string {
 	return "read=" + yesNo(d.CanRead) +
 		" edit=" + yesNo(d.CanEdit) +
 		" reveal=" + yesNo(d.CanReveal) +
-		" secrets=" + yesNo(d.CanSeeSecrets)
+		" secrets=" + yesNo(d.CanSeeSecrets) +
+		" all=" + yesNo(d.ReadsAll)
 }
 
 // Granted is a Decision with everything on, which is what a DM's session is. It
 // exists so that a caller assembling a DM's decision does not have to remember
-// four field names, and so that a new field cannot be forgotten: adding one to
+// five field names, and so that a new field cannot be forgotten: adding one to
 // `Decision` and not to this constructor is a compile error at every call site
 // that treats a DM as unrestricted, which is the failure that would be worst.
 func Granted() Decision {
-	return Decision{CanRead: true, CanEdit: true, CanReveal: true, CanSeeSecrets: true}
+	return Decision{CanRead: true, CanEdit: true, CanReveal: true, CanSeeSecrets: true, ReadsAll: true}
 }
 
 // Nothing is a Decision with everything off, which is what an unauthenticated
@@ -145,6 +165,9 @@ func For(p Principal, page PageMeta) Decision {
 		CanEdit:       owned,
 		CanReveal:     owned,
 		CanSeeSecrets: owned,
+		// A player reads no `dm-only` page, ever, so this is false for the same
+		// reason the `dm-only` case above returns Nothing: the two facts are one.
+		ReadsAll: false,
 	}
 }
 

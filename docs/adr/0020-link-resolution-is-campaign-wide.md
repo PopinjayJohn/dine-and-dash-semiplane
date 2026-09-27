@@ -1,89 +1,87 @@
-# 0020. Link resolution is campaign-wide, and this records what that costs
+# 0020. Link resolution is campaign-wide, and this records what that cost
 
-- **Status:** accepted (as a finding, with the fix deliberately not taken yet)
+- **Status:** accepted, and **implemented in M10**
 - **Date:** 2026-02-14
 - **Amends:** ADR 0003 (no effect on a session), ADR 0007 (the read predicate)
-- **Milestone:** M9 (found while building the editor's preview)
+- **Milestone:** M9 (found), M10 (fixed)
 
 ## Context
 
-`index.Resolver` reads every lookup as `store.AsDM(r.campaignID)`. Link
-resolution in a rendered page is therefore campaign-wide: a `[[link]]` to a
-`dm-only` page **resolves**, and the rendered page differs from what a player would
-see if the link did not resolve.
+`index.Resolver` read every lookup as `store.AsDM(campaignID)`. Link resolution in
+a rendered page was therefore campaign-wide: a `[[link]]` to a `dm-only` page
+**resolved**, and the rendered page differed from what a player would see if the
+link had not resolved.
 
 The visible difference is the `unresolved` class. A link to a page that exists
 gets `href="/c/<slug>/<path>"`; a link to a page that does not is a `<span
-class="wiki-link unresolved">`. So a reader can tell which paths exist, and can
-enumerate them by trying.
+class="wiki-link unresolved">`. So a reader could tell which paths exist, and
+could build an inventory of a campaign's private page tree by trying paths and
+watching for links that came back resolved.
 
-This was found in M9 while building the editor's preview, and it was not fixed
-there, for reasons that are about cost rather than about the finding being wrong.
+M9 found this while building the editor's preview, and recorded it as a decision
+*not* to fix: the fix was available and each available form cost more than the
+finding was worth, and the milestone already had one change to the write path in it.
 
-## Why it is not a content disclosure, and why it is still a finding
+## What it cost, now that it is fixed
 
-**It is not a content disclosure.** The link's *text* is what the DM wrote in a
-page the reader may read, and the target is a path the DM also wrote. Nothing the
-reader could not already read is in the rendered bytes, and §9's concern — the
-*content* of a page a principal may not see — is not what this leaks.
+**A context value.** `domain.WithPrincipal` / `domain.PrincipalFrom`, set once by
+the session middleware and read by the resolver. Not a parameter on `Render`,
+because a reader on every call site in the project is a reader somebody forgets;
+not a per-principal resolver, because that is a renderer per player per campaign.
 
-**It is still a finding**, for two reasons. A player can build an inventory of a
-campaign's page tree, and a TTRPG campaign's page tree is a map of what the DM has
-planned: `sessions/09-the-dragon-heist-arc-two` existing is a spoiler that a page
-that does not exist yet is not. And the "existence" distinction is one a reader can
-only draw by trying paths, which means the *rendered* page depends on the index
-being complete — a page the sync has not reached yet reads differently from the
-same page a second later.
+**A fifth decision field.** `access.Decision.ReadsAll`, which is "may read every
+page in the campaign" and is true for a DM and false for everybody else. It
+matters because the *output* now depends on the reader's role, and the render
+cache is keyed by the decision: on a `dm-and-owner` page the owner and the DM share
+a `CanSeeSecrets` and resolve the page's links differently, so without a second
+axis the cache serves whichever rendered first — a disclosure one way, and a DM
+served their own link as unresolved the other, which would be reported as a broken
+wiki rather than as a security problem.
 
-## Why the fix was not taken in M9
+That is the cost I predicted wrong when I wrote "the cache key does not need a
+principal, and here is the two-class argument". The argument was right about
+`CanSeeSecrets` and wrong about `dm-and-owner`, and the page whose owner is a
+*player* rather than a *character* is the one that finds it.
 
-The three available fixes and what each costs:
+**A test that guards the other direction.** `TestTheCacheKeyNamesNoPrincipal`,
+because adding a principal to the key would not be wasteful but *wrong*: every
+player would get their own entry for byte-identical output, so the busiest page in
+a campaign fills the cache once per player.
 
-1. **Resolve under the reader's decision.** The renderer holds a `LinkResolver` and
-   the store's lookups take a principal, so the resolver would need the reader's
-   principal — and a renderer is built per campaign and shared, so it would have to
-   come from the context, or a renderer per principal per campaign. The cache is
-   keyed by `CanSeeSecrets` and that *is* a complete discriminator for the output
-   (two principals rendering the same page produce the same bytes, because the only
-   principal-dependent thing a renderer can observe is secrets and link
-   resolution), so a context-carried principal would not multiply the cache. But it
-   is a change to the render boundary, and the derivation is in `internal/index`
-   while the reader is in `internal/http`, so the two would have to agree on a
-   context key.
-2. **A per-principal renderer cache.** One renderer and one 500-entry LRU per
-   player per campaign, for a campaign with four players. Rejected as a cost with
-   no property in return.
-3. **Leave it, and say so.** This ADR.
+## Decisions
 
-**Why leave it is defensible right now**: the leak is existence, not content; the
-campaign is a small closed group whose members know the table; and the alternative
-is a change to the render boundary in the same milestone that changed the write
-path. Both changes at once, in the milestone where a player first gets to write
-markdown, is how one of them goes unreviewed.
+### A link resolves for the reader in the context
 
-**What makes it M10's problem**: M10 makes links *more* visible. Search-as-you-type
-resolves candidates against the index, the client will show a title for a target,
-and a `dm-only` page's title in a search dropdown is a larger disclosure than a
-resolved `href` in a page body. The fix and the feature arrive together, which is
-the right time to have the conversation about what a reader may be told exists.
+`internal/domain` owns the key, because it owns `Principal` and a key defined in
+`internal/http` and read in `internal/index` is two packages agreeing on an
+unexported value.
 
-## The fix, decided but not yet built
+A context with no principal in it is nobody, and nobody reads anything. So a
+render that is not a request — the goldens in `internal/render`, a plugin's render
+hook, a command rendering to a terminal — gets unresolved links for every link
+rather than a second behaviour to reason about.
 
-`domain.WithPrincipal(ctx, principal)` — the domain owns the `Principal` type, so
-the context key belongs to it. The session middleware sets it; the resolver reads it
-when it has no explicit principal. The renderer is unchanged and so is the cache
-key, because `CanSeeSecrets` already discriminates the output completely; the
-derivation in `internal/index` changes in exactly one function.
+### The link graph stays the DM's
 
-**Consequences when it is built.** A page that links to a `dm-only` page renders
-its link unresolved for a player and resolved for a DM, which is what §9's
-"unresolved links render with an `unresolved` class" was always assumed to mean. The
-golden files in `internal/render` do not change, because the renderer takes a
-resolver as a parameter and the tests' resolvers are unaffected; the change is
-visible only in `internal/index` and in an integration test that says a player's
-render of a page with a `dm-only` link is byte-different from a DM's.
+The graph is built under an explicit DM principal, in `derive.go`, and says so.
+The graph answers "what does this file point at", which is the DM's question and
+the sync's: backlinks work, a page whose link now resolves gets re-indexed, and
+the DM can see their campaign's structure. A graph built under a player's decision
+would be missing every edge that leaves a `dm-only` page, which is most of them.
 
-**Consequences now, while it is not fixed.** Any test that asserts on a rendered
-page containing a link to a page the reader may not see is asserting the *current*
-behaviour, and such a test does not exist — which is the point: nothing depends on
-it, so nothing breaks when it changes.
+**A campaign holds both answers at once, deliberately.** The file says a link
+exists; the render says whether *this* reader may follow it. Collapsing them would
+lose one of the two, and the losing one is either the DM's backlinks or a
+player's ability to see what they may not.
+
+## Consequences
+
+- The search dropdown and the session log are ACL by construction rather than by
+  filtering, and both were the same disclosure arriving by another route — so both
+  have a test whose negative half asserts the strings that must not be in the
+  response.
+- `TestStoreReadPredicateMatchesResolver` and the 36-cell matrix are unaffected:
+  tenancy and audience were never this finding's subject.
+- A rendered page is now a function of (content, campaign, decision, role) and
+  nothing else. `TestTheCacheKeyIsStillComplete`'s argument, corrected, is the
+  two-axis version of that.

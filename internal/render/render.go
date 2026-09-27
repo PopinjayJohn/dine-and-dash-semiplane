@@ -143,6 +143,7 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		ContentHash:   page.ContentHash,
 		Version:       RendererVersion,
 		CanSeeSecrets: decision.CanSeeSecrets,
+		ReadsAll:      decision.ReadsAll,
 		Campaign:      page.Campaign,
 		Path:          page.Path,
 	}

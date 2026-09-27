@@ -113,7 +113,14 @@ func wantCell(principal, audience string, owned, archived bool) access.Decision 
 		return access.Decision{}
 	}
 	if owned {
-		return access.Granted()
+		// Everything a player may do to a page of their own, and **not** the DM's
+		// fifth field: owning a character page does not make a player able to read
+		// a `dm-only` page, so `ReadsAll` is false here. It used to be
+		// `access.Granted()` because there was no fifth field, and the reason that
+		// mattered arrived in M10: a player's links resolve differently from a DM's
+		// (ADR 0020), so a cache entry built for the owner of a `dm-and-owner` page
+		// is not the entry a DM wants.
+		return access.Decision{CanRead: true, CanEdit: true, CanReveal: true, CanSeeSecrets: true}
 	}
 	if audience == "players" {
 		// Read, and nothing else. A player may read every other player's notes

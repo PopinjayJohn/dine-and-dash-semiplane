@@ -376,3 +376,89 @@ templ userClass(p principalRow) {
 	}
 	return "user"
 }
+
+// # Search
+//
+// A dropdown of candidates and nothing else. The box is in the layout, the
+// fragment is what a request swaps in, and there is no JavaScript here that knows
+// how either of them works — `web/static/wiki.js` does that, and the two meet on
+// three attributes this template draws and that script reads.
+//
+// # No result is not an error state
+//
+// A dropdown that says "no matches" and a dropdown that says nothing are the same
+// thing to a person typing, and a red box in a dropdown is a red box in a
+// dropdown. So the empty case is a sentence and nothing else, and a half-typed
+// query that will not parse is the same sentence rather than a 400.
+
+// searchResultsView is the candidate list.
+templ searchResultsView(s searchFragment) {
+	<div class="search-results" role="listbox" aria-label="Search results">
+		if len(s.Candidates) == 0 {
+			<p class="search-empty">Nothing matches that yet.</p>
+		} else {
+			for _, c := range s.Candidates {
+				@searchCandidateRow(c)
+			}
+		}
+	</div>
+}
+
+// searchCandidateRow is one candidate, as a link a keyboard can reach.
+//
+// It is a link and not a `div` with a click handler: a dropdown of results that
+// cannot be tabbed into or opened with the keyboard is a dropdown that does not
+// work for the person most likely to be reading a campaign on a phone with a
+// screen reader. `role="option"` with `aria-selected="false"` is what a combobox's
+// listbox wants, and the roles are on the container and the rows rather than on
+// the input, which is where the input's own `role="combobox"` lives.
+templ searchCandidateRow(c candidate) {
+	<a
+		class="search-hit"
+		role="option"
+		aria-selected="false"
+		href={ c.URL }
+	>
+		<span class="search-hit-title">{ c.Title }</span>
+		<span class="search-hit-kind">{ c.Kind }</span>
+		// The path, because two pages can have the same title and the DM is
+		// looking for a path as often as a name.
+		<span class="search-hit-path">{ c.Path }</span>
+		if c.Secret {
+			// Not a badge about the page, a note about *this result*: it came from
+			// the private index, so it matched in a secret block. A player searching
+			// their own character page and finding it here is the point of that
+			// index, and a dropdown that hid it would be lying.
+			<span class="search-hit-secret">from a secret</span>
+		}
+		if c.Snippet != "" {
+			<p class="search-hit-snippet">{ c.Snippet }</p>
+		}
+	</a>
+}
+
+// # The session log
+//
+// A list of what changed, and the stream that keeps it current. The `id` is the
+// one the stream patches, and it is a constant named in two files because a
+// stream that could patch anything in a page is a stream asking the browser to
+// believe more than it should.
+templ log(v logView) {
+	<div class="log" id="session-log">
+		<h2>What has changed</h2>
+		if len(v.Entries) == 0 {
+			<p class="tree-empty">Nothing yet.</p>
+		} else {
+			<ol class="log-entries">
+				for _, e := range v.Entries {
+					<li class="log-entry">
+						<a href={ e.URL }>{ e.Title }</a>
+						<span class="log-kind">{ e.Kind }</span>
+						<span class="log-path">{ e.Path }</span>
+						<time class="log-time" datetime={ e.Changed }>{ e.Changed }</time>
+					</li>
+				}
+			</ol>
+		}
+	</div>
+}

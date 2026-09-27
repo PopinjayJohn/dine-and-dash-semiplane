@@ -334,11 +334,33 @@ func scanHits(rows *sql.Rows, secrets bool, what string) ([]search.Hit, error) {
 // there are no operators, no prefixes, no column filters and no parentheses, so
 // what comes out of here is a conjunction of literals and there is nothing for a
 // caller to have escaped.
+//
+// **The last text term is a prefix when the query asked for one.** M10 added a
+// search box, and a box that matches whole words only is not a search box:
+// somebody typing `fort` gets nothing, `forti` gets nothing, and `fortified` gets
+// the page, so every result appears after the last character of the word that
+// would find it.
+//
+// Only the *last* term. Every term becoming a prefix would make `toll collector`
+// match `tolerance` and `collect`, and a search that widens as you type gets
+// *wider*, not closer. The last term is the one still being typed; the earlier
+// ones were finished and confirmed by the next keystroke.
+//
+// And only when `Query.PrefixLastTerm` says so, because the `*` is the one piece
+// of FTS5 syntax this expression emits and `TestSearchMatchExpressionQuotesEveryClause`
+// holds the line that nothing else can. A `*` appended to a closed literal is the
+// right way to write it: inside the quotes there is no operator, so a `*` in there
+// would be a literal asterisk.
 func ftsMatch(q search.Query) string {
 	clauses := make([]string, 0, q.Clauses())
 
 	for _, term := range q.Terms {
 		clauses = append(clauses, ftsLiteral(term))
+	}
+	if q.PrefixLastTerm {
+		if i := len(clauses) - 1; i >= 0 {
+			clauses[i] += "*"
+		}
 	}
 	for _, phrase := range q.Phrases {
 		clauses = append(clauses, ftsLiteral(phrase))

@@ -66,6 +66,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/web"
@@ -184,6 +185,13 @@ type Store interface {
 	// is `store.ErrNotFound` and the route answers 404.
 	CampaignBySlug(ctx context.Context, slug domain.Slug) (domain.Campaign, error)
 
+	// ListRecentlyChanged returns the pages a principal may read, most recently
+	// changed first, and at most `limit` of them. It is the session log's one
+	// query, and it carries the read predicate like every other page-returning
+	// method here — a player watching the log must not learn that a private page
+	// changed.
+	ListRecentlyChanged(ctx context.Context, campaignID string, as domain.Principal, limit int) ([]domain.Page, error)
+
 	// ListPrincipals returns a campaign's principals, for the users page. It is a
 	// DM-only caller's use and the page checks the role itself: a principal list is
 	// not a page's audience, so it has no decision and pretending otherwise would put
@@ -200,6 +208,14 @@ type Store interface {
 	// the reason is known.
 	RevokePrincipal(ctx context.Context, id string) error
 	AppendAudit(ctx context.Context, e domain.AuditEntry) (domain.AuditEntry, error)
+
+	// The two searches, which are what a search box is. They are a named pair
+	// rather than one method with a flag because they read different tables and
+	// are filtered by different scopes, and only one of them may be called for a
+	// principal who is not entitled to it -- a flag would make the unsafe call a
+	// one-character mistake. The comment is `search.Searcher`'s and is the reason
+	// they are here rather than reached for separately.
+	search.Searcher
 
 	// OwnerExists answers "is this principal bound to this character page", and
 	// takes the *character's* page id rather than the page being decided about.
@@ -305,6 +321,13 @@ var (
 // that knows when a sync has finished, and the hub is the caller's -- the same
 // rule that says the caller closes the store it opened.
 func PageChanged(hub *sse.Hub, campaignID string, paths ...string) {
+	// The campaign's own topic first, and it is the same notice: the session log
+	// wants to know that *something* changed so it can re-read the list, and it
+	// re-reads it under its own decision. So there is no second kind of message
+	// here -- a change to a page is a change to the campaign, and the log
+	// subscribes to both because it wants the campaign-wide one.
+	hub.Publish(streamTopic(campaignID, ""))
+
 	for _, path := range paths {
 		hub.Publish(streamTopic(campaignID, path))
 	}

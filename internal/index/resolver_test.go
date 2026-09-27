@@ -130,11 +130,18 @@ func TestAResolverIsForOneCampaign(t *testing.T) {
 		}
 	}
 
-	one, found, err := index.NewResolver(s, first.ID).Resolve(ctx, "locations/rivergate", "")
+	// One context per campaign, because the context now names the reader and a
+	// reader is of one campaign. The fixture's context is of `first`, so the
+	// second needs its own — which is the tenancy rule doing its job in a test
+	// that is about tenancy.
+	asFirst := domain.WithPrincipal(ctx, domain.Principal{Role: domain.RoleDM, CampaignID: first.ID})
+	asSecond := domain.WithPrincipal(ctx, domain.Principal{Role: domain.RoleDM, CampaignID: second.ID})
+
+	one, found, err := index.NewResolver(s, first.ID).Resolve(asFirst, "locations/rivergate", "")
 	if err != nil || !found {
 		t.Fatalf("Resolve in the first campaign: found = %t, %v", found, err)
 	}
-	two, found, err := index.NewResolver(s, second.ID).Resolve(ctx, "locations/rivergate", "")
+	two, found, err := index.NewResolver(s, second.ID).Resolve(asSecond, "locations/rivergate", "")
 	if err != nil || !found {
 		t.Fatalf("Resolve in the second campaign: found = %t, %v", found, err)
 	}
@@ -264,7 +271,17 @@ func resolverFixture(t *testing.T) (context.Context, *store.Store, domain.Campai
 		t.Fatalf("CreateCampaign: %v", err)
 	}
 
-	return ctx, s, campaign
+	// **The context carries the DM**, and that is the index's own view of a
+	// campaign rather than a reader's.
+	//
+	// Since ADR 0020's fix a link resolves for the reader in the context, so a
+	// bare context resolves nothing — which is the fail-closed answer for a render
+	// that is not a request, and the wrong answer for a test about the *index*.
+	// The index asks "what does this file point at", the DM's question, and
+	// `derive.go` asks the same question the same way. A test about a reader has a
+	// reader in its context; see `reader_test.go`, which is where the two live
+	// apart.
+	return domain.WithPrincipal(ctx, domain.Principal{Role: domain.RoleDM, CampaignID: campaign.ID}), s, campaign
 }
 
 func contains(haystack, needle string) bool {

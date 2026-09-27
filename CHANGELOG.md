@@ -1,5 +1,121 @@
 ## [Unreleased]
 
+### Added
+
+- **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
+  of candidates and nothing else, so the page's chrome is not re-rendered
+  underneath a reader's cursor. The candidates are the ACL's answer and not a
+  filter applied afterwards: the query goes through `search.Run` and the two
+  indexed scopes, so a `dm-only` page is not in the list for a player — including
+  its *title*, which is the disclosure that ADR 0020's fix removed from a
+  `[[link]]`, arriving by another route.
+- **A hit from the private index is marked, not hidden.** A player searching their
+  own character's page and finding it in the private index is the point of that
+  index, and a dropdown that silently hid it would be a dropdown lying about what
+  it searched.
+- **The dropdown is bounded and it is not the query language's limit.**
+  `search.MaxLimit` is fifty and a dropdown wants eight; the fusion cost is linear
+  in the depth it fetches, and the two numbers being different is the difference
+  between a search box and a denial of service. A one-character query is not
+  searched for at all.
+- **A query that cannot be read is a 200 with an empty dropdown, not a 500.**
+  `search.ErrQuery` already existed for exactly this; the first version of the
+  handler classified it by string-matching for "unterminated" and "unbalanced",
+  which **cannot fire** — an unterminated quote is a literal quote in this query
+  language, and the only thing `Parse` refuses is an `is:` with a level that is
+  not one of the three. A 500 for a keystroke is a wiki that appears to break
+  while somebody types.
+- **`search.Query.PrefixLastTerm`, and `search.WithPrefixLastTerm()`.** M10 added a
+  search box, and a box that matches whole words only is not a box: somebody typing
+  `fort` gets nothing, `forti` gets nothing, and `fortified` gets the page, so
+  every result appears after the last character of the word that would find it.
+  Only the **last** term — every term would make `toll collector` match
+  `tolerance` — and only when asked, because the `*` is the one piece of FTS5
+  syntax the match expression emits and
+  `TestSearchMatchExpressionQuotesEveryClause` holds the line that nothing else
+  can. A field on the query rather than a flag on the store's method, so a caller
+  widens the index by name.
+- **The session log.** `?log=1` is the list and `?log=live` is the stream, and it
+  is the same hub, the same notice and the same "the subscriber renders it under
+  its own decision" rule as a live page, over a *campaign-wide* topic — so it is
+  nearly free: one more subscriber on a topic the publisher was already publishing
+  to, and one query the page view did not need.
+- **`store.ListRecentlyChanged`**, ordered by `updated_at` and nothing else. That
+  is when the row was last written, which is when a DM saved the page, which is
+  what a reader of a change log is asking about. There is no ordering in a
+  directory of markdown files, and inventing one — by mtime, by path — would be a
+  claim about what happened that this application cannot support.
+- **The log has no author and no excerpt, on purpose.** The row carries
+  `updated_at` and that is what a line says; a page's history is where the prose
+  and the who are. A log that guessed at either would be wrong on the first edit
+  made through a file rather than through the editor.
+- **The log is the *reader's* campaign.** The listing is the read predicate, so a
+  player watching it sees the public pages and never the DM's changes to the
+  private ones — including the fact that a private page moved, because a row that
+  does not come back is a row that is not in the list. A log that announced hidden
+  edits would undo ADR 0020's fix through a different route.
+- **`web/static/wiki.js`**, the reading layer: the dropdown, the live page and the
+  toasts. The patch handler honours a selector of `#page` and **drops any other**,
+  so a hijacked stream can at worst put a stale page on screen; and every surface
+  has an ordinary URL behind it, so a blocked script costs a dropdown and a live
+  page and nothing else.
+
+### Removed
+
+- **`spike/datastar/`, and the `make spike` target and the CI job that ran it.**
+  The spike was M0's answer to "is Datastar's wire format what we think it is", and
+  `internal/sse` has been the application's own since M8 — the stdlib
+  implementation, with the spike's own tests as the record that the two are
+  byte-compatible. That record has now been promoted: the golden in
+  `internal/sse/sse_test.go` is the wire format, and it is in the same module as
+  the code that writes it, so a change to one is a change to the other and a
+  reviewer reads both at once. A second module outside the application's dependency
+  graph was a risk to answer a question that is now answered inside it.
+
+### Fixed
+
+- **The http test fixture wrote rows and no files' worth of frontmatter.** It
+  hand-wrote each page's frontmatter block *and* set the struct's fields, and the
+  two drifted: `type:` was in the struct and missing from every block, and one
+  title contained a colon that is a YAML error, so that page did not parse and was
+  skipped. **Nothing failed loudly**, because the rows used to come from the struct
+  and the files were never read by anything. It is now built through the
+  derivation, like a real campaign — which is what made the search test able to
+  notice: it found no pages at all, and the titles and audiences it would have
+  found were nonsense.
+- **A link resolves for its reader, and the reader is the DM no more.**
+  [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md)'s fix, which M9
+  decided and did not build. `domain.PrincipalFrom(ctx)` is read by the resolver
+  instead of `store.AsDM`, the session middleware puts the principal in the
+  context it already owns, and a `[[link]]` to a `dm-only` page is **unresolved**
+  for a player and live for the DM — a page's *existence* was readable by anybody
+  who could type a path, and a campaign's private page tree could be enumerated by
+  trying paths and watching for links that came back resolved.
+- **The link graph is still the DM's, and that is not the bug above.** The graph
+  exists so backlinks work, so the sync can tell that a page whose link now
+  resolves must be re-indexed, and so the DM can see their campaign's structure —
+  three DM questions, and a graph built under a player's decision would be missing
+  every edge that leaves a `dm-only` page. A campaign holds both answers at once,
+  deliberately, and the two moments are named in `derive.go` and in the resolver.
+- **`access.Decision` has a fifth field, `ReadsAll`, and the render cache key has
+  it too.** This is the cost of the fix, and it was not the cost I predicted: a
+  `dm-and-owner` page's **owner and the DM have the same `CanSeeSecrets`** and
+  resolve the page's links differently, so on that page one cache class held two
+  readers. Without the field the cache serves whichever rendered first — a
+  disclosure one way, and a DM served their own link as unresolved the other, which
+  would be reported as a broken wiki rather than as a security problem. So the
+  reader's *role* is part of the output, and it is in the key.
+- **A render with no principal in its context resolves nothing.** The goldens in
+  `internal/render`, a plugin's render hook, a command rendering to a terminal:
+  they are not requests, nobody is reading, and they get the fail-closed answer
+  rather than a second behaviour to reason about.
+- **`TestTheCacheKeyNamesNoPrincipal` guards the alternative.** Adding a principal
+  to the key would be wrong rather than merely wasteful — every player would get
+  their own entry for byte-identical output, so the busiest page in a campaign
+  would fill the cache once per player. The test fails the day somebody adds a
+  `PrincipalID` field, and it is why the fix was one context value and not a
+  renderer per reader.
+
 ### Fixed
 
 - **The CI smoke test asserted a string the page cannot contain**, and the reason

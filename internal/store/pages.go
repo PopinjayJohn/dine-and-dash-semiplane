@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
@@ -256,6 +257,50 @@ func (s *Store) GetPageByID(ctx context.Context, id string, as domain.Principal)
 // The order is part of the contract: a page tree, a search result and a
 // reindex report all read from this, and a list whose order varies between
 // runs cannot be diffed or asserted on.
+// ListRecentlyChanged returns the pages as may read them, most recently changed
+// first, and at most `limit` of them.
+//
+// It is the same read predicate as every other page-returning method, so a player
+// asking for the log gets their own campaign's public pages and not the DM's
+// changes to them — which is the whole of it, because a log that announced a
+// hidden page's edit would undo ADR 0020's fix through a different route.
+//
+// **Ordered by `updated_at`, and nothing else.** That is when the row was last
+// written, which is when a DM saved the page, which is what a reader of a change
+// log is asking about. There is no ordering in a directory of markdown files, and
+// inventing one — by mtime, by path — would be a claim about what happened that
+// this application cannot support. The tiebreak on `path` is there because two
+// pages saved in the same millisecond is an ordinary thing and a log whose order
+// varies between two reads is a log nobody can read.
+func (s *Store) ListRecentlyChanged(ctx context.Context, campaignID string, as domain.Principal, limit int) ([]domain.Page, error) {
+	sc := readable(campaignID, as)
+
+	//nolint:gosec // sc.where is a constant from acl.go in this package, never a caller's string
+	query := `SELECT ` + pageColumnsQualified() + ` FROM pages p
+		WHERE (` + sc.where + `) ORDER BY p.updated_at DESC, p.path
+		LIMIT ` + strconv.Itoa(limit)
+
+	rows, err := s.read.QueryContext(ctx, query, sc.args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing recently changed pages of campaign %s: %w", campaignID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	pages := []domain.Page{}
+	for rows.Next() {
+		page, scanErr := scanPage(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("listing recently changed pages of campaign %s: %w", campaignID, scanErr)
+		}
+		pages = append(pages, page)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing recently changed pages of campaign %s: %w", campaignID, err)
+	}
+
+	return pages, nil
+}
+
 func (s *Store) ListPages(ctx context.Context, campaignID string, as domain.Principal) ([]domain.Page, error) {
 	sc := readable(campaignID, as)
 
