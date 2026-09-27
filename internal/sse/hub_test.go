@@ -277,3 +277,109 @@ func assertPatch(t *testing.T, patches <-chan sse.Patch, wantID, wantHTML string
 }
 
 var _ templ.Component = templ.Raw("")
+
+// TestACancelDuringAPublishIsNotASendOnAClosedChannel is the race that was there,
+// made deterministic.
+//
+// `Publish` takes a snapshot of a topic's subscribers under the hub's lock and then
+// sends *outside* it, so a cancel in between used to close the channel under the
+// send: `panic: send on closed channel`. That is not an error the caller can
+// handle, it takes the process down, and it was found by
+// `TestConcurrentSubscribeAndPublishIsRaceFree` on a machine that happened to lose
+// the race first. It never fired on the machine that wrote it.
+//
+// The old test is a `-race` test and it is *probabilistic*: sixteen publishers and
+// sixteen subscribers across four topics, and the window is a few nanoseconds wide.
+// This one parks a publisher **inside** the window — between the snapshot and the
+// send, with the build blocked on a channel — cancels the subscriber, and then
+// releases the build. The race is not won, it is arranged.
+//
+// It is worth being exact about which half of the fix it proves, because the other
+// half is the part the race detector found. Reverting `send` to a bare
+// `select` with no `closed` check makes this test panic with the message from the
+// CI log; reverting only the *mutex* leaves it passing, because an unsynchronised
+// read of `closed` is allowed to be hoisted and happened not to be. So the check is
+// what this test holds up, and the mutex is what makes the check sound — and
+// `go test -race` is what says the second part, on whatever machine loses the
+// remaining window first.
+func TestACancelDuringAPublishIsNotASendOnAClosedChannel(t *testing.T) {
+	t.Parallel()
+
+	hub := sse.NewHub(8)
+	defer hub.Close()
+
+	// A subscriber whose build blocks until the test says so, which is the exact
+	// gap between the snapshot and the send.
+	building := make(chan struct{})
+	release := make(chan struct{})
+	_, cancel, err := hub.Subscribe("a", func() (sse.Patch, error) {
+		close(building)
+		<-release
+		return func(*sse.Sender) error { return nil }, nil
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	published := make(chan int, 1)
+	go func() { published <- hub.Publish("a") }()
+
+	// Wait until the publisher is inside the build, which is after the snapshot.
+	<-building
+
+	// Now the subscriber goes away — the reader closed their tab.
+	cancel()
+
+	// And the publisher carries on into a channel that is no longer there.
+	close(release)
+
+	select {
+	case delivered := <-published:
+		if delivered != 0 {
+			t.Errorf("a publish to a cancelled subscriber delivered %d", delivered)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the publish did not finish, which means it is blocked on something")
+	}
+
+	// And the drop count is untouched: a subscriber that had gone is not one that
+	// was too far behind, and conflating them puts a number in the log that a DM
+	// reads to work out why a live page did not update.
+	if dropped := hub.Dropped(); dropped != 0 {
+		t.Errorf("the hub counted %d dropped frames for a subscriber that had gone", dropped)
+	}
+}
+
+// TestTheSameHoldsForAHubClose is the other door onto the same channel: the
+// server is shutting down while a sync reports a change.
+func TestTheSameHoldsForAHubClose(t *testing.T) {
+	t.Parallel()
+
+	hub := sse.NewHub(8)
+
+	building := make(chan struct{})
+	release := make(chan struct{})
+	if _, _, err := hub.Subscribe("a", func() (sse.Patch, error) {
+		close(building)
+		<-release
+		return func(*sse.Sender) error { return nil }, nil
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	published := make(chan int, 1)
+	go func() { published <- hub.Publish("a") }()
+	<-building
+
+	hub.Close()
+	close(release)
+
+	select {
+	case delivered := <-published:
+		if delivered != 0 {
+			t.Errorf("a publish during a close delivered %d", delivered)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the publish did not finish")
+	}
+}

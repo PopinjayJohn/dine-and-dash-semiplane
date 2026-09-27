@@ -172,27 +172,91 @@ func (h *Hub) Publish(topic string) int {
 
 	delivered := 0
 	for _, sub := range subs {
+		// **The build is outside every lock**, and that is deliberate twice over: it
+		// is the subscriber's own code holding its own decision, and it is a store
+		// read and a render. Serialising the slowest render in the server against
+		// every publish and every subscribe is not a trade anybody makes twice.
 		patch, err := sub.build()
 		if err != nil {
-			// The subscriber cannot make sense of the change, so it is finished:
-			// its page is gone or its decision no longer admits it. It is not
-			// counted as dropped -- nothing was lost that it could have had -- and
-			// it is not removed here, because closing a channel from outside the
-			// lock that owns it is the race this package does not have.
+			// The subscriber cannot make sense of the change, so it is finished: its
+			// page is gone or its decision no longer admits it. It is not counted as
+			// dropped -- nothing was lost that it could have had -- and it is left
+			// for its own cancel, because a subscriber that has ended on its own
+			// terms is not the publisher's to close.
 			continue
 		}
 
-		select {
-		case sub.patches <- patch:
+		switch sub.send(patch) {
+		case sendDelivered:
 			delivered++
-		default:
+		case sendDropped:
+			// Counted *after* `send` released the subscriber's lock, so the order is
+			// subscriber-then-hub and never the other way round. `Close` takes them
+			// in the opposite order and releases the hub's lock in between, so there
+			// is no cycle to deadlock on.
 			h.mu.Lock()
 			h.dropped++
 			h.mu.Unlock()
+		case sendGone:
+			// It unsubscribed between the snapshot and the send. That is not a drop:
+			// nobody was there to miss anything.
 		}
 	}
 
 	return delivered
+}
+
+// sendResult is what happened to one patch on its way to one subscriber. The three
+// cases are three because counting a cancelled subscriber as dropped would put a
+// number in the log that a DM reads to work out why a live page did not update.
+type sendResult int
+
+const (
+	// sendDropped means the subscriber was a whole frame behind and could not take
+	// another, which is safe: the next read replaces what this one would have.
+	sendDropped sendResult = iota
+
+	// sendDelivered means the patch is in the channel.
+	sendDelivered
+
+	// sendGone means the subscriber unsubscribed while the patch was being built.
+	sendGone
+)
+
+// send is one patch to one subscriber, and it is the whole of the concurrency
+// question in this package.
+//
+// The mutex is **per subscriber** and not the hub's, so two streams never wait on
+// each other, and it is **not** held while the patch is built — a build is a store
+// read and a render, and the hub's lock is held by every publish and every
+// subscribe in the process.
+//
+// **And the `closed` check is inside the lock, which is the fix for a race this
+// package had.** `Publish` takes a snapshot of the subscriber list under the hub's
+// lock and then sends *outside* it, so a cancel in between closed the channel
+// under a send: `panic: send on closed channel`, not an error, on whichever
+// machine lost the race first. A previous version of this comment claimed the
+// package did not have that race, which is the kind of sentence that convinces
+// the next reader to keep the same shape.
+//
+// The three cases are the three, because the difference between "this reader was
+// too far behind" and "this reader had gone" is the difference between a number
+// worth looking at and noise.
+func (s *subscriber) send(p Patch) sendResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch {
+	case s.closed:
+		return sendGone
+	default:
+		select {
+		case s.patches <- p:
+			return sendDelivered
+		default:
+			return sendDropped
+		}
+	}
 }
 
 // Subscribers is how many streams are open across every topic. It takes the lock,
