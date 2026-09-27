@@ -24,6 +24,27 @@ House rules:
 
 ### Added
 
+- `render.SecretText` lifts a page's **unrevealed `[!SECRET]` text off the parse
+  tree**, which is what the private search index is fed. It is in `render` rather
+  than in the indexer because the `[!SECRET]` grammar has to be read the same way
+  twice — the renderer strips a secret and the indexer has to decide which side of
+  the split it belongs on — and two implementations of the same syntax is two
+  answers waiting for a DM to write the callout that separates them.
+- What goes in and what does not: a **revealed secret is public body, not secret
+  text**, and the walk carries on *into* it because a revealed block can contain a
+  secret that is not revealed. A blockquote with a secret's shape that the parser
+  could not read is included, for the same fail-closed reason the stripper removes
+  it — a secret that cannot be found is a secret the DM has lost. A secret inside
+  a secret is counted once, because the outer one already carries the inner one's
+  text.
+- Two things the first version of it got wrong, both found by the tests: goldmark
+  keeps a **code block's lines off the child nodes**, so a secret whose credential
+  is in a code block indexed as an empty string; and a **soft-wrapped line** —
+  which is every line a DM writes — arrives as two text nodes with the newline and
+  the `> ` marker between them and nothing to say so, so a two-line secret was
+  indexed as one run-on line whose phrases matched nothing. The boundary is now
+  recovered from the source offsets.
+
 - **Search runs against the public index**, filtered by the audience scope in
   SQL. It finds pages by title, alias, tag and page type, ranks a title match
   above a tag, an alias or a body match, and returns hits with a rank and an
