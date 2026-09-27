@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -250,7 +251,11 @@ func (r *Registry) RenderHooks() render.Hooks {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	return render.Hooks{Exts: slices.Clone(r.exts), Hooks: slices.Clone(r.hooks)}
+	return render.Hooks{
+		Exts:   slices.Clone(r.exts),
+		Hooks:  slices.Clone(r.hooks),
+		Fields: maps.Clone(r.specs),
+	}
 }
 
 // SearchFields is every plugin's search contribution, in the same order.

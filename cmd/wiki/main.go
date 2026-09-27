@@ -69,6 +69,17 @@ func exitCode(err error, stderr io.Writer) int {
 type command struct {
 	summary string
 	run     func(ctx context.Context, args []string, stdout, stderr io.Writer) error
+
+	// plugin is the name of the plugin that added the command, or empty for a
+	// core one.
+	//
+	// It is printed by `wiki help` because "which of the four things I installed
+	// added `wordcount`" is the first question a DM asks about a command they did
+	// not write, and the answer is otherwise only in a source file. The registry
+	// fills it in rather than the plugin, for the reason ADR 0022 gives: a
+	// constructor that takes a name is a constructor that can be called with the
+	// wrong one.
+	plugin string
 }
 
 // commands is the core set of subcommands. Adding one here is all the
@@ -209,7 +220,11 @@ func usage(w io.Writer) error {
 		}
 	}
 	for _, name := range names {
-		fmt.Fprintf(&b, "  %-*s  %s\n", width, name, available[name].summary)
+		fmt.Fprintf(&b, "  %-*s  %s", width, name, available[name].summary)
+		if from := available[name].plugin; from != "" {
+			fmt.Fprintf(&b, "  (%s)", from)
+		}
+		fmt.Fprintln(&b)
 	}
 
 	b.WriteString("\nRun 'wiki help <command>' for details.\n")

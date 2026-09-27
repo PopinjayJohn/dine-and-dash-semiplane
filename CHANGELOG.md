@@ -313,6 +313,46 @@
   in the frontmatter and the frontmatter is part of the file, so a field change is
   already a content-hash change. A second field for a value `ContentHash` covers
   would be a second answer to "has this page changed".
+- **`plugins/dnd5e`**: the ruleset plugin, and the first thing in this repository
+  that is *about* a game rather than *for* one. Four page types (`spell`,
+  `creature`, `feat`, `magic-item`), fifteen claimed frontmatter keys, a statline, and
+  `wiki character-sheet` to print a scaffold. Its version is `2014-09-19` — a
+  handbook date rather than a semver, because a ruleset is versioned by edition and
+  "1.0.0" on a page rendering the 2014 stat block is a number that means nothing to
+  the person who has to judge whether it is right.
+- **One renderer, fifteen fields, and a field that does not apply draws nothing.** A
+  5e field means different things on different page types, so a renderer per key would
+  need the page type anyway; one `dnd5eRenderer` looks up the spec, checks the page
+  type, and returns `""` for a key that is not this page's. That is
+  `render.FieldRenderer`'s "not mine" branch, and it is what stops `casting-time`
+  appearing on a character page — a bug a DM would report as "the wiki is showing the
+  wrong thing" and would be right to.
+- **A spell's level is a word.** `0` is "Cantrip" and `3` is "3rd", and that is the
+  only 5e field where the number and the word are worth different things. The
+  ordinals carry on past `20th` and the `11/12/13` exceptions are a list rather than
+  arithmetic, because the taught rule has eleven exceptions below twenty and none
+  above it. A value that is not a number is rendered **as written** rather than
+  refused: a DM who wrote "3rd" wrote it on purpose, and a field that vanishes is a
+  field they stop filling in.
+- **A statline keeps the DM's rows.** It is a list of `Name  value` lines drawn as a
+  callout, and it does *not* parse `14` out of `AC 14 (16 with a shield)` — a DM who
+  wrote that wrote something a parser would have to be clever about, and the statline's
+  job is to lay it out. A row with a blank first column is skipped, because a stat
+  block with a blank first column is one a reader looks at twice.
+- **The character sheet is a `character` page, not a ninth page type.** §1 says a
+  player "needs to look up their character", so a 5e statline belongs on the page the
+  application already has — a ninth type would be a second place to look and a second
+  way to bind a player. `wiki character-sheet` prints a frontmatter block and nothing
+  else, because the vault is the DM's and a command that wrote a file would be writing
+  into somebody's campaign from a process that has not opened it.
+- **`internal/plugin/contract` now checks that a claim has a renderer.** A key in the
+  claim table that is not in the hook set is a key the plugin believes it renders and
+  the render path will never ask about, and the two are written in the same function,
+  so the only way they can disagree is if somebody edited one of them.
+- **`wiki help` says which plugin added a command.** "Which of the four things I
+  installed added `wordcount`" is the first question a DM asks about a command they did
+  not write, and ADR 0022 said the attribution would be printed; it was not, until a
+  test that asserted it.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

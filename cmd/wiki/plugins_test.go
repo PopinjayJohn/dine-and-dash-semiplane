@@ -23,7 +23,11 @@ func TestTheBundledPluginsRegister(t *testing.T) {
 		t.Fatalf("buildRegistry: %v", err)
 	}
 
-	want := []string{"house-rules", "spoilerbox", "wordcount"}
+	// Sorted by name, because that is what `(Priority, Name)` means when every
+	// plugin is at the default priority -- and an assertion written in
+	// registration order would be a test that a reorder commit would break for no
+	// reason, which is the same reason the registry sorts.
+	want := []string{"dnd5e", "house-rules", "spoilerbox", "wordcount"}
 	got := registry.Names()
 	if len(got) != len(want) {
 		t.Fatalf("the build registered %v, want %v", got, want)
@@ -43,7 +47,7 @@ func TestThePluginsAddTheirCommandsToHelp(t *testing.T) {
 
 	help := wikiHelpText()
 
-	for _, want := range []string{"wordcount", "house-rules"} {
+	for _, want := range []string{"wordcount", "house-rules", "dnd5e", "character-sheet"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("`wiki help` does not mention %q:\n%s", want, help)
 		}

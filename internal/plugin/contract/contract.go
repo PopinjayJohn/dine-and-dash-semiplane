@@ -105,7 +105,20 @@ func registersCleanly(t *testing.T, p plugin.Plugin) {
 	answers(t, "FieldTypes", func() any { return reg.FieldTypes() })
 	answers(t, "Commands", func() any { return reg.Commands() })
 	answers(t, "Routes", func() any { return reg.Routes() })
-	answers(t, "RenderHooks", func() any { return reg.RenderHooks() })
+	hooks := reg.RenderHooks()
+	answers(t, "RenderHooks", func() any { return hooks })
+
+	// A field claim is the one capability whose *contents* the suite can check
+	// without knowing anything about the plugin: a claim that is in the table but
+	// not in the hook set is a key the plugin believes it renders and the render
+	// path will never ask about, and the two are written in the same function so
+	// the only way they can disagree is if somebody edited one of them.
+	for name := range reg.FieldTypes() {
+		if _, drawn := hooks.Fields[string(name)]; !drawn {
+			t.Errorf("the plugin claims the frontmatter key %q and no renderer draws it; "+
+				"a claim with no renderer is a key that renders as nothing", name)
+		}
+	}
 	answers(t, "SearchFields", func() any { return reg.SearchFields() })
 	answers(t, "Events", func() any { return reg.Events() })
 	answers(t, "Policies", func() any { return reg.Policies() })
