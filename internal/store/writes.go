@@ -52,6 +52,24 @@ import (
 // write is a request about a page the caller already holds.
 var ErrNotAllowed = errors.New("store: this principal may not do that to this page")
 
+// CheckWritable is the gate, asked on its own.
+//
+// It is exported because M9's editor has to ask it *before* the file is written,
+// and the reason is a hole rather than a convenience: the index watcher writes
+// rows as the DM, so a player's file sitting on disk for the length of a refused
+// save is a file the watcher indexes, as the DM, into a page the gate would not
+// have allowed. The check has to come first and the file must not exist until it
+// has passed.
+//
+// The page it is asked about is the *derived* one -- its owner came from the path
+// and the frontmatter -- so a caller cannot assert an owner, and a page under one
+// character claiming another is refused here for the same reason the sync reports
+// it. `internal/index.CheckWritableAs` is the one caller, and it derives the page
+// through the only code that derives pages.
+func (s *Store) CheckWritable(ctx context.Context, p domain.Page, as domain.Principal) error {
+	return s.checkMayWrite(ctx, p, as)
+}
+
 // checkMayWrite is the gate every write goes through.
 func (s *Store) checkMayWrite(ctx context.Context, p domain.Page, as domain.Principal) error {
 	// Nobody is nobody. A role this build does not know is not a DM and is not a

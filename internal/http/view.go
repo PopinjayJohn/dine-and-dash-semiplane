@@ -56,9 +56,15 @@ type shell struct {
 	Identified bool
 	IsDM       bool
 
-	// CSRF is the token for the logout form, and the empty string when there is
-	// nobody to log out.
+	// CSRF is the token for the logout form and the editor's save form, and the
+	// empty string when there is nobody to log out.
 	CSRF string
+
+	// Path is the page being *edited*, and it is the one fact about a page a
+	// template gets while editing. A `domain.Page` is not handed to a template at
+	// all: its `visibility` is a security field, and a template that could reach
+	// it is a template that could print it.
+	Path string
 
 	Footer footerView
 }
@@ -154,6 +160,17 @@ type renderedPage struct {
 
 	RawURL    string
 	StreamURL string
+
+	// EditURL is where the editor is, and it is only set when the page may be
+	// edited: an Edit link the gate would refuse is a promise the wiki does not
+	// keep, and a DM who follows one and gets a 403 concludes the wiki is broken.
+	//
+	// `CanEdit` is a field rather than the absence of `EditURL` because the two
+	// can disagree — a page that may be edited *here* and an editor that failed to
+	// open — and a template that tested one for the other would draw a link with
+	// nowhere to go.
+	EditURL string
+	CanEdit bool
 }
 
 // noticeData is a 404, a 405 or a 500.
@@ -176,6 +193,158 @@ type noticeData struct {
 	// Status is in the data so the page can say what it is, which is a small
 	// kindness to somebody reading it over somebody else's shoulder.
 	Status int
+}
+
+// // editorView is the editor page.
+//
+// It carries the same shell as every other page and one extra: the form. The form
+// is a value and not four arguments on the component because the *create* form and
+// the *edit* form are the same component with two fields different, and two
+// components would drift.
+type editorView struct {
+	shell
+
+	// Page is the page's identity for the heading, and nothing else. The body
+	// being edited is `Form.Text`.
+	Page renderedPage
+
+	Form editorForm
+
+	// History is the page's revisions, newest first, and it is empty for a page
+	// that has never been edited through the wiki. A DM who archived a page a
+	// fortnight ago and wants it back is standing in an editor with an empty list
+	// and no way to ask again, so the list is here for them and for nobody else.
+	History []revisionRow
+}
+
+// editorForm is the form, and every field is either a value the browser must send
+// back or a URL the script needs.
+type editorForm struct {
+	// Action is where the form posts, and it is an absolute path rather than empty
+	// so that a form submitted by hand -- with JavaScript off, which is the case
+	// that has to work -- goes to the right place.
+	Action string
+
+	// Path is the page's path, and for a new page it is the field the DM types
+	// into. It is a field either way so that the *saved* path is the one the
+	// browser sends back and not one the server guesses.
+	Path string
+
+	// Text is the whole file: frontmatter and body, as it is on disk.
+	Text string
+
+	// ETag is the content hash the page was served with, quoted as an ETag. A save
+	// with a stale one is a conflict, and the hash is a fact about the file rather
+	// than about the row, which is the point (ADR 0001).
+	ETag string
+
+	CSRF string
+
+	// Creating says this is a new page, and it changes exactly two things: the
+	// heading, and whether a save is a create or an update. Both are decisions the
+	// server makes again — a form that says `creating` is a hint, not a
+	// permission.
+	Creating bool
+
+	// Preview is where a preview posts. It is a URL and not a flag because the
+	// editor's script needs it and because a form with no action is a form that
+	// posts nowhere.
+	Preview string
+
+	// Conflict is the three-way diff, and it is present only on a 409. A template
+	// that always drew a diff panel would draw an empty one on every save.
+	Conflict *conflictView
+}
+
+// conflictView is the three texts a three-way diff needs, side by side.
+//
+// Rendered and not merged. A merge is a decision about somebody's prose, and a
+// server that makes it silently is a server that has edited a DM's page without
+// asking; §9's "there is exactly one render path" is the same rule applied to
+// rendering, and both come from the same place: one path, one place the answer is
+// made, and a human where the answer is a judgement.
+type conflictView struct {
+	// Base is the text the edit was made from, and it is empty when this
+	// application has not kept that text — which is the ordinary case for a page
+	// the DM wrote in Obsidian. Empty is honest; a guess is not.
+	Base string
+
+	// Current is what the file says now, which is somebody else's work and the
+	// reason this is a conflict.
+	Current string
+
+	// Incoming is what the DM was trying to write, and it is still in the textarea
+	// on this very page, so a refresh does not lose it.
+	Incoming string
+}
+
+// previewProblem is what a preview says while the text is not a page yet.
+//
+// **This is a normal answer, not an error.** A DM typing a frontmatter fence is in
+// that state for a second, and a preview pane that flashed a 500 while they typed
+// would be a preview they turned off.
+type previewProblem struct {
+	why string
+}
+
+// // revisionRow is one revision, as the history list shows it.
+type revisionRow struct {
+	// Rev is the number, and it is the number the restore form posts back. The
+	// store's numbering is the authority and this is a copy of it.
+	Rev int
+
+	// CreatedAt is RFC 3339 in UTC, for the same reason the page's `updated` is.
+	CreatedAt string
+
+	// Message is the note the save carried, and it is empty more often than not: a
+	// player saving their own notes is not writing a changelog.
+	Message string
+}
+
+// usersView is the campaign's principals.
+//
+// It carries a `shell` and not a `page`, because there is no page: a list of
+// people is not a document, it is the only view in this application whose subject
+// is not a page, and giving it the page template would have meant inventing a
+// `domain.Page` for a list of principals.
+type usersView struct {
+	shell
+
+	// Fresh is the link just minted, and it is empty on every other request. The
+	// template says so on the page, because a DM who assumes they can come back for
+	// it is holding a promise the wiki cannot keep.
+	Fresh string
+
+	List []principalRow
+	Form usersForm
+}
+
+// usersForm is the one form's fields: an action, a label, a role and a principal
+// id, which is four inputs in two shapes and so is one type rather than two.
+type usersForm struct {
+	Action string
+	CSRF   string
+}
+
+// principalRow is one person, as the page shows them.
+//
+// No token, no hash, no hint: the label the DM typed is what identifies a row to
+// the person reading the list, and a four-character token fingerprint in a list of
+// six people at a table is a thing to leak rather than a thing to help.
+type principalRow struct {
+	ID    string
+	Label string
+	Role  string
+
+	// Revoked is a fact about the row rather than a computed flag, because a
+	// revoked principal is still a row and a DM needs to see it: "they cannot get
+	// in" and "they were never here" are different questions.
+	Revoked bool
+
+	// LastUsed is a date and "never" is not-a-date, because a column of "never" is
+	// more useful than an empty one when the question is "has this link ever
+	// worked".
+	LastUsed string
 }
 
 // # The tree
@@ -281,3 +450,8 @@ var (
 	stylesheetPath = web.StylesheetPath
 	datastarPath   = web.DatastarPath
 )
+
+// editorScriptPath is the editor's own script, vendored beside the stylesheet for
+// the same two reasons: nothing is fetched at runtime, and it is reviewed code in
+// this repository rather than a string in a handler.
+const editorScriptPath = "/static/editor.js"

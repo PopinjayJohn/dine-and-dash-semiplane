@@ -84,18 +84,68 @@ func (y *Syncer) Sync(ctx context.Context) (Report, error) {
 // A path that is not a page is skipped and a path whose file has gone archives
 // the row, so a watcher does not have to know which of the two it saw.
 func (y *Syncer) SyncPath(ctx context.Context, pagePath string) (Report, error) {
+	return y.SyncPathAs(ctx, pagePath, store.AsDM(y.campaign.ID))
+}
+
+// SyncPathAs brings one page into step **as a particular principal**.
+//
+// It exists because M9's editor writes files, and a file the editor wrote is a
+// page whose row has to be re-derived -- and re-derived *by the same code*, or the
+// row and the file disagree and the next full sync "fixes" it in a direction the
+// editor did not intend.
+//
+// The principal is the interesting half, and it is the reason this is a function
+// of its own rather than a flag. The row write goes through the store's write
+// gate, which checks ownership against the *derived* page's owner -- and the
+// derived owner comes from the path and the frontmatter, which are the editor's
+// inputs and not the caller's to assert. So a player cannot present somebody
+// else's character as the owner of a page: the derivation decides who the owner
+// is and the gate checks that, and neither of the two is a value in a request.
+//
+// It is also what closes the residual ADR 0017 named. That ADR said the gate
+// checks ownership but not position, and that the position half belongs to the
+// editor, because a caller could otherwise supply its own character as the owner
+// of a page somewhere else. Here, the owner is *derived*, so there is no value to
+// supply.
+//
+// A full `Sync` is the DM's own vault being indexed and passes `AsDM`; only a
+// caller with a principal of its own -- the editor -- has a reason to pass one.
+func (y *Syncer) SyncPathAs(ctx context.Context, pagePath string, as domain.Principal) (Report, error) {
 	report := Report{}
 	sets := newReportSets()
 
-	one, err := y.syncPath(ctx, &report, pagePath)
-	if err != nil {
-		report.finalise(sets)
-		return report, err
-	}
-	report.add(one, sets)
-	report.finalise(sets)
-	report.Passes = 1
+	// More than one pass, for one page, and the reason is a character page's own
+	// id. `checkOwner` answers "a character page is its own owner" with the page's
+	// id -- and on the pass that *creates* it the row does not exist yet, so the id
+	// is empty and the page is written unowned. The second pass finds the row, gets
+	// the id, and writes the owner. This is the same reason `Sync` walks a vault
+	// more than once, and it is not an optimisation: a character page indexed once
+	// is a page no player is bound to and no player can read.
+	//
+	// So a single-page sync settles the same way a full one does, and the loop is
+	// the same loop rather than a second implementation of "until nothing changes".
+	changed := 0
+	for pass := 1; pass <= maxPasses; pass++ {
+		one, err := y.syncPath(ctx, &report, pagePath, as)
+		if err != nil {
+			report.finalise(sets)
+			return report, err
+		}
+		report.add(one, sets)
 
+		if !one.indexed && !one.archived {
+			changed = 0
+			break
+		}
+		changed = 1
+		report.Passes = pass
+	}
+	if report.Passes == 0 {
+		report.Passes = 1
+	}
+	_ = changed
+
+	report.finalise(sets)
 	return report, nil
 }
 
@@ -113,7 +163,7 @@ func (y *Syncer) syncPass(ctx context.Context, report *Report, sets *reportSets)
 	for _, pagePath := range paths {
 		present[pagePath] = true
 
-		one, syncErr := y.syncPath(ctx, report, pagePath)
+		one, syncErr := y.syncPath(ctx, report, pagePath, store.AsDM(y.campaign.ID))
 		if syncErr != nil {
 			return changed, syncErr
 		}
@@ -161,9 +211,9 @@ type outcome struct {
 }
 
 // syncPath plans one page and, if the index is not already what the file says,
-// writes it. The planning is in derive.go and is the only place a page's
+// writes it as `as`. The planning is in derive.go and is the only place a page's
 // contents are read.
-func (y *Syncer) syncPath(ctx context.Context, report *Report, pagePath string) (outcome, error) {
+func (y *Syncer) syncPath(ctx context.Context, report *Report, pagePath string, as domain.Principal) (outcome, error) {
 	p, err := y.planFor(ctx, pagePath)
 	if err != nil {
 		return outcome{}, err
@@ -185,5 +235,5 @@ func (y *Syncer) syncPath(ctx context.Context, report *Report, pagePath string) 
 		return outcome{path: pagePath, unchanged: true}, nil
 	}
 
-	return y.apply(ctx, p)
+	return y.apply(ctx, p, as)
 }

@@ -39,8 +39,10 @@ go.work.sum
 /backups/
 /coverage.html
 
-# Build output. `make build` writes here.
+# Build output. `make build` writes here, and `go build ./cmd/wiki` writes a
+# `wiki` binary into the working directory, which is not somewhere a file belongs.
 /bin/
+/wiki
 
 # A CI run's log, dropped into the working tree to be read rather than fetched.
 # They are about one run of one branch and are not a property of any of them.

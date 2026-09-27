@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"html"
 	"io"
 	"net"
 	nethttp "net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -356,23 +358,59 @@ type servedResponse struct {
 	header nethttp.Header
 }
 
+// postForm posts a form the way a browser does, which means the content type is
+// part of the request: `r.ParseForm` only looks at a body that says it is a form.
+func (s *server) postForm(t *testing.T, path string, form map[string]string, cookies ...*nethttp.Cookie) servedResponse {
+	t.Helper()
+
+	values := make([]string, 0, len(form))
+	for name, value := range form {
+		values = append(values, name+"="+url.QueryEscape(value))
+	}
+
+	req := s.newRequest(t, nethttp.MethodPost, path, strings.Join(values, "&"), cookies...)
+	return s.serve(t, req)
+}
+
 func (s *server) get(t *testing.T, path string, cookies ...*nethttp.Cookie) servedResponse {
 	t.Helper()
 
-	req, err := nethttp.NewRequestWithContext(t.Context(), nethttp.MethodGet, s.base+path, nil)
+	return s.serve(t, s.newRequest(t, nethttp.MethodGet, path, "", cookies...))
+}
+
+func (s *server) newRequest(t *testing.T, method, path, body string, cookies ...*nethttp.Cookie) *nethttp.Request {
+	t.Helper()
+
+	req, err := nethttp.NewRequestWithContext(t.Context(), method, s.base+path, strings.NewReader(body))
 	if err != nil {
-		t.Fatalf("building the request: %v", err)
+		t.Fatalf("building the %s %s: %v", method, path, err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	for _, cookie := range cookies {
 		if cookie != nil {
 			req.AddCookie(cookie)
 		}
 	}
+	return req
+}
 
-	client := &nethttp.Client{Timeout: 30 * time.Second}
+func (s *server) serve(t *testing.T, req *nethttp.Request) servedResponse {
+	t.Helper()
+
+	client := &nethttp.Client{
+		Timeout: 30 * time.Second,
+		// The client must not follow a 303: a save answers with one and the
+		// redirect is the answer, not a page to fetch.
+		CheckRedirect: func(*nethttp.Request, []*nethttp.Request) error {
+			return nethttp.ErrUseLastResponse
+		},
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("GET %s: %v", path, err)
+		t.Fatalf("%s %s: %v", req.Method, req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -383,17 +421,23 @@ func (s *server) get(t *testing.T, path string, cookies ...*nethttp.Cookie) serv
 	return servedResponse{status: resp.StatusCode, body: string(body), header: resp.Header}
 }
 
-// redeem mints a link through the store and redeems it over HTTP, which is how a
-// player arrives. The token is in a URL for the length of this function and in
+// redeem mints a player link through the store and redeems it over HTTP, which is
+// how a player arrives. The token is in a URL for the length of this function and in
 // nothing else.
+// redeem mints a player link through the store and redeems it over HTTP, which is
+// how a player arrives.
+//
+// The link has to be minted somewhere, and the command under test has no subcommand
+// for it -- M9's "new player link" button, which is the next commit. So the test
+// uses the store for the mint and the server for everything after it.
 func (s *server) redeem(t *testing.T, target string) *nethttp.Cookie {
 	t.Helper()
 
-	// The link has to be minted somewhere, and the command under test has no such
-	// subcommand yet -- M9's job. So the test uses the store directly for the mint
-	// and the server for everything after it, which is the part this milestone
-	// shipped.
-	token := mintLink(t, s.dir, s.addr, "blackwater")
+	return s.redeemToken(t, target, mintLink(t, s.dir, s.addr, "blackwater", domain.RolePlayer))
+}
+
+func (s *server) redeemToken(t *testing.T, target, token string) *nethttp.Cookie {
+	t.Helper()
 
 	// The client must not follow the 303: the point of the redemption is the
 	// redirect and the cookie on it, and a client that follows it hands back the
@@ -444,7 +488,7 @@ func runServeCommand(t *testing.T, dir string, args ...string) (stdout, stderr s
 // server because there is no subcommand for it yet -- that is M9's "new player
 // link" button -- and a test that reached for one would be testing a milestone
 // that has not happened.
-func mintLink(t *testing.T, dir, addr, slug string) string {
+func mintLink(t *testing.T, dir, addr, slug string, role domain.Role) string {
 	t.Helper()
 
 	ctx := context.Background()
@@ -461,9 +505,73 @@ func mintLink(t *testing.T, dir, addr, slug string) string {
 	}
 
 	issued, err := auth.Minter{Backend: s, Config: authConfigFor("http://" + addr)}.Issue(
-		ctx, campaign, domain.RolePlayer, "a player of the fixture")
+		ctx, campaign, role, "a principal of the fixture")
 	if err != nil {
 		t.Fatalf("issuing a link: %v", err)
 	}
 	return "?k=" + issued.Token.Hex()
+}
+
+// TestServeEditsAPage: the editor end to end, through a real process, because
+// `internal/http` tests the handler and the command is what wires the writer up —
+// and a command that served a wiki with no editor configured would look perfectly
+// healthy in every other test here.
+func TestServeEditsAPage(t *testing.T) {
+	t.Parallel()
+
+	dir := dataDirFixture(t)
+	server := bootServer(t, dir, "--addr", "127.0.0.1:0", "--no-watch")
+
+	// A DM, because a DM is who edits pages.
+	cookie := server.redeemAs(t, "/c/blackwater/", domain.RoleDM)
+
+	editor := server.get(t, "/c/blackwater/locations/rivergate?edit=1", cookie)
+	if editor.status != nethttp.StatusOK {
+		t.Fatalf("the editor is %d, want 200\nbody: %s", editor.status, editor.body)
+	}
+
+	etag := between(t, editor.body, `name="etag" value="`, `"`)
+	csrf := between(t, editor.body, `name="csrf" value="`, `"`)
+
+	saved := server.postForm(t, "/c/blackwater/locations/rivergate?edit=1", map[string]string{
+		"csrf":     csrf,
+		"etag":     etag,
+		"markdown": "---\ntitle: Rivergate\ntype: location\nvisibility: players\n---\n\nA fortified town, and a bridge.\n",
+	}, cookie)
+	if saved.status != nethttp.StatusSeeOther {
+		t.Fatalf("the save is %d, want 303\nbody: %s", saved.status, saved.body)
+	}
+
+	// And the file on disk has it, which is the part the command is responsible
+	// for: the editor is wired to *this* campaign's vault.
+	page := server.get(t, "/c/blackwater/locations/rivergate", cookie)
+	if !strings.Contains(page.body, "and a bridge") {
+		t.Errorf("the page did not change:\n%s", page.body)
+	}
+}
+
+// redeemAs is redeem with a role, for the test that needs the DM rather than a
+// player. There is no command that mints a link yet — that is M9's "new player
+// link" button — so the test uses the store for the mint and the server for
+// everything after it.
+func (s *server) redeemAs(t *testing.T, target string, role domain.Role) *nethttp.Cookie {
+	t.Helper()
+
+	token := mintLink(t, s.dir, s.addr, "blackwater", role)
+	return s.redeemToken(t, target, token)
+}
+
+// between is the text between two markers, for a test that reads a rendered form.
+func between(t *testing.T, body, prefix, suffix string) string {
+	t.Helper()
+
+	_, after, found := strings.Cut(body, prefix)
+	if !found {
+		t.Fatalf("the form has no %s field:\n%s", prefix, body)
+	}
+	value, _, found := strings.Cut(after, suffix)
+	if !found {
+		t.Fatalf("the %s field is not closed:\n%s", prefix, body)
+	}
+	return html.UnescapeString(value)
 }

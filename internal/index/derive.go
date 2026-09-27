@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -81,6 +82,147 @@ type plan struct {
 	refusal *Refusal
 }
 
+// CheckWritableAs answers whether `as` may write the page at `pagePath`, and
+// writes nothing at all.
+//
+// It exists because the order of an editor's save is not free, and the wrong
+// order is a hole:
+//
+//  1. write the file, then re-derive the row as `as` -- and on a refusal undo the
+//     file.
+//
+// That is refused here for a reason that has nothing to do with tidiness. **The
+// watcher indexes files as the DM**, so a player's file that is on disk for as
+// long as the refusal takes is a file the watcher will index, as the DM, into a
+// page the store's gate would not have allowed. The gate is the thing that has to
+// run *before* the file is written, and the only code that can ask the same
+// question the write will ask is the code that derives the page -- which is this
+// package.
+//
+// It is a dry run of the write, and it is not wasted: it is also the answer to
+// "may I offer a Save button", which is the same question asked a moment earlier
+// and is why a page's Edit affordance is computed by the same function that
+// validates the save.
+//
+// The settlement check is deliberately *not* short-circuited. A save whose
+// content is already indexed would be a no-op -- and a no-op that skipped the
+// gate is a principal who may write anything, as long as what they write is what
+// the index already says. That is not a hypothetical: it is what a player
+// re-saving an unchanged page does, and `TestAWriteIsGatedEvenWhenItWouldChange
+// Nothing` is the test that found it.
+func (y *Syncer) CheckWritableAs(ctx context.Context, pagePath string, as domain.Principal) error {
+	p, err := y.planFor(ctx, pagePath)
+	if err != nil {
+		return err
+	}
+	return y.checkWritable(ctx, p, as)
+}
+
+// checkWritable is the gate, asked about a plan. Both entry points go through it
+// so that "may I write this" has one answer, and it is deliberately independent of
+// whether the plan is settled.
+func (y *Syncer) checkWritable(ctx context.Context, p plan, as domain.Principal) error {
+	pagePath := p.path
+	if p.refusal != nil || p.skip != nil {
+		// The file is not a page this application can index, so there is no page
+		// to be refused a write to. Reporting the reason is more use than
+		// "you may not": the DM is going to fix the frontmatter, and a player who
+		// cannot fix it needs to know what is wrong with it.
+		if p.refusal != nil {
+			return fmt.Errorf("indexing %s: %s", pagePath, p.refusal.Reason)
+		}
+		return fmt.Errorf("indexing %s: %s", pagePath, p.skip.Reason)
+	}
+	if p.page.Path == "" {
+		return fmt.Errorf("%s: there is no file for it, so there is nothing to write", pagePath)
+	}
+	if p.ownerProblem != nil {
+		// A page whose owner does not hold up cannot be written by anybody but
+		// the DM, and the reason is the one the sync report already carries.
+		return fmt.Errorf("indexing %s: %s", pagePath, p.ownerProblem.Reason)
+	}
+	if err := y.store.CheckWritable(ctx, p.page, as); err != nil {
+		return fmt.Errorf("%s: %w", pagePath, err)
+	}
+	return nil
+}
+
+// CheckWritableContentAs asks the gate about content that is not a file yet.
+//
+// It is the question an editor has to ask before it writes, and the reason it
+// takes content rather than a path is in `planForBytes`. The answer is the same
+// one `CheckWritableAs` gives for a file, because it is the same derivation over
+// the same gate -- so a page whose owner changes with the edit is gated on the
+// owner the *edit* implies and not the one on disk.
+//
+// A page that does not exist yet is a legal thing to write, and the path is
+// checked here so that an editor that has not written the file yet cannot offer a
+// save for a path the vault would refuse.
+func (y *Syncer) CheckWritableContentAs(ctx context.Context, pagePath string, markdown []byte, as domain.Principal) error {
+	if _, pathErr := vault.CheckPagePath(pagePath); pathErr != nil {
+		return fmt.Errorf("the path of %s: %w", pagePath, pathErr)
+	}
+
+	p, err := y.planForBytes(ctx, pagePath, markdown)
+	if err != nil {
+		return err
+	}
+	return y.checkWritable(ctx, p, as)
+}
+
+// DecisionForContent is the access decision for content that is not a file yet,
+// and it is what an editor's preview asks.
+//
+// It is the same derivation and the same gate as a save, so a preview cannot
+// disagree with the save about who may see what — which is the property §9 is about
+// ("there is exactly one render path") applied to the decision rather than to the
+// HTML. A preview that used a different owner rule than the save would render a
+// player's page with the DM's secrets, and the only thing standing between that and
+// a disclosure is that there is one owner rule.
+//
+// The write gate runs first and refuses on its own, so a preview of a page the
+// caller may not write is not a preview at all.
+func (y *Syncer) DecisionForContent(ctx context.Context, pagePath string, markdown []byte, as domain.Principal) (access.Decision, error) {
+	p, err := y.planForBytes(ctx, pagePath, markdown)
+	if err != nil {
+		return access.Decision{}, err
+	}
+	if gateErr := y.checkWritable(ctx, p, as); gateErr != nil {
+		return access.Decision{}, gateErr
+	}
+
+	meta, err := y.store.PageMetaOf(ctx, p.page, as)
+	if err != nil {
+		return access.Decision{}, err
+	}
+	return access.For(access.PrincipalOf(as), meta), nil
+}
+
+// OwnerPageID is the page id of the character a page belongs to, from the same
+// two rules and through the same lookup as a sync's, and it is exposed because
+// M9's editor has to ask the same question before it writes a file.
+//
+// A caller that wanted to know "who owns this page" before writing it would
+// otherwise reimplement `OwnerOf` and the `characters/<slug>` resolution, and the
+// second implementation is how a player's spell sheet ends up owned by nobody
+// while the index says otherwise. One function, two callers, one answer.
+//
+// A page with no owner is the empty string and a nil error. A page whose owner
+// does not hold up is the empty string *and* the problem, because that is a
+// refusal a DM has to see and a page that is unowned rather than wrongly owned.
+func (y *Syncer) OwnerPageID(ctx context.Context, pagePath string, doc *vault.Document) (string, *OwnershipProblem) {
+	owner, owned := OwnerOf(pagePath, doc)
+	if !owned {
+		return "", nil
+	}
+
+	pageID, problem := y.checkOwner(ctx, pagePath, y.pageID(ctx, pagePath), doc, owner)
+	if problem != nil {
+		return "", problem
+	}
+	return pageID, nil
+}
+
 // planFor reads one file and works out what the index should hold for it.
 //
 // Every read of a file in this package goes through here, and it is the only
@@ -110,6 +252,25 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 	default:
 		return p, fmt.Errorf("reading %s: %w", pagePath, err)
 	}
+
+	return y.planForBytes(ctx, pagePath, data)
+}
+
+// planForBytes is the derivation, and everything in it reads the *bytes* rather
+// than the file.
+//
+// The split is M9's, and it is a correctness one rather than a tidiness one. An
+// editor has to ask "may this principal write *this content*" **before** the
+// content is a file, because the watcher indexes files as the DM and a player's
+// file on disk is a file the watcher will index into a row the gate would have
+// refused. A check that can only be asked about a path on disk forces the save to
+// write first and roll back on refusal, and that is a window, not a guarantee.
+//
+// So there is one derivation and it takes bytes. `planFor` is the file case; this
+// is the content case; and there is no second implementation of how a page's
+// owner, title, visibility or links are read out of a document.
+func (y *Syncer) planForBytes(ctx context.Context, pagePath string, data []byte) (plan, error) {
+	p := plan{path: pagePath}
 
 	doc, parseErr := vault.Parse(data)
 	if parseErr != nil {
@@ -320,15 +481,18 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 	}
 }
 
-// apply writes a plan. It is the only function in this package that writes a
-// row, and it is called only with a plan that `isSettled` said was not already
-// there.
-func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
-	// As the DM, which is what the sync *is*: it indexes the DM's own vault and
-	// has to write every page in it, including the `dm-only` ones. The store's
-	// write gate is for the other writers, and M9's editor is the one that will
-	// be refused.
-	stored, err := y.store.UpsertPage(ctx, p.page, store.AsDM(y.campaign.ID))
+// apply writes a plan as `as`. It is the only function in this package that
+// writes a row, and it is called only with a plan that `isSettled` said was not
+// already there.
+//
+// The principal is threaded all the way to the row write and not a step short of
+// it, because the store's write gate is the only thing standing between a player's
+// editor and somebody else's page (ADR 0017), and a gate that runs after the
+// derivation but before the write is the only place it can run. What the gate
+// checks is `p.page`, whose owner came from `OwnerOf` two functions up — so the
+// caller cannot assert an owner, only the path and the frontmatter.
+func (y *Syncer) apply(ctx context.Context, p plan, as domain.Principal) (outcome, error) {
+	stored, err := y.store.UpsertPage(ctx, p.page, as)
 	if err != nil {
 		return outcome{}, fmt.Errorf("indexing %s: %w", p.path, err)
 	}
@@ -373,7 +537,12 @@ func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
 func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) {
 	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
-		if errors.Is(err, vault.ErrNotFound) {
+		// **The store's sentinel, not the vault's.** This checked `vault.ErrNotFound`
+		// for an error the *store* returns, so the tolerance never applied: a
+		// single-path sync of a path with no file — which is what M9's archive
+		// does, and what a watcher reports for a page the DM deleted — reported a
+		// failure where there was nothing to do and no page to say so about.
+		if errors.Is(err, store.ErrNotFound) {
 			// Nothing indexed and no file: a path that was never a page, which
 			// is not worth a report line.
 			return outcome{path: pagePath}, nil
@@ -397,7 +566,7 @@ func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) 
 // then the next one too.
 func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
 	if err := y.store.DeletePage(ctx, page.ID); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, store.ErrNotFound) { //nolint:nilerr // already archived: see the function comment
 			return nil
 		}
 		return fmt.Errorf("archiving %s: %w", page.Path, err)

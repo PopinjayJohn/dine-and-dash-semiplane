@@ -724,7 +724,7 @@ Each milestone is one branch, one PR, one changelog section.
 | **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding**, a redacting logger | every hardening item in §10 as a named test |
 | **M7** | Access control | `access` package, the read predicate corrected to the spec's form, **`body_public` redaction**, the owner column, edit enforcement, a principal on every page-returning store method | the §14 access table, `TestStoreReadPredicateMatchesResolver` |
 | **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/_/healthz`, **the cookie attributes ADR 0003 held back, the login route, and a live page** | httptest render tests, route coverage, HTML smoke assertions, `TestSecretStrippedFromAllSurfaces` |
-| **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages** | CRUD flows, conflict detection, restore fidelity, DM/player races |
+| **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages**, and the `users new` / `users revoke` buttons that mint and take back share links | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
 | **M11** | Plugin framework | `internal/plugin` and capabilities, `house-rules`, `spoilerbox`, `wordcount`, authoring guide | contract suite, ordering, panic isolation, duplicate rejection |
 | **M12** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, the **`dnd5e` plugin**, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
@@ -957,6 +957,46 @@ look like working features rather than like bugs: a sanitiser applied to
 by content hash alone is a channel from a DM's render to a player. Both are
 written down in [ADR 0014](adr/0014-secrets-leave-the-tree.md), which also
 corrects §11's two-field cache key.
+
+### M9 commit sequence
+
+```
+feat(index): a sync that writes as somebody, so the store's gate still runs
+feat(edit): the writer, and the gate that has to come before the file
+feat(http): the editor, and a preview that reuses the render path
+feat(http): users new and users revoke, so a DM can hand somebody a link
+docs(adr): record what M9 decided, and what it found and did not fix
+docs: record where the project actually is
+```
+
+M9 is the first milestone in which anything writes a markdown file, and the whole
+milestone is about **the order of the steps**. The sequence begins on M7's work
+rather than on M9's because the editor's write had to be threaded through the
+sync as a principal: ADR 0017 put the write gate on `UpsertPage`, and until now
+every writer was the sync, which writes as the DM because indexing a DM's own
+vault is what a sync *is* — so the gate had never refused anything.
+
+The finding that shaped the second commit is in
+[ADR 0019](adr/0019-the-writer-checks-before-it-writes.md): the index watcher
+writes rows as the DM, so a save that writes the file and *then* asks whether the
+write was allowed leaves a player's file on disk for the length of the rollback,
+and the watcher will index it. **A refused write is laundered into the index
+through the one path that writes rows without asking.** The gate therefore runs
+while the content is still bytes, and the file is the last thing that changes.
+
+The third commit is where a preview stopped being a second rendering path. It
+started as a handler that had the whole file's bytes and rendered them whole, which
+put an `<hr>` where the frontmatter fences were and a heading out of the `title:`
+line. §9's "there is exactly one render path" applies to a route nobody thought
+about when the rule was written, and the preview is now one function in
+`internal/edit` that parses, derives, decides and renders — the same four steps the
+save takes, in the same code.
+
+The fourth commit is the missing half of handing somebody a link: §10 has said since
+M0 that the DM clicks "new player link" and sees the plaintext once, and until now
+there was no button. The minted link is a 303 to the page with the link on it, the
+page says it will not be shown again, and the list shows no token and no
+fingerprint.
 
 ### M8 commit sequence
 

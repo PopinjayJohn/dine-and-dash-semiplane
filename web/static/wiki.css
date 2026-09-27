@@ -480,3 +480,374 @@ a:hover {
   border-radius: 4px;
   padding: 0.35rem 0.6rem;
 }
+
+/* ------------------------------------------------------------- editor ---- */
+
+/* The editor is a different page shape from a page: a textarea and a preview side
+ * by side, and no sidebar. An editor inside the reading layout would be a textarea
+ * a third of the screen wide, which is a textarea nobody types into. */
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sidebar);
+}
+
+.editor-bar .page-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.editor-bar .brand,
+.editor-back {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.editor-bar .editor-back {
+  color: var(--link);
+}
+
+.editor {
+  padding: 1rem 1.5rem 3rem;
+}
+
+.editor-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* One breakpoint, and it is the phone: a DM editing at a table is as likely to be
+ * on a phone as a laptop, and a preview beside a textarea is a layout for a
+ * screen with room on it. */
+@media (max-width: 60rem) {
+  .editor-panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.editor-input label {
+  display: block;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin-bottom: 0.25rem;
+}
+
+#markdown {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+
+#path {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.editor-preview {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  background: var(--paper);
+  min-height: 8rem;
+  overflow-wrap: anywhere;
+}
+
+.editor-hint {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+#save-state.is-warn {
+  color: var(--warn);
+}
+
+#save-state.is-error {
+  color: var(--danger);
+}
+
+/* -------------------------------------------------------------- conflict -- */
+
+.conflict {
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--paper-sunk);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.conflict h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  color: var(--warn);
+}
+
+.conflict-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+@media (max-width: 60rem) {
+  .conflict-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conflict-column h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 0 0 0.25rem;
+}
+
+/* `pre` and not a diff: a DM editing prose wants the two versions, not a hunk,
+ * and the plain text is what they can copy out of. */
+.conflict-column pre,
+.conflict-base pre {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conflict-base {
+  margin-top: 0.6rem;
+}
+
+.conflict-base summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+/* ---------------------------------------------------------------- users ---- */
+
+/* The freshly minted link, in a box that looks like nothing else on the page.
+ * It is the only time it is here, and the styling is how a DM finds that out
+ * before they close the tab. */
+.fresh-link {
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: var(--paper-sunk);
+  padding: 0.9rem 1.1rem;
+  margin: 0 0 1.5rem;
+}
+
+.fresh-link h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+
+.fresh-link pre {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.users {
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+}
+
+.user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.user-label {
+  font-weight: 600;
+}
+
+.user-role,
+.user-last {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.user-revoked {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  padding: 0 0.45rem;
+}
+
+.user.is-revoked .user-label {
+  text-decoration: line-through;
+  color: var(--ink-soft);
+}
+
+.user-revoke {
+  margin-left: auto;
+}
+
+.new-user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  max-width: 40rem;
+}
+
+.new-user label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+
+.new-user input,
+.new-user select {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------ page tools -- */
+
+.tools {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-sunk);
+  padding: 0.75rem 1rem;
+  margin-top: 1.25rem;
+}
+
+.tools h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+
+.tool {
+  border-top: 1px solid var(--rule);
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.tool:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.tool p {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.tool label {
+  display: block;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin-bottom: 0.2rem;
+}
+
+.tool input {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* The one irreversible thing in the editor, in the alarming colour. */
+.tool-danger {
+  border-left: 3px solid var(--danger);
+  padding-left: 0.7rem;
+}
+
+.revisions {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.revisions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.85rem;
+}
+
+.revision-number {
+  font-weight: 600;
+}
+
+.revision-message {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.revisions form {
+  margin-left: auto;
+}

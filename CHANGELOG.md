@@ -15,6 +15,213 @@
 
 ### Added
 
+- **The editor.** A textarea, a preview pane, a save, and the three ways a save can
+  be refused — each with its own answer, because they are three different facts:
+  not writable is a 403 (a player who just read a page is not told it does not
+  exist), a conflict is a 409 with three texts, and a page that has gone is a 404.
+- **The form posts to itself with a real action, the ETag and the CSRF token are
+  hidden fields, and the save button is a submit.** A JavaScript-only save path is
+  untestable from Go and unshippable on a machine where the script did not load, so
+  `TestTheEditorWorksWithNoScript` posts the form the way a browser with scripting
+  disabled would. Autosave is a convenience and the form is the feature.
+- **`?edit=1` and `?new=1`,** and not paths, for the reason `?raw=1` and `?stream=1`
+  are queries: a path segment would be a first-segment name the vault could not
+  also use, so a DM with a page called `edit` gets it.
+- **A preview is the same derivation, the same decision and the same component as
+  the save**, so a preview cannot disagree with the save about who may see what —
+  which is §9's "one render path" applied to a path nobody thought about when it
+  was written. It writes nothing: a route that answered a question by doing the act
+  would be a route a browser's prefetch could write to.
+- **A conflict is three texts side by side and no merge.** A merge is a decision
+  about somebody's prose, and a server that makes it silently is a server that has
+  edited a DM's page without asking. The base column is empty — not guessed — when
+  this application has not kept the text the edit was made from.
+- **A preview of something that is not a page yet says why instead of failing**, and
+  it is a 200: a DM typing a frontmatter fence is in that state for a second, and a
+  pane that flashed a 500 while they typed would be a pane they stopped looking at.
+- **`failWith` is a 500 that carries the reason, for exactly one case: the DM typed
+  something that is not a page.** A DM whose `visibility: secret` is a typo and
+  gets "500 Internal Server Error" learns nothing and files a bug; a DM who gets
+  "visibility must be one of players, dm-only, dm-and-owner" fixes it. The person
+  reading it is the person who can fix it, which is what makes it different from
+  the usual rule that an error string must not reach a response.
+- **`web/static/editor.js`, vendored and reviewed,** like the client: a preview as
+  you type and a *scheduled* autosave rather than a debounced one, because a
+  debounced autosave into never is a common way to ship a feature that appears not
+  to work. The CSP allows it through the layout's per-response nonce, with no
+  `unsafe-inline` anywhere.
+- **The Edit link comes from the decision and is drawn only when a page may be
+  edited.** A link the gate would refuse is a promise the wiki does not keep, and a
+  DM who follows one and gets a 403 concludes the wiki is broken.
+- **`wiki serve` wires the writers it already has open** rather than opening a
+  second vault per campaign, and opens one on demand for a campaign added since
+  the server started.
+
+- **`?users=1`: the campaign's principals, and the button that mints a link.**
+  §10 says the DM clicks "new player link" and the plaintext is shown *once*,
+  and nothing in M0 through M8 had a button to click — the missing half of what a
+  DM needs to hand somebody a link.
+- **The minted link is shown once and only once.** The response is a 303 to the
+  page with the link on it, and the page says it will not be shown again. The
+  store keeps only a hash either way, so a second chance does not exist to give.
+- **The list shows no token, no hash and no hint.** Four characters of a 32-byte
+  credential is a fingerprint worth having in a list of six people at a table; the
+  label the DM typed is what identifies a row to the person reading it.
+- **The users page and the minting are DM-only, and a player gets a 403** — the
+  URL is one a DM hands out, and a player who has found it knows the campaign has
+  players, which is not worth a not-found and a 403 says what is wrong.
+- **A DM cannot revoke their own link**, which is one click away from locking every
+  player out of a campaign with no way back in but the data directory.
+- **A revocation of somebody in another campaign is a 404**, because a revocation
+  is a write on a row and a row in another campaign is not this DM's to end.
+- **The four page tools are on the editor page** — rename, archive, purge, restore
+  — because a DM who wants to rename a page is standing in its editor. They are
+  POSTs to the editor's own URL with an `op` *field*, and the field is checked
+  before the save.
+- **A purge asks for a typed confirmation** and the page says what it loses, in
+  three words: "There is no bringing it back". A browser's `confirm()` dialog is
+  suppressed by a prefetch, is not announced by a screen reader, and a DM who has
+  pressed Enter twice has a page they cannot get back.
+- **The history is listed with the numbers the restore form posts back**, and a
+  restore is a save, so it cannot overwrite a page that changed since the history
+  panel was drawn.
+
+- **[ADR 0019](docs/adr/0019-the-writer-checks-before-it-writes.md):** the
+  writer checks before it writes, and the hub carries nothing. The order of a save
+  is the design, and ADR 0017's residual — the gate checks ownership but not
+  position — is closed by the gate being handed a *derived* page whose owner came
+  from the path and the frontmatter, so there is nothing for a caller to assert.
+- **[ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md):** link
+  resolution is campaign-wide, and that is a finding rather than a decision. A
+  player can tell which paths exist from whether a link resolved; it is not a
+  content disclosure, and the fix is decided and *not built* because M10 makes
+  links more visible and the two changes belong in the same conversation. The fix
+  is `domain.WithPrincipal` in the context, read by the resolver, with no change
+  to the render cache key because `CanSeeSecrets` already discriminates the output
+  completely.
+
+### Fixed
+
+- **A page tool was silently a save.** `?edit=1&op=purge` arrived with no
+  `markdown` field and no ETag, so the save reported a conflict with itself and a
+  DM's purge button appeared to be a save that cannot be saved. The op is read from
+  the form and checked before the mode, because a tool is a different verb on the
+  same URL and the more specific one has to win.
+- **A templ component's early `return` is not an early exit**, so the purge tool
+  drew a button on a player's editor after being told they are not a DM.
+- **The preview rendered the frontmatter as prose.** The handler had the whole
+  file's bytes and the renderer wants the body, so a preview put an `<hr>` where
+  the `---` fences were and a heading out of the `title:` line. The preview is now
+  one function in `internal/edit` that parses, derives, decides and renders — the
+  same four steps the save takes, in the same code, because two places that each
+  build a page are two places that can disagree about one.
+
+### Added
+
+- **`internal/edit`: the writer.** Every page save goes through it, and so does
+  anything that later needs to write a page programmatically. Its save is seven
+  steps in a fixed order, and the order is the design:
+  1. check the path is a path a page can have;
+  2. read the file that is there now;
+  3. compare its hash with the one the caller last saw, and refuse on a mismatch;
+  4. ask the store's write gate about the content being saved, before any of it is
+     a file;
+  5. write the file, atomically;
+  6. re-derive the row through `internal/index`, as the caller;
+  7. record the previous text as a revision, in the database and in `_history`.
+
+  Step 6 is the same derivation a sync does, by the same function, so a row written
+  by an editor and a row written by a watcher cannot be two different derivations
+  of one file. Step 4 comes before step 5 because the watcher writes rows as the
+  DM: a player's file on disk is a file the watcher will index, as the DM, into a
+  page the gate refused.
+- **A save takes the whole file, not fields** — frontmatter and body, as the DM
+  would have it on disk. A save that took fields would have to decide what to do
+  with the keys it does not understand, and the only answer that does not lose a
+  DM's own YAML is to take their bytes.
+- **`Versions` returns the three texts a three-way diff needs** — base, current and
+  incoming — fetched on demand rather than carried on the error, so a save that is
+  not in conflict does not pay for a diff nobody looks at. The base is found by the
+  caller's own ETag, which is a fact only a revision holds, and it is *empty* when
+  this application has not kept that text rather than a guess: a page the DM wrote
+  in Obsidian has no revision here, and a diff that invented a base would be lying
+  about where the edit started.
+- **`Restore` is a save**, so it checks the ETag, it keeps the text it replaced as
+  a revision, and it goes through the gate. A restore that is itself undoable and a
+  restore that cannot overwrite a page that changed since the history panel was
+  drawn both come from that one decision.
+- **`Rename` moves a page and follows every link that pointed at it**, DM-only, and
+  it writes the new file *before* the old one goes so a failure in the middle
+  leaves two pages rather than none. §5 says a rename rewrites inbound links
+  atomically, and without that every `[[link]]` in the campaign becomes unresolved
+  the moment somebody renames a page.
+- **The link rewriter touches the target and nothing else.** `[[from|alias]]`
+  keeps its alias, `[[from#heading]]` keeps its fragment, `[text](from)` keeps its
+  text, and every other byte of the page is the DM's. It is a scanner over the
+  bytes with goldmark used for the one thing it is reliable about — *where* the
+  code blocks are — because **a `WikiLink` carries no source segment** (the
+  renderer's own parser says so), so an AST rewrite would have to re-render the
+  page, and re-rendering a DM's markdown is the one thing this project must never
+  do to a file.
+- **Archive removes the file and keeps the row**, so it is recoverable; **purge
+  throws the row, the revisions and the inbound links away**, and it is the second
+  of the two rather than a stronger first.
+- **`store.GetPageArchived` is the only way to reach an archived row**, and it keeps
+  the read predicate — the only clause it drops is `is_deleted = 0` — so an archived
+  page a principal may not read is still not found. The name says what it is
+  because a flag on `GetPage` would be a way for a handler to turn a read into an
+  administrative lookup by accident.
+
+### Fixed
+
+- **A character page created through a single-page sync was written unowned.** The
+  owner resolution answers "a character page is its own owner" with the page's own
+  id, and on the pass that *creates* it the row does not exist yet. A full sync
+  fixed it on the second pass, which is why M4 never saw it; a single-path sync did
+  one pass and stopped. `SyncPathAs` now settles the same way a full one does, and
+  the loop is the same loop rather than a second implementation of "until nothing
+  changes". A character page indexed once is a page no player is bound to and no
+  player can read.
+- **`archive` tested the wrong sentinel for "nothing indexed and no file"** — it
+  asked `errors.Is(err, vault.ErrNotFound)` for an error the *store* returns, so
+  the tolerance never applied and a sync of a path with no file reported a failure
+  where there was nothing to do. It is exactly what an archive does.
+- **A save that changes nothing does not grow the history.** Re-saving a page
+  without changing it is what an editor does when somebody opens it and types a
+  space and takes it back, and a history of identical copies is a history nobody
+  can read and nobody can restore from.
+
+### Fixed
+
+- **The sync can write as somebody, and the store's write gate runs for an
+  editor's save.** `SyncPathAs` threads a principal all the way to the row write.
+  Until M9 every writer was the sync, which writes as the DM because indexing the
+  DM's own vault is what a sync *is* — so threading it is the only way the gate
+  (ADR 0017) can be in the editor's path at all. A handler cannot forget a
+  function signature.
+- **The gate is asked *before* the file is written, and that order is a
+  correctness property rather than a convenience.** The index watcher writes rows
+  as the DM, so a player's file sitting on disk for the length of a refused save
+  is a file the watcher indexes, as the DM, into a page the gate would not have
+  allowed. `Syncer.CheckWritableAs` derives the page and asks the gate without
+  writing anything; the editor asks it, then writes, then re-derives.
+- **A write is gated even when it would change nothing.** `SyncPathAs` writes only
+  if the index is not already what the file says, so a player re-saving unchanged
+  content never reached the gate — a no-op is neither a refusal nor a success, it
+  is an absence. The pre-check deliberately does not consult settlement for the
+  same reason, and `TestAWriteIsGatedEvenWhenItWouldChangeNothing` is the test
+  that found it.
+- **A conflicting owner is refused to a player and unowned for a DM.** A page under
+  `characters/brian/` that declares `character: aria` carries the path's answer,
+  not the frontmatter's, so the gate refuses it rather than admitting it on the
+  strength of a key the page's own path contradicts.
+- **`Syncer.OwnerPageID`, the character's page id for a path and a document**,
+  exposed so M9's editor asks the same question through the same two rules as a
+  sync instead of reimplementing `OwnerOf` and the `characters/<slug>` resolution.
+  A second implementation is how a player's spell sheet ends up owned by nobody
+  while the index says otherwise.
+- **`store.CheckWritable`, the gate asked on its own,** for the same reason: the
+  check has to come first and the file must not exist until it has passed.
 - **`make generate` and `make generate-check`, and `generate-check` is in
   `make check` and in CI.** The templ output is committed, so a `.templ` edited
   without regenerating it is a template and a `_templ.go` that disagree, and the
