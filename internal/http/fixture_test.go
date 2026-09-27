@@ -95,6 +95,8 @@ type fixture struct {
 
 	// dm is the campaign's DM as a principal, for a test that saves directly rather
 	// than over HTTP -- which is how a test sets up the *other* side of a conflict.
+	// It is the principal the DM's own link was issued for, so a DM session and this
+	// value are the same person.
 	dm domain.Principal
 
 	dmLink     auth.Issued
@@ -201,15 +203,21 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	// principal who is of somewhere else.
 	f.otherLink = mustIssue(t, s, authCfg, other, domain.RolePlayer, "a player of Thornford")
 
+	// The DM principal is the one the *link* was issued for, so `f.dm` and a DM
+	// session are the same person. Two principals with the same label is a fixture
+	// bug that a test about revoking yourself finds immediately and a test about
+	// anything else never does.
 	f.hub = sse.NewHub(wiki.DefaultStreams)
 	f.editor = edit.New(campaignVault, s, campaign)
-	f.dm = mustCreatePrincipal(t, s, f.campaign, domain.RoleDM, "the DM")
+	f.dm = f.dmLink.Principal
 	f.cfg = wiki.Config{
 		EditorFor: func(campaign domain.Campaign) (*edit.Editor, error) {
 			return f.editor, nil
 		},
 		Store:      s,
 		Redeemer:   auth.Redeemer{Backend: s, Config: authCfg},
+		Minter:     auth.Minter{Backend: s, Config: authCfg},
+		BaseURL:    "https://wiki.example",
 		Hub:        f.hub,
 		Version:    version.Get(),
 		Now:        f.hands.now,
@@ -253,7 +261,7 @@ func (f *fixture) hashOf(path string) string {
 // else saved it" half of a conflict: a test drives one side through the route it
 // is testing and the other side directly, because two concurrent HTTP requests in
 // one test is a race rather than a scenario.
-func (f *fixture) savePage(path, markdown string) {
+func (f *fixture) savePage(path, markdown string) { //nolint:unparam // the path varies as the tests grow
 	f.t.Helper()
 
 	if _, _, err := f.editor.Save(f.t.Context(), edit.Save{
@@ -447,25 +455,6 @@ func mustCampaign(t *testing.T, s *store.Store, slug, name string) domain.Campai
 		t.Fatalf("CreateCampaign(%q): %v", slug, err)
 	}
 	return campaign
-}
-
-// mustCreatePrincipal is a principal with no link, for a test that needs an
-// identity without needing a session.
-func mustCreatePrincipal(t *testing.T, s *store.Store, campaign domain.Campaign, role domain.Role, label string) domain.Principal {
-	t.Helper()
-
-	created, err := s.CreatePrincipal(t.Context(), domain.Principal{
-		CampaignID: campaign.ID,
-		Label:      label,
-		Role:       role,
-		TokenHash:  "hash-" + label,
-		TokenHint:  "test",
-		CreatedAt:  fixedNow,
-	})
-	if err != nil {
-		t.Fatalf("CreatePrincipal(%q): %v", label, err)
-	}
-	return created
 }
 
 func mustIssue(t *testing.T, backend auth.Backend, cfg auth.Config, campaign domain.Campaign, role domain.Role, label string) auth.Issued {

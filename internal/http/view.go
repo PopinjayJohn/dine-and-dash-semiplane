@@ -209,6 +209,12 @@ type editorView struct {
 	Page renderedPage
 
 	Form editorForm
+
+	// History is the page's revisions, newest first, and it is empty for a page
+	// that has never been edited through the wiki. A DM who archived a page a
+	// fortnight ago and wants it back is standing in an editor with an empty list
+	// and no way to ask again, so the list is here for them and for nobody else.
+	History []revisionRow
 }
 
 // editorForm is the form, and every field is either a value the browser must send
@@ -279,6 +285,66 @@ type conflictView struct {
 // would be a preview they turned off.
 type previewProblem struct {
 	why string
+}
+
+// // revisionRow is one revision, as the history list shows it.
+type revisionRow struct {
+	// Rev is the number, and it is the number the restore form posts back. The
+	// store's numbering is the authority and this is a copy of it.
+	Rev int
+
+	// CreatedAt is RFC 3339 in UTC, for the same reason the page's `updated` is.
+	CreatedAt string
+
+	// Message is the note the save carried, and it is empty more often than not: a
+	// player saving their own notes is not writing a changelog.
+	Message string
+}
+
+// usersView is the campaign's principals.
+//
+// It carries a `shell` and not a `page`, because there is no page: a list of
+// people is not a document, it is the only view in this application whose subject
+// is not a page, and giving it the page template would have meant inventing a
+// `domain.Page` for a list of principals.
+type usersView struct {
+	shell
+
+	// Fresh is the link just minted, and it is empty on every other request. The
+	// template says so on the page, because a DM who assumes they can come back for
+	// it is holding a promise the wiki cannot keep.
+	Fresh string
+
+	List []principalRow
+	Form usersForm
+}
+
+// usersForm is the one form's fields: an action, a label, a role and a principal
+// id, which is four inputs in two shapes and so is one type rather than two.
+type usersForm struct {
+	Action string
+	CSRF   string
+}
+
+// principalRow is one person, as the page shows them.
+//
+// No token, no hash, no hint: the label the DM typed is what identifies a row to
+// the person reading the list, and a four-character token fingerprint in a list of
+// six people at a table is a thing to leak rather than a thing to help.
+type principalRow struct {
+	ID    string
+	Label string
+	Role  string
+
+	// Revoked is a fact about the row rather than a computed flag, because a
+	// revoked principal is still a row and a DM needs to see it: "they cannot get
+	// in" and "they were never here" are different questions.
+	Revoked bool
+
+	// LastUsed is a date and "never" is not-a-date, because a column of "never" is
+	// more useful than an empty one when the question is "has this link ever
+	// worked".
+	LastUsed string
 }
 
 // # The tree

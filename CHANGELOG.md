@@ -44,8 +44,44 @@
   second vault per campaign, and opens one on demand for a campaign added since
   the server started.
 
+- **`?users=1`: the campaign's principals, and the button that mints a link.**
+  §10 says the DM clicks "new player link" and the plaintext is shown *once*,
+  and nothing in M0 through M8 had a button to click — the missing half of what a
+  DM needs to hand somebody a link.
+- **The minted link is shown once and only once.** The response is a 303 to the
+  page with the link on it, and the page says it will not be shown again. The
+  store keeps only a hash either way, so a second chance does not exist to give.
+- **The list shows no token, no hash and no hint.** Four characters of a 32-byte
+  credential is a fingerprint worth having in a list of six people at a table; the
+  label the DM typed is what identifies a row to the person reading it.
+- **The users page and the minting are DM-only, and a player gets a 403** — the
+  URL is one a DM hands out, and a player who has found it knows the campaign has
+  players, which is not worth a not-found and a 403 says what is wrong.
+- **A DM cannot revoke their own link**, which is one click away from locking every
+  player out of a campaign with no way back in but the data directory.
+- **A revocation of somebody in another campaign is a 404**, because a revocation
+  is a write on a row and a row in another campaign is not this DM's to end.
+- **The four page tools are on the editor page** — rename, archive, purge, restore
+  — because a DM who wants to rename a page is standing in its editor. They are
+  POSTs to the editor's own URL with an `op` *field*, and the field is checked
+  before the save.
+- **A purge asks for a typed confirmation** and the page says what it loses, in
+  three words: "There is no bringing it back". A browser's `confirm()` dialog is
+  suppressed by a prefetch, is not announced by a screen reader, and a DM who has
+  pressed Enter twice has a page they cannot get back.
+- **The history is listed with the numbers the restore form posts back**, and a
+  restore is a save, so it cannot overwrite a page that changed since the history
+  panel was drawn.
+
 ### Fixed
 
+- **A page tool was silently a save.** `?edit=1&op=purge` arrived with no
+  `markdown` field and no ETag, so the save reported a conflict with itself and a
+  DM's purge button appeared to be a save that cannot be saved. The op is read from
+  the form and checked before the mode, because a tool is a different verb on the
+  same URL and the more specific one has to win.
+- **A templ component's early `return` is not an early exit**, so the purge tool
+  drew a button on a player's editor after being told they are not a DM.
 - **The preview rendered the frontmatter as prose.** The handler had the whole
   file's bytes and the renderer wants the body, so a preview put an `<hr>` where
   the `---` fences were and a heading out of the `title:` line. The preview is now

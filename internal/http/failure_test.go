@@ -49,6 +49,20 @@ func (b brokenStore) OwnerExists(context.Context, string, string) (bool, error) 
 	return false, b.out("OwnerExists")
 }
 
+func (b brokenStore) ListPrincipals(context.Context, string) ([]domain.Principal, error) {
+	return nil, b.out("ListPrincipals")
+}
+
+func (b brokenStore) PrincipalByID(context.Context, string) (domain.Principal, bool, error) {
+	return domain.Principal{}, false, b.out("PrincipalByID")
+}
+
+func (b brokenStore) RevokePrincipal(context.Context, string) error { return b.out("RevokePrincipal") }
+
+func (b brokenStore) AppendAudit(context.Context, domain.AuditEntry) (domain.AuditEntry, error) {
+	return domain.AuditEntry{}, b.out("AppendAudit")
+}
+
 func (b brokenStore) FindPageByAlias(context.Context, string, string, domain.Principal) (domain.Page, bool, error) {
 	return domain.Page{}, false, b.out("FindPageByAlias")
 }

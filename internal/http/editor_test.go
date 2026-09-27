@@ -21,6 +21,31 @@ import (
 // attribute without fighting a raw string's backtick.
 func actionAttr(url string) string { return `action="` + url + `"` }
 
+// between is the text between a prefix and a suffix, for a test reading a rendered
+// value out of a URL or a form. A test that scraped markup and posted the escape
+// would get a conflict on every save, which is the right answer to the wrong
+// request.
+func between(t *testing.T, body, prefix, suffix string) string {
+	t.Helper()
+
+	_, after, found := strings.Cut(body, prefix)
+	if !found {
+		t.Fatalf("there is no %s in:\n%s", prefix, body)
+	}
+	if suffix == "" {
+		// To the end of the line, which is what a query parameter at the end of a
+		// redirect is. `strings.Cut` with an empty separator is *not* that -- it
+		// reports "not found" -- and a test that read the whole remainder either
+		// way would be testing a helper rather than a route.
+		return html.UnescapeString(after)
+	}
+	value, _, found := strings.Cut(after, suffix)
+	if !found {
+		t.Fatalf("the %s is not closed:\n%s", prefix, body)
+	}
+	return html.UnescapeString(value)
+}
+
 // etagIn is the ETag a rendered form carries, so a test sends back the one the
 // browser would rather than one it invented.
 var etagIn = regexp.MustCompile(`name="etag" value="([^"]*)"`)

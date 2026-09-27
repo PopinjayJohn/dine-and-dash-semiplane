@@ -90,6 +90,12 @@ type Config struct {
 	// and a Config and has no state of its own.
 	Redeemer auth.Redeemer
 
+	// Minter issues a share link, for the users page. It is a separate field from
+	// the redeemer because the two answer different questions — "may this be a
+	// session" and "may this person be a principal" — and a caller that had to
+	// reach through the redeemer to mint one would be reaching past the gate.
+	Minter auth.Minter
+
 	// EditorFor returns the writer for a campaign, and it is a function because the
 	// writer needs a vault and a vault is a directory -- which `wiki serve` has
 	// open per campaign and this package has no business opening.
@@ -99,6 +105,11 @@ type Config struct {
 	// is an editor and a 500-entry cache; a DM with a dozen campaigns over a year
 	// has a dozen of them.
 	EditorFor func(campaign domain.Campaign) (*edit.Editor, error)
+
+	// BaseURL is the origin share links are built against, and it is what the
+	// users page builds a link from — not a request's `Host`, for the reason
+	// `auth.Config.BaseURL` gives.
+	BaseURL string
 
 	// Hub is the SSE fan-out, and it is required rather than optional.
 	//
@@ -172,6 +183,23 @@ type Store interface {
 	// CampaignBySlug resolves the slug in a URL. A slug that is not a campaign
 	// is `store.ErrNotFound` and the route answers 404.
 	CampaignBySlug(ctx context.Context, slug domain.Slug) (domain.Campaign, error)
+
+	// ListPrincipals returns a campaign's principals, for the users page. It is a
+	// DM-only caller's use and the page checks the role itself: a principal list is
+	// not a page's audience, so it has no decision and pretending otherwise would put
+	// a fifth field in the resolver for a question with two answers.
+	ListPrincipals(ctx context.Context, campaignID string) ([]domain.Principal, error)
+
+	// PrincipalByID is one of them, and it is how a revocation checks that the row
+	// it is about is in *this* campaign. A revocation is a write, and a write on
+	// another campaign's row is not this DM's.
+	PrincipalByID(ctx context.Context, id string) (domain.Principal, bool, error)
+
+	// RevokePrincipal ends a principal's access, and AppendAudit records that it
+	// happened. The audit row is written by the caller because the page is where
+	// the reason is known.
+	RevokePrincipal(ctx context.Context, id string) error
+	AppendAudit(ctx context.Context, e domain.AuditEntry) (domain.AuditEntry, error)
 
 	// OwnerExists answers "is this principal bound to this character page", and
 	// takes the *character's* page id rather than the page being decided about.
@@ -333,6 +361,10 @@ func New(cfg Config) (http.Handler, error) {
 		// lands with nothing else to read: every page they may see. The editor for a
 		// new page hangs off it as a query, because a create has no path yet and a
 		// path segment would be a name the vault could not also use.
+		//
+		// `?users=1` is the same root and not a path: `users` is exactly the kind
+		// of page a DM writes, and a path segment here would be a name the vault
+		// could not also use.
 		c.Get("/", a.browse)
 		c.Post("/", a.rootPost)
 

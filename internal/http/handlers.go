@@ -75,10 +75,15 @@ func (a *app) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// `?new=1` is the editor for a page that does not exist yet, and it hangs off
-	// the root because a create has no path to hang off.
-	if r.URL.Query().Has("new") {
+	// `?new=1` is the editor for a page that does not exist yet, and `?users=1` is
+	// the campaign's principals. Both hang off the root because a create has no
+	// path to hang off and a list of people is not a page.
+	switch {
+	case r.URL.Query().Has("new"):
 		a.newPage(w, r)
+		return
+	case r.URL.Query().Has(usersQuery):
+		a.usersPage(w, r)
 		return
 	}
 
@@ -327,7 +332,7 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.clearSessionCookie(w)
-	a.redirect(w, http.StatusSeeOther, campaignURL(req.Campaign.Slug))
+	a.redirect(w, campaignURL(req.Campaign.Slug))
 }
 
 // noticeShell is the shell a notice page is drawn in.
@@ -502,14 +507,18 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, status int, view te
 	_, _ = w.Write(body)
 }
 
-// redirect is a redirect, and it is always 303.
+// redirect is a redirect, and it is always a 303.
 //
 // 303 rather than 302 so that a browser follows it with a GET whatever method
 // arrived: a POST answered with 302 is re-sent as a POST by some clients, and a
 // logout that is re-sent is a logout that runs twice.
-func (a *app) redirect(w http.ResponseWriter, status int, to string) {
+//
+// The status is not a parameter. Every redirect in this package is a 303, and a
+// second argument is a 302 somebody eventually passes -- which is the kind of small
+// convenience that produces a double submission on a logout.
+func (a *app) redirect(w http.ResponseWriter, to string) {
 	w.Header().Set("Location", to)
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusSeeOther)
 }
 
 // rawURL is where a page's markdown is, and streamURL where its stream is. Both are

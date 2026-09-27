@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
@@ -46,11 +47,14 @@ import (
 // path: `/c/<slug>/new` would be a page path, and a DM with a page called `new`
 // would find that their campaign root's create button edits it instead.
 func (a *app) rootPost(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Has("new") {
+	switch {
+	case r.URL.Query().Has("new"):
 		a.savePage(w, r, "", true)
 		return
-	}
-	if r.URL.Query().Has("preview") {
+	case r.URL.Query().Has(usersQuery):
+		a.usersPost(w, r)
+		return
+	case r.URL.Query().Has("preview"):
 		a.preview(w, r, "", true)
 		return
 	}
@@ -71,6 +75,25 @@ func (a *app) pagePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	// **The tool is checked before the save**, because a tool is a different verb
+	// on the same URL and the more specific one has to win. The other order is a
+	// silent one: the tool's form arrives with no `markdown` field and no ETag, so
+	// the save reports a conflict with itself, and a DM's "purge" button appears to
+	// be a save that cannot be saved. That is what happened, and
+	// `TestAPurgeIsNotOfferedWithoutSayingWhatItLoses` is where it was found.
+	// The op is a *form field* and not a query parameter, and that is deliberate:
+	// a URL a DM bookmarks should keep the same verb, and a field cannot be lost by
+	// an edit to the query. The dispatcher therefore reads the body before it looks
+	// at anything, and a GET -- which has no body -- never sees one.
+	case r.FormValue("op") != "":
+		path, ok := pagePathFromURL(chi.URLParam(r, "*"))
+		if !ok {
+			a.notFound(w, r)
+			return
+		}
+		a.pageTool(w, r, path)
+		return
+
 	case r.URL.Query().Has("edit"):
 		path, ok := pagePathFromURL(chi.URLParam(r, "*"))
 		if !ok {
@@ -158,8 +181,9 @@ func (a *app) editPage(w http.ResponseWriter, r *http.Request, path string) {
 	w.Header().Set("ETag", etagOf(hash))
 
 	a.renderEditor(w, r, http.StatusOK, editorView{
-		shell: a.editorShell(req, page),
-		Page:  renderedPage{Path: page.Path, Title: page.Title, Kind: page.Type.String()},
+		shell:   a.editorShell(req, page),
+		Page:    renderedPage{Path: page.Path, Title: page.Title, Kind: page.Type.String()},
+		History: a.revisionsFor(r, writer, page.Path),
 		Form: editorForm{
 			Action:   pageURL(req.Campaign, page.Path) + "?edit=1",
 			Path:     page.Path,
@@ -207,6 +231,33 @@ func (a *app) newPage(w http.ResponseWriter, r *http.Request) {
 			Preview:  "/c/" + req.Campaign.Slug.String() + "/?preview=1",
 		},
 	})
+}
+
+// revisionsFor is a page's history for the editor's list, and an empty list for a
+// page that has never been edited here — which is a *miss* rather than a failure.
+//
+// The history is read as the DM rather than as the caller, because a player
+// editing their own page may see the list: their own revisions are their own
+// prose, and a page's history is not an audience question the way its secrets
+// are. The *restore* is gated; looking is not.
+func (a *app) revisionsFor(r *http.Request, writer *edit.Editor, path string) []revisionRow {
+	revisions, err := writer.History(r.Context(), path)
+	if err != nil {
+		a.log.LogAttrs(r.Context(), slog.LevelWarn, "listing a page's history",
+			slog.String("error", err.Error()),
+			slog.String("path", path))
+		return nil
+	}
+
+	rows := make([]revisionRow, 0, len(revisions))
+	for _, revision := range revisions {
+		rows = append(rows, revisionRow{
+			Rev:       revision.Rev,
+			CreatedAt: revision.CreatedAt.UTC().Format(time.RFC3339),
+			Message:   revision.Message,
+		})
+	}
+	return rows
 }
 
 // renderEditor is the editor page, and it is one function so that the create form

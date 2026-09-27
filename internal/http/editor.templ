@@ -53,6 +53,11 @@ templ editorPage(v editorView) {
 					} else {
 						Saved.
 					}
+					// A button nobody presses is a feature nobody has, and the
+					// missing half of this milestone is a button.
+					if v.IsDM && v.Campaign.Root != "" {
+						<a href={ usersURL(v.Campaign) }>Who has access</a>
+					}
 				</p>
 			</header>
 			<main class="editor" id="editor">
@@ -83,6 +88,9 @@ templ editorPage(v editorView) {
 									<a href={ v.Campaign.Root }>Back to the campaign</a>
 								}
 							</p>
+							if !v.Form.Creating {
+								@pageTools(v)
+							}
 						</div>
 						<div class="editor-preview">
 							<h2 class="visually-hidden">Preview</h2>
@@ -105,6 +113,102 @@ templ editorPage(v editorView) {
 			</footer>
 		</body>
 	</html>
+}
+
+// pageTools is the DM's half of an editor: rename, archive, purge, and the
+// history with a restore per revision.
+//
+// All four are POSTs to the editor's own URL with an `op`, and all four are
+// behind the write gate in the handler. They are *here* rather than on a separate
+// page because a DM who wants to rename a page is standing in its editor, and a
+// page that gathers "the things you can do to this page" in one place is a page
+// that needs to be found first.
+templ pageTools(v editorView) {
+	<section class="tools">
+		<h2>Move it, or be rid of it</h2>
+		if v.IsDM {
+			<form method="post" action={ v.Form.Action } class="tool">
+				<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+				<input type="hidden" name="op" value="rename"/>
+				<label for="to">Rename to</label>
+				<input type="text" id="to" name="path" value={ v.Form.Path } autocomplete="off"/>
+				<p class="editor-hint">
+					Every link in the campaign that points here is followed to the new
+					address. Nothing is left behind pointing at the old one.
+				</p>
+				<button type="submit">Rename</button>
+			</form>
+		}
+		<form method="post" action={ v.Form.Action } class="tool">
+			<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+			<input type="hidden" name="op" value="archive"/>
+			<p>
+				<strong>Archive</strong> removes the page and keeps its history, so you
+				can bring it back.
+			</p>
+			<button type="submit">Archive</button>
+		</form>
+		@purgeTool(v)
+	</section>
+
+	if len(v.History) > 0 {
+		<section class="tools">
+			<h2>History</h2>
+			<p class="editor-hint">
+				Revision N is what the page said before the edit that made N+1. Restoring
+				one is a save, so it keeps what you had and can itself be undone.
+			</p>
+			<ul class="revisions">
+				for _, revision := range v.History {
+					<li>
+						<span class="revision-number">Revision { revision.Rev }</span>
+						<time datetime={ revision.CreatedAt }>{ revision.CreatedAt }</time>
+						if revision.Message != "" {
+							<span class="revision-message">{ revision.Message }</span>
+						}
+						<form method="post" action={ v.Form.Action } class="tool">
+							<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+							<input type="hidden" name="op" value="restore"/>
+							<input type="hidden" name="rev" value={ revision.Rev }/>
+							<input type="hidden" name="etag" value={ v.Form.ETag }/>
+							<button type="submit">Put this back</button>
+						</form>
+					</li>
+				}
+			</ul>
+		</section>
+	}
+}
+
+// purgeTool is the one irreversible thing in the editor, so it is its own
+// component and it says what goes.
+//
+// `TestAPurgeIsNotOfferedWithoutSayingWhatItLoses` is the test, and the typed
+// confirmation in the handler is the other half: a browser's `confirm()` dialog
+// is suppressed by a prefetch, is not announced by a screen reader, and a DM who
+// has pressed Enter twice has a page they cannot get back.
+templ purgeTool(v editorView) {
+	// An `if` and not an early `return`: a templ component's children are written
+	// where they are written, and a `return` in the middle of one does not skip the
+	// rest of the markup -- it stops writing *this* element, which is not the same
+	// thing and produced a purge button on a player's editor.
+	if v.IsDM {
+		@purgeToolBody(v)
+	}
+}
+
+templ purgeToolBody(v editorView) {
+	<form method="post" action={ v.Form.Action } class="tool tool-danger">
+		<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+		<input type="hidden" name="op" value="purge"/>
+		<p>
+			<strong>Purge</strong> throws the page, its history and every link to it
+			away. There is no bringing it back and the file is not kept.
+		</p>
+		<label for="confirm">Type the page's path to confirm</label>
+		<input type="text" id="confirm" name="confirm" value={ v.Form.Path } autocomplete="off"/>
+		<button type="submit">Purge for good</button>
+	</form>
 }
 
 // conflict is the three-way diff, side by side.
@@ -162,4 +266,113 @@ templ diffColumn(heading, text string) {
 // pane they stopped looking at.
 templ previewProblemView(p previewProblem) {
 	<p class="editor-hint">{ p.why }</p>
+}
+
+// users is the campaign's principals, for a DM.
+//
+// The link a DM has just minted is at the top, in a box that is a different
+// colour from everything else, and it is the *only* time it will be there. The
+// text under it says so, because a DM who misses it and assumes they can come
+// back for it will be holding a promise the wiki cannot keep — and the
+// revocation button on the row is the recovery.
+templ users(v usersView) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ v.Title }</title>
+			<link rel="stylesheet" href={ stylesheetPath }/>
+		</head>
+		<body>
+			<a class="skip-link" href="#content">Skip to the page</a>
+			<div class="shell">
+				<nav class="sidebar" aria-label="Campaign">
+					<a class="brand" href={ v.Campaign.Root }>{ v.Campaign.Name }</a>
+					<h2>Session</h2>
+					<form method="post" action={ v.Form.Action }>
+						<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+						<button type="submit">Log out</button>
+					</form>
+				</nav>
+				<main class="main" id="content">
+					@usersBody(v)
+				</main>
+			</div>
+			<footer class="footer">
+				<p>{ v.Footer.Version.Version }</p>
+			</footer>
+		</body>
+	</html>
+}
+
+templ usersBody(v usersView) {
+	<h1 class="page-title">Who has access</h1>
+	<p class="page-meta">
+		<a href={ v.Campaign.Root }>Back to the campaign</a>
+	</p>
+
+	if v.Fresh != "" {
+		<div class="fresh-link" role="status">
+			<h2>Here is the link. Copy it now.</h2>
+			<p>
+				<strong>It will not be shown again.</strong> The wiki keeps only a
+				fingerprint of it, so nobody — including this page, in a minute —
+				can show it to you. If you lose it, take this person's access back
+				and hand them a new one.
+			</p>
+			<pre>{ v.Fresh }</pre>
+		</div>
+	}
+
+	<h2>People</h2>
+	if len(v.List) == 0 {
+		<p class="tree-empty">Nobody yet. The link below is the first one.</p>
+	} else {
+		<ul class="users">
+			for _, person := range v.List {
+				<li class={ userClass(person) }>
+					<span class="user-label">{ person.Label }</span>
+					<span class="user-role">{ person.Role }</span>
+					<span class="user-last">Last used { person.LastUsed }</span>
+					if person.Revoked {
+						<span class="user-revoked">revoked</span>
+					} else {
+						<form method="post" action={ v.Form.Action } class="user-revoke">
+							<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+							<input type="hidden" name="action" value="revoke"/>
+							<input type="hidden" name="id" value={ person.ID }/>
+							<button type="submit">Take this access back</button>
+						</form>
+					}
+				</li>
+			}
+		</ul>
+	}
+
+	<h2>Hand somebody a link</h2>
+	<form method="post" action={ v.Form.Action } class="new-user">
+		<input type="hidden" name="csrf" value={ v.Form.CSRF }/>
+		<input type="hidden" name="action" value="new"/>
+		<label for="label">Who is it for?</label>
+		<input type="text" id="label" name="label" required autocomplete="off"
+			placeholder="Sam (Ranger)"/>
+		<label for="role">What are they?</label>
+		<select id="role" name="role">
+			<option value="player" selected>A player</option>
+			<option value="dm">A second DM</option>
+		</select>
+		<button type="submit">Mint the link</button>
+	</form>
+	<p class="editor-hint">
+		A link is a password for the whole campaign. Give one per person, hand it over
+		privately, and take it back the moment somebody leaves the table.
+	</p>
+}
+
+templ userClass(p principalRow) {
+	if p.Revoked {
+		return "user is-revoked"
+	}
+	return "user"
 }

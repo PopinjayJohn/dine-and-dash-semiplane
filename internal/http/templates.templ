@@ -198,7 +198,12 @@ templ tableOfContents(entries []render.Heading) {
 templ browse(v browseData) {
 	@layout(v.shell) {
 		<h1 class="page-title">{ v.Campaign.Name }</h1>
-		<p class="page-meta">{ pluralPages(v.Count) }</p>
+		<p class="page-meta">
+			{ pluralPages(v.Count) }
+			if v.IsDM {
+				<a href={ usersURL(v.Campaign) }>Who has access</a>
+			}
+		</p>
 		if v.HasIntro {
 			@intro(v.Intro)
 		}

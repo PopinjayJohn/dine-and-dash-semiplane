@@ -96,7 +96,7 @@ func (a *app) redeem(next http.Handler) http.Handler {
 			return
 		}
 
-		a.redirect(w, http.StatusSeeOther, a.afterRedeem(r, redeemed.RedirectTo))
+		a.redirect(w, a.afterRedeem(r, redeemed.RedirectTo))
 	})
 }
 
