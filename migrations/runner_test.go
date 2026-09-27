@@ -230,7 +230,7 @@ func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 	// up in sqlite_master like any other, so the two indexes are checked here
 	// rather than by a query that would silently succeed against a table that
 	// was never created.
-	for _, name := range []string{"pages_fts", "pages_secrets_fts"} {
+	for _, name := range []string{"pages_campaign_visibility"} {
 		if slices.Contains(got, name) {
 			t.Errorf("%q survived the down migration", name)
 		}
@@ -238,7 +238,7 @@ func TestDownRollsBackTheVersionItIsGiven(t *testing.T) {
 
 	// Still here: what the version below it created, which this down migration
 	// was never asked to touch.
-	for _, name := range []string{"campaigns", "pages", "page_links", "page_targets", "schema_migrations"} {
+	for _, name := range []string{"campaigns", "pages", "page_links", "page_targets", "pages_fts", "pages_secrets_fts", "schema_migrations"} {
 		if !slices.Contains(got, name) {
 			t.Errorf("the down migration removed %q, which belongs to an earlier version", name)
 		}

@@ -30,6 +30,11 @@ func TestUpsertPageStoresEveryField(t *testing.T) {
 	want.ID = stored.ID
 	want.CreatedAt = testTime
 	want.UpdatedAt = testTime
+	// An audience the caller left out comes back as `players`, filled in the
+	// same way a blank id and blank timestamps are. The value is the column's
+	// default and the frontmatter's default, and returning the row as stored is
+	// worth more than returning the row as asked for.
+	want.Visibility = domain.VisibilityPlayers
 
 	if stored != want {
 		t.Errorf("UpsertPage stored %+v, want %+v", stored, want)
@@ -78,6 +83,20 @@ func TestUpsertPageRefusesWhatDomainRefuses(t *testing.T) {
 			name:    "a page with no campaign is refused",
 			mutate:  func(p *domain.Page) { p.CampaignID = "" },
 			wantErr: "page campaign ID is required",
+		},
+		{
+			// A fourth audience is refused rather than defaulted. A level the
+			// application invents at write time is a level the read predicate
+			// does not know, and a page nobody can be shown is better than a
+			// page everybody can.
+			name:    "an invented visibility level is refused",
+			mutate:  func(p *domain.Page) { p.Visibility = domain.Visibility("everyone") },
+			wantErr: "page visibility",
+		},
+		{
+			name:    "a misspelt visibility level is refused",
+			mutate:  func(p *domain.Page) { p.Visibility = domain.Visibility("plyers") },
+			wantErr: "page visibility",
 		},
 	}
 

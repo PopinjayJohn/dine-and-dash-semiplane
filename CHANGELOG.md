@@ -24,6 +24,34 @@ House rules:
 
 ### Added
 
+- **A page's audience is now recorded on its row.** M4's sync already read every
+  `visibility` key, refused a value it did not recognise, and then threw the
+  readable ones away — a security-relevant field validated and discarded, which
+  left `visibility: dm-only` pages indexed as pages anyone could read. A read
+  predicate has to filter on something, and the `visibility` column is that
+  something. A blank audience is `players`, which is both the frontmatter default
+  and the column default, and an audience the application does not recognise is
+  refused rather than defaulted.
+- **The read predicate, written once in SQL** (`internal/store/acl.go`) and used
+  by both search indexes. A DM reads every page in the campaign; a player reads
+  the `players` pages and nothing else; a principal with no role reads the
+  `players` pages and nothing else, because a caller that forgot to look a
+  principal up gets the safe answer rather than a panic.
+- The ownership test is present, explicit and **false** for now (`1 = 0`),
+  because the table that answers it does not exist yet. That is the fail-closed
+  direction: leaving the branch out would silently widen every `dm-and-owner`
+  page, and admitting every player to one would be a disclosure the moment a DM
+  wrote one. A test asserts the branch is still there, which is what stops it
+  being "tidied away" by somebody who has not noticed the table is missing.
+- The audience test names the two levels that admit somebody and **does not name
+  `dm-only` at all**, because that is the one level no clause of it may admit and
+  the only way to write it down would be to exclude it — and an exclusion
+  somebody can delete is not a control.
+- A change to a page's audience re-indexes it. The audience is compared by name
+  alongside the other derived fields rather than being left to the content hash,
+  because it is a security field and a hash that happens to change when the file
+  does is not the same promise.
+
 - Two FTS5 indexes and the store methods that keep them in step with the pages
   table, so search reads a projection rather than scanning bodies: `pages_fts`
   for text nobody is barred from seeing, and `pages_secrets_fts` holding only

@@ -79,6 +79,19 @@ type Page struct {
 	Title string
 	Type  PageType
 
+	// Visibility is who may read the page, of the three levels in
+	// visibility.go. A zero value means `players`, which is the column's
+	// default, the frontmatter's default, and the only safe default: a DM who
+	// has never thought about visibility has a campaign every player may read,
+	// and a caller that has not decided yet should not be inventing an audience
+	// that is stricter than anybody asked for.
+	//
+	// The column arrived before access control enforced it, because a search
+	// cannot filter by a field that is not stored and M4's sync was already
+	// reading a page's visibility and then throwing it away. Enforcing it is
+	// the next milestone; recording it is this one. See ADR 0015.
+	Visibility Visibility
+
 	// Frontmatter is the canonical YAML block with the fences removed and
 	// unknown keys preserved verbatim. It is text here on purpose: parsing it
 	// is the vault's job, and a serialisation round trip that drops a key the
@@ -126,8 +139,29 @@ func (p Page) Validate() error {
 		return required("page content hash")
 	}
 
+	// A blank audience is `players`; anything else has to be one of the three.
+	// Validating here rather than leaving it to the CHECK constraint means the
+	// caller gets an error naming the value instead of a constraint message
+	// from the driver, and it means a caller cannot persist a fourth level.
+	if p.Visibility != "" && !p.Visibility.Valid() {
+		return oneOf("page visibility", p.Visibility.String(), levelNames(visibilities)...)
+	}
+
 	if p.RendererVersion < 0 {
 		return fmt.Errorf("page renderer version: %d, must not be negative", p.RendererVersion)
 	}
 	return nil
+}
+
+// Audience returns who may read the page, resolving the blank case.
+//
+// It is a method rather than a field default because Go has no field defaults,
+// and a caller reading `page.Visibility` without knowing the convention gets the
+// empty string and has to know that means `players`. Having to call a method is
+// the reminder.
+func (p Page) Audience() Visibility {
+	if p.Visibility == "" {
+		return VisibilityPlayers
+	}
+	return p.Visibility
 }

@@ -111,11 +111,17 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 		return p, nil //nolint:nilerr // unreadable frontmatter is a skip: the DM fixes it, nobody waits
 	}
 
-	// The visibility is read and checked before anything is derived. A page
-	// whose audience is unknown must not reach the index at all, because a row
-	// that exists is a row a later render may treat as `players`.
-	if _, visibilityErr := doc.Visibility(); visibilityErr != nil {
-		p.refusal = &Refusal{Path: pagePath, Reason: visibilityErr.Error()}
+	// The visibility is read and checked before anything is derived, and then
+	// recorded on the row. A page whose audience is unknown must not reach the
+	// index at all, because a row that exists is a row a later render may treat
+	// as `players`. And a page whose audience *is* known has to carry it, or the
+	// read predicate has nothing to filter on and every `dm-only` page is a
+	// `players` page: M4 read this key, refused the unreadable values and then
+	// threw the readable one away, which is a security field validated and
+	// discarded. See ADR 0015.
+	visibility, err := doc.Visibility()
+	if err != nil {
+		p.refusal = &Refusal{Path: pagePath, Reason: err.Error()}
 		return p, nil //nolint:nilerr // an unreadable audience is a refusal, not a failure: the file is fine
 	}
 
@@ -134,6 +140,7 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 		Path:            pagePath,
 		Title:           titleOf(doc, pagePath),
 		Type:            pageTypeOf(doc),
+		Visibility:      visibility,
 		Frontmatter:     frontmatter,
 		Body:            doc.Body(),
 		ContentHash:     vault.Hash(data),
@@ -231,6 +238,7 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 	if indexed.ContentHash != p.page.ContentHash ||
 		indexed.Title != p.page.Title ||
 		indexed.Type != p.page.Type ||
+		indexed.Visibility != p.page.Visibility ||
 		indexed.Frontmatter != p.page.Frontmatter ||
 		indexed.Body != p.page.Body ||
 		indexed.RendererVersion != p.page.RendererVersion {
