@@ -107,6 +107,10 @@ var commands = map[string]command{
 		summary: "serve the wiki over HTTP, and watch the vaults for changes",
 		run:     runServe,
 	},
+	"backup": {
+		summary: "write a timestamped archive of the database and the vault",
+		run:     runBackup,
+	},
 	"users": {
 		summary: "mint, revoke and list the share links for a campaign",
 		run:     runUsers,

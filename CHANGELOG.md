@@ -475,6 +475,39 @@
   command whose whole input is one word cannot be written with a parser that rejects
   positionals — and "parse then check `NArg`" is two rules in two functions, which is
   how a command ends up accepting two arguments when it takes one.
+- **`wiki backup [--prune]`, and `TestBackupsRestoreIdenticalIndex`.** The test is
+  required by `docs/spec.md` §14, by `docs/security.md` and by [ADR 0012], and it has
+  not existed because there was no backup to take. The archive is a gzipped tar of
+  the data directory with no manifest and no index of ours, because ADR 0011's sentence
+  is that a restore on a different machine is a file copy — a DM whose wiki will not
+  start does not have to find this binary to get their campaign back.
+- **The database is copied with `VACUUM INTO`, not `cp`, and not the Online Backup
+  API.** A `cp` of a WAL database gives you a main file consistent with *some*
+  instant and no `-wal` beside it: a database that opens and then quietly disagrees
+  with the vault, which is the one failure a backup must not have. The Online Backup
+  API is the right primitive and `modernc.org/sqlite` does not expose it through
+  `database/sql`, so `VACUUM INTO` is the equivalent — the same read transaction, a
+  *fresher* file, and a busy timeout the API would have had anyway. It also fails
+  fast without one, and `SQLITE_BUSY` sends a DM to a SQLite manual at the moment
+  their campaign is in it, so the error says "is a server running against this data
+  directory?".
+- **A backup does not take the serve lock, and the first draft that did was wrong.**
+  A backup that waits for the server to exit is a backup a DM cannot take *while
+  playing*, which is the only time they think about taking one. The collision the
+  lock would have prevented is prevented at the only place it can be: `O_EXCL` makes
+  the name reservation atomic and the caller retries, which is a *stronger* guarantee
+  because it holds between two backups, which the lock never did.
+- **The lock file is not archived.** `locks/serve.lock` is a fact about the process
+  that held it; restoring one is restoring a two-minute stale wait.
+- **`--prune` keeps the seven most recent by filename, not by modification time.**
+  The name *is* the timestamp, and two sources of truth for "which is newest" is a
+  sort that disagrees with its own directory listing. It also does not touch a file
+  that is not an archive, and the test asserts that — a DM's own notes beside
+  `backups/` are not the tool's business.
+- [ADR 0012](docs/adr/0012-migration-runner-in-repo.md) is the third document that
+  names the backup test, and it names it as one of the tools for the question
+  "`wiki reindex --full` and `TestBackupsRestoreIdenticalIndex` are this project's
+  tools for that".
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

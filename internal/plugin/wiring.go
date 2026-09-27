@@ -124,6 +124,7 @@ func (r *Registry) AddCommand(command Command) error {
 // how a database's schema is applied, so a plugin could have claimed the name and
 // taken it. Nothing stopped it: the test this comment named was never written.
 var coreCommands = []string{
+	"backup",
 	"help",
 	"migrate",
 	"reindex",
