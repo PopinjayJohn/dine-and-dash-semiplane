@@ -2,6 +2,54 @@
 
 ### Added
 
+- **Share links, sessions, an audit log and character bindings**, and the store
+  methods that keep them. `principals`, `sessions` and `audit_log` were already in
+  the base migration, written down before any of them was needed; this milestone
+  adds the one that could not be — `principal_characters`, a table whose rows come
+  from a decision somebody makes later, about a page that may not exist yet. It is
+  also what the read predicate has been waiting for: its ownership test ships as
+  `1 = 0` because no principal owned anything, so every `dm-and-owner` page
+  belonged to no one. An empty binding table and a missing one behave the same, so
+  shipping it early changes no answer.
+- **A revocation is the flag and the sessions, in one transaction.** A player whose
+  link was pasted into a Discord channel has to be logged out *now*, and a revoke
+  that set `revoked_at` and then failed to delete the sessions would leave a
+  browser working with a link the DM believes is dead. Revocation has three
+  answers and a DM clicking a button can tell them apart: not found, already
+  revoked (a no-op, not an error — a DM who clicks twice must not be told
+  something is wrong), and revoked now. The row is flagged rather than deleted,
+  because the audit log's question is "was this link ever used" and a deleted
+  principal cannot answer it.
+- **"Everyone sign in again" is scoped to one campaign**, and a DM with two
+  campaigns cannot log out the other one's players by accident. The sessions of
+  *already*-revoked principals in that campaign are cleared too, which repairs the
+  state a failed revoke leaves.
+- **A stored session always has an expiry.** `domain.Session.Expired` treats a zero
+  expiry as "never", so a zero-valued struct is safe to ask; the store refuses to
+  *store* one, because a session with no expiry is a credential that outlives the
+  reason it was issued. The boundary is `>=`, so a session whose expiry is exactly
+  now is expired — the same rule as `Expired`, and the same direction, because
+  being wrong by the smallest possible amount is still being wrong.
+- **A principal is found by the SHA-256 of its token and never by the token**, which
+  is a property of what the method takes rather than a promise about discipline. The
+  hash is UNIQUE, so two principals sharing one token is a conflict: two accounts
+  for one credential, and a DM with two links in their list and one that does
+  nothing.
+- **A character binding is a replace, not an add**, because a binding is a statement
+  about what a player owns *now*. A player who is given a new character and loses
+  the old one has to stop reading the old one's pages on their next request, and an
+  add-only table is a table where that does not happen. A duplicate page id is one
+  binding rather than an error, because the caller is usually a sync and a sync
+  should not fail a campaign over a page bound twice.
+- All of it is **in the store contract suite**, so a second `Store` is held to the
+  same split: a link found by its hash and never by its token, a revocation that
+  ends sessions, a stored session that expires, a binding that replaces, and an
+  audit log read newest-first.
+- `OwnerExists` answers **false for a blank principal** rather than an error. A
+  request that failed to identify its caller has no principal, so nobody owns the
+  page, so the `dm-and-owner` branch of the predicate is empty. An error there
+  would turn "not logged in" into a 500 for the one caller who must not see the page.
+
 - **The sync keeps both search indexes in step.** A page is indexed from its file
   on the same pass that writes its row, and the settled check asks whether the
   index already holds what the file derives — so a page whose search rows were

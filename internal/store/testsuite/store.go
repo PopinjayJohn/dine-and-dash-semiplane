@@ -35,6 +35,20 @@ func Store(t *testing.T, factory Factory) {
 	t.Run("a target in one campaign is not found in another", func(t *testing.T) { targetsArePerCampaign(t, factory) })
 	t.Run("a page's two index rows are written, and replaced", func(t *testing.T) { indexRows(t, factory) })
 	t.Run("the index can be compared, so it can settle", func(t *testing.T) { indexSettles(t, factory) })
+	t.Run("a link is found by its hash, and never by its token", func(t *testing.T) {
+		principalIsFoundByItsTokenHash(t, factory)
+	})
+	t.Run("revoking a principal ends its sessions", func(t *testing.T) {
+		revokingAPrincipalEndsItsSessions(t, factory)
+	})
+	t.Run("revoking every principal is scoped to one campaign", func(t *testing.T) {
+		revokingEveryPrincipalIsScopedToOneCampaign(t, factory)
+	})
+	t.Run("a stored session always expires", func(t *testing.T) { aStoredSessionAlwaysExpires(t, factory) })
+	t.Run("a character binding is a replace", func(t *testing.T) { aCharacterBindingIsAReplace(t, factory) })
+	t.Run("the audit log is appended and read newest first", func(t *testing.T) {
+		theAuditLogIsAppendedAndReadNewestFirst(t, factory)
+	})
 }
 
 // roundTrip is the property every column has to satisfy: what goes in comes
