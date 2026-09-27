@@ -205,21 +205,3 @@ jobs:
 
       - name: Check
         run: ./scripts/check-changelog.sh
-
-  spike:
-    name: datastar spike
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1 # 3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - uses: actions/setup-go@v7.0.0 # b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      # The spike is a separate module under spike/, deliberately outside the
-      # application's dependency graph. This job is the "known risk" in
-      # docs/spec.md §3 staying answered: a datastar-go upgrade that changes
-      # the wire protocol fails here, not in a browser at a table.
-      - name: Spike
-        run: make spike

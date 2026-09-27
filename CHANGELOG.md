@@ -60,6 +60,18 @@
   has an ordinary URL behind it, so a blocked script costs a dropdown and a live
   page and nothing else.
 
+### Removed
+
+- **`spike/datastar/`, and the `make spike` target and the CI job that ran it.**
+  The spike was M0's answer to "is Datastar's wire format what we think it is", and
+  `internal/sse` has been the application's own since M8 — the stdlib
+  implementation, with the spike's own tests as the record that the two are
+  byte-compatible. That record has now been promoted: the golden in
+  `internal/sse/sse_test.go` is the wire format, and it is in the same module as
+  the code that writes it, so a change to one is a change to the other and a
+  reviewer reads both at once. A second module outside the application's dependency
+  graph was a risk to answer a question that is now answered inside it.
+
 ### Fixed
 
 - **The http test fixture wrote rows and no files' worth of frontmatter.** It

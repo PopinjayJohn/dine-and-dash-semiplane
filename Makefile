@@ -114,10 +114,6 @@ fuzz: ## Run every fuzz target for $(SHORT_FUZZ_TIME)
 	done; \
 	exit $$failed
 
-.PHONY: spike
-spike: ## Run the Datastar spike, a separate module under spike/
-	cd spike/datastar && go test $(TEST_FLAGS) ./...
-
 .PHONY: reindex
 reindex: ## Rebuild the index from the vault, discarding the database
 	go run ./cmd/wiki reindex --full
@@ -158,7 +154,7 @@ vet: ## Run go vet
 fmt: ## Rewrite files with gofmt and goimports
 	golangci-lint fmt
 	@gofmt=$$(GOTOOLCHAIN=go$(GO_VERSION) go env GOROOT)/bin/gofmt; \
-	"$$gofmt" -s -w $$(git ls-files '*.go' | grep -v '^spike/')
+	"$$gofmt" -s -w $$(git ls-files '*.go')
 
 .PHONY: fmt-check
 fmt-check: check-go-version ## Fail if any file is not gofmt clean. Needs no installed tools.
