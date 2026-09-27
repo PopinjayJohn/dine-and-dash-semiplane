@@ -125,7 +125,9 @@ func (r *Registry) AddCommand(command Command) error {
 // taken it. Nothing stopped it: the test this comment named was never written.
 var coreCommands = []string{
 	"backup",
+	"export",
 	"help",
+	"import",
 	"migrate",
 	"reindex",
 	"serve",

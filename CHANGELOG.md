@@ -531,6 +531,41 @@
   references nothing external, because a server that answers 200 with a
   `<script src="https://…">` in it is a server that does not work offline and nothing
   in the Go code would say so.
+- **`wiki export --zip` and `wiki import obsidian <dir>`, and
+  [ADR 0024](docs/adr/0024-an-export-is-a-vault.md) for what they move.** §6 names
+  both commands in one line and nowhere else in the spec says what either contains,
+  where its output goes, what it does with a collision or what it refuses, so the ADR
+  is mostly *choosing the questions*.
+- **An export is a vault, not a data directory.** A zip a DM emails to a player must
+  not be a file of session ids and share-link hashes; `wiki backup` is the command for
+  a data directory, and the two commands are different because the two artifacts have
+  different recipients. The archive is also **deterministic** — sorted entries,
+  timestamps at the epoch, no directory entries — so two exports of an unchanged vault
+  are byte-identical and `git diff` after an export is a diff of content.
+- **An import refuses a campaign that does not exist, and writes nothing until it has
+  shown you what it would do.** `wiki sync` *creates* a campaign for a folder that is
+  not in the database, because a vault is something a DM makes by creating a folder;
+  an import is a different verb — somebody else's directory arriving in a data
+  directory — and a mistyped `--campaign` must not leave an empty campaign behind.
+- **A collision is a list of paths, not an overwrite, and not a failure.** The rest of
+  the import is still what the DM asked for: a vault where one page has been rewritten
+  in Obsidian and forty are new should bring the forty in. The first version refused
+  the whole command over the one, which is a command a DM runs twice and cannot get
+  past. **`--force` does not exist in v1**, and its absence is a compatibility
+  promise: a flag that means "do it anyway" is a flag a DM uses before reading the
+  list.
+- **The interesting output of an import is the list of what it will *not* copy.** A DM
+  whose vault has a canvas file in it deserves to be told the canvas file was not
+  copied, rather than finding out next week when a note they expected is missing. A
+  file whose path `vault.CheckPagePath` would refuse is skipped **and named**,
+  because a file that would sit in the vault forever, invisible, is a file the DM
+  would think the import lost.
+- **Two bugs the tests found in the first draft of the import.** A collision was
+  detected and then overwritten anyway, because the copy read and wrote the same
+  path and reported ten copies having moved nothing. And the first version of the
+  overwrite test asserted that a file was not overwritten when the file had never
+  been created — a test that could not fail, found by the premise rather than the
+  code.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

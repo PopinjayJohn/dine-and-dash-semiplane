@@ -111,6 +111,14 @@ var commands = map[string]command{
 		summary: "write a timestamped archive of the database and the vault",
 		run:     runBackup,
 	},
+	"export": {
+		summary: "write a campaign's vault as a zip, for Obsidian or for a player",
+		run:     runExport,
+	},
+	"import": {
+		summary: "copy an Obsidian vault into a campaign, after showing what it would do",
+		run:     runImport,
+	},
 	"users": {
 		summary: "mint, revoke and list the share links for a campaign",
 		run:     runUsers,
