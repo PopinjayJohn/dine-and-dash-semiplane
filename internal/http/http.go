@@ -65,6 +65,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
@@ -168,6 +169,21 @@ type Config struct {
 	// The zero value renders exactly what a build without plugins rendered, so
 	// every test that does not care about plugins does not have to say so.
 	Hooks render.Hooks
+
+	// Routes are the paths the plugins mount inside the campaign group, in the
+	// plugins' `(Priority, Name)` order. They are mounted before the catch-all page
+	// route, so a plugin's first segment beats a page at the same path — see
+	// [Route] for why the answer is a route rather than a query parameter and what a
+	// plugin author can do about it.
+	//
+	// A nil slice is the same application as an empty one, and a build with no
+	// plugins never reaches [app.mountRoutes] with anything in it.
+	Routes []Route
+
+	// Events is the bus the plugins subscribe to. A nil one is a bus with no
+	// subscribers, so every publisher calls it unconditionally rather than testing a
+	// configuration field on the path of a page view.
+	Events *events.Bus
 
 	// Policies are the plugins' access rules, composed with the rights matrix and
 	// never replacing it. A nil one is the same application as an empty one, so
@@ -411,6 +427,10 @@ func New(cfg Config) (http.Handler, error) {
 		// could not also use.
 		c.Get("/", a.browse)
 		c.Post("/", a.rootPost)
+
+		// A plugin's routes, before the catch-all below, because the catch-all is
+		// `/*` and everything is behind it.
+		a.mountRoutes(c)
 
 		// A page. `?raw=1` is the same page as markdown, `?stream=1` is the same
 		// page as a stream, and `?edit=1` is the same page being edited. All

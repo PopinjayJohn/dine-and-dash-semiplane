@@ -54,6 +54,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -86,6 +87,16 @@ type Editor struct {
 	// here at all", which is a different question and the one a plugin has.
 	policies *access.Policies
 
+	// events is the bus the plugins subscribe to, and a save is the only thing in
+	// this package that publishes on it.
+	//
+	// The editor is where a page is written, so a subscriber that wanted to know
+	// when a page changed learns it here and nowhere else. The index watcher is the
+	// other writer and it publishes nothing, because a change nobody made through
+	// the wiki is a change to a file — and a subscriber told about every one of
+	// those would be a subscriber told about a `git pull`.
+	events *events.Bus
+
 	// renderers is one renderer for this campaign's previews, built on first use
 	// for the same reason the HTTP layer keeps one per campaign: a renderer holds a
 	// link resolver and a resolver belongs to a campaign.
@@ -110,6 +121,7 @@ func NewWith(v *vault.Vault, s *store.Store, campaign domain.Campaign, opts Opti
 		sync:      index.New(v, s, campaign),
 		hooks:     opts.Hooks,
 		policies:  opts.Policies,
+		events:    opts.Events,
 		renderers: map[domain.Slug]*render.Renderer{},
 	}
 }
@@ -245,6 +257,17 @@ func (e *Editor) Save(ctx context.Context, in Save) (page domain.Page, previousR
 	if err != nil {
 		return domain.Page{}, previousRev, fmt.Errorf("saving %s: reading it back: %w", checked, err)
 	}
+
+	// The save has happened: the file is written, the row is derived, and the page
+	// has been read back. Publishing here rather than after the write is what makes
+	// the event mean what it says — a subscriber that re-reads the page finds the
+	// saved text, and one that invalidates something invalidates something that is
+	// already stale.
+	//
+	// A nil bus is a bus with no subscribers, so a build with no plugins does not
+	// test anything to find that out.
+	e.events.Publish(ctx, events.Saved(e.campaign, page, in.As))
+
 	return page, previousRev, nil
 }
 

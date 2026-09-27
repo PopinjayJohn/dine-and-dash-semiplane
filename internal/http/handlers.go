@@ -13,6 +13,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 )
@@ -249,6 +250,12 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "rendering "+path, err)
 		return
 	}
+
+	// A page was served, which is the event a "most read" or "recently here"
+	// feature wants. It is published *after* the render and never consulted by it:
+	// an event is a notice, and nothing about this page's bytes may depend on whether
+	// a plugin was listening.
+	a.cfg.Events.Publish(r.Context(), events.Viewed(req.Campaign, stored, req.Principal))
 
 	view := pageData{
 		shell: a.shellFor(req, a.pagesIn(r), stored.Title),

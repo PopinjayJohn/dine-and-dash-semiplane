@@ -201,6 +201,34 @@
   took the read lock to ask "is this name taken?" would deadlock — exactly as
   `Owner` would. They are lock-free by construction, and sound because a registry is
   built by one goroutine before anything reads it.
+- **`internal/events`: three events, a bus, and a rule that an event is a notice.**
+  `PageSaved` (from the editor), `PageViewed` and `ShareLinkUsed` (from the HTTP
+  layer). A subscriber cannot affect a render, because nothing is rendered in a
+  subscriber — which is the difference from a hook and the reason there are two
+  things. The bus is its own package because there are two publishers and either
+  ordering of the imports would have been a cycle; a bus declared in `internal/plugin`
+  would make the HTTP layer import the plugin registry to publish a page view.
+- **An event carries no timestamp.** The project has a hard rule about time and a bus
+  with a clock in it is a bus with an ambient dependency. A subscriber that wants the
+  time has the request's context and its own `clock.Clock`.
+- **A plugin's route hangs off `/c/{slug}`, which is the only place it can hang.**
+  The three middlewares a page gets are the three a plugin handler gets, so a plugin
+  that asks who is asking gets the same answer through the same code. A bad chi
+  pattern is refused at startup by *asking chi* in a throwaway router rather than by
+  a regexp of our own — a second validator for a third party's syntax is a second
+  answer, and the one this project would write is the one that is wrong about a
+  pattern chi accepts today.
+- **A plugin route claims a first segment a page could also use, and that is the
+  other answer to `?raw=1` and `?edit=1`.** The honest version of the argument is in
+  `internal/http/route.go`: a *view* should be a query parameter, and what a route
+  buys over one is that it can be a fragment, a redirect, a download or a sub-path.
+  A plugin that wants no claim on the namespace mounts a sub-path.
+- **A plugin may add a `wiki` subcommand, and may not take a core one.** The
+  reserved list is `internal/plugin`'s, and the name is validated against the same
+  shape a plugin's own name normalises to — a command name appears in a shell
+  completion, a help listing and a log line, and a name needing quoting in any of
+  those is a name nobody will type. Attribution is filled in by the registry, so
+  `wiki help` can say which of four plugins added a word and cannot get it wrong.
 - **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
   first version of it forgot `Path`.** The policy test that narrows on
   `locations/` passed anyway, because the tree in the sidebar is built from paths

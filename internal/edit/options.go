@@ -2,6 +2,7 @@ package edit
 
 import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 )
 
@@ -17,6 +18,10 @@ type Options struct {
 	// Hooks are the plugins' render hooks. The zero value previews exactly what a
 	// build without plugins previews.
 	Hooks render.Hooks
+
+	// Events is the bus the plugins subscribe to. A save is the only event this
+	// package publishes, and a nil bus is a bus with no subscribers.
+	Events *events.Bus
 
 	// Policies are the plugins' access rules. They are asked about a write here as
 	// well as in the HTTP layer, because a save is a POST and a POST is something a

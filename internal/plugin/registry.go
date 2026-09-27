@@ -13,6 +13,8 @@ import (
 	"github.com/yuin/goldmark"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
+	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
@@ -63,6 +65,18 @@ type Registry struct {
 	// indexers are the plugins' search contributions, in the same order.
 	indexers []index.SearchField
 
+	// routes are the plugins' mounted paths, in the same order.
+	routes []wiki.Route
+
+	// commands are the plugins' subcommands, keyed by name.
+	commands map[string]Command
+
+	// bus is the event bus every subscriber is registered on. It is the registry's
+	// rather than a plugin's so that the registry decides who is listening to the
+	// application's events, and a plugin that brought its own bus would be a plugin
+	// that chose its own subscribers.
+	bus *events.Bus
+
 	// current is the name of the plugin whose Setup is running, and the empty
 	// string at every other time.
 	//
@@ -90,10 +104,12 @@ func New(log *slog.Logger) *Registry {
 		log = slog.Default()
 	}
 	return &Registry{
-		log:    log,
-		seen:   make(map[string]bool),
-		pages:  make(map[domain.PageType]string),
-		fields: make(map[vault.Key]FieldType),
+		log:      log,
+		seen:     make(map[string]bool),
+		pages:    make(map[domain.PageType]string),
+		fields:   make(map[vault.Key]FieldType),
+		commands: make(map[string]Command),
+		bus:      events.New(log),
 	}
 }
 
