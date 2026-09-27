@@ -284,13 +284,64 @@ re-litigate one without a new ADR that supersedes it.
   the same reason. A capability that exists only to be demonstrated is not a
   capability.
 
-Next milestone: **M12 — D&D 5e plugin and character sheets.** The `dnd5e` plugin as
-the first thing in this repository that is *about* a game rather than *for* one:
-the ruleset plugin the spec names, the `statline` field type, and a character sheet
-that is a page template with a field renderer. It is the first milestone whose
-demonstration is a plugin a user would actually want, which is also the first
-milestone where a plugin's *output* rather than a DM's markdown is the thing under
-review.
+- **M12 — the `dnd5e` ruleset is on `m12-dnd5e`.** `plugins/dnd5e` is the
+  first thing in this repository that is *about* a game rather than *for* one:
+  four page types (`spell`, `creature`, `feat`, `magic-item`), fifteen claimed
+  frontmatter keys, a statline, and `wiki character-sheet`.
+  [ADR 0023](docs/adr/0023-a-fields-value-is-redacted-under-the-decision.md)
+  is the decision and `docs/plugins.md` is the guide.
+- **A claimed frontmatter key is rendered, and `AddFieldType` now takes a
+  renderer as well as a claim.** M11's claim said the key would be "readable
+  today"; readable turned out to mean *readable and invisible*, and a claim
+  with no renderer is a plugin that half works in a way no test can see.
+  `internal/plugin/contract` now checks that every claim has one.
+- **A field's value is redacted under the decision before a plugin sees it**,
+  with the same `PublicText` that fills `body_public` and the same condition
+  the body's stripper uses. Redacting *unconditionally* — the version that
+  looked right — hands the DM `[…]` for a field the DM wrote and can read in
+  the body of the same page. A field is not a search index: `body_public` has
+  no decision and a render does.
+- **A field's HTML goes into the page's own buffer, so the one sanitiser runs
+  over it.** No exemption, no second sanitiser, no pre-rendered string on a
+  row. And **there is no fallback renderer** — a key nobody claimed renders as
+  nothing, because a page with a row for `created:` and `tags:` and everything
+  else the DM has ever typed is a page nobody asked for. ADR 0013's "unknown
+  keys are preserved" is about the *file*; preserving is not displaying.
+- **One renderer, fifteen fields, dispatching on the page type.** A 5e field
+  means different things on different pages, so a renderer per key would need
+  the type anyway. A field of yours that does not apply returns `""` — which
+  is what stops `casting-time` appearing on a character page — and that is
+  `render.FieldRenderer`'s "not mine" branch doing the work the spec never
+  named.
+- **A claimed key is read through a seam that bypasses the vault's *write-side*
+  closed set, and only the write side.** ADR 0013 closed the set so that "a bug
+  that writes `titel: Rivergate` into somebody's campaign" cannot reach the
+  filesystem. `Set` is still closed, nothing in the seam can write, and
+  `AddFieldType` refuses a core key so a plugin cannot shadow `visibility:`.
+  The seam parses the frontmatter *text* a page row carries into a throwaway
+  `yaml.Node`, so ADR 0013's parse tree and its zero-byte-diff promise are not
+  in play.
+- **A claim and a key the DM wrote are compared folded** — case, `_`, `.` and
+  spaces to `-`. A plugin claims `casting-time` because claims are normalised
+  like every other name; a DM writes `casting_time` because that is what their
+  editor produced. The first version compared the strings, and a key that does
+  not match is a key the page does not have, so **nothing rendered and nothing
+  errored**.
+- **`Page.Fields` is not a cache key field and `ContentHash` is why.** A field
+  lives in the frontmatter and the frontmatter is part of the file, so a field
+  change is already a content-hash change. A second field for a value
+  `ContentHash` covers would be a second answer to "has this page changed".
+- **A field renderer that fails draws nothing and the page still renders**,
+  exactly as a render hook's does. That is different from an access policy,
+  which *denies* on failure, and the asymmetry is ADR 0022's: a field is
+  decoration on a page a DM has to be able to read.
+
+Next milestone: **M13 — DX and release.** The spec's row for it is the
+largest in the plan: the full CLI, `import obsidian`, `export --zip`,
+`users new`/`revoke`, a Dockerfile, backup and restore, CSP and structured
+logs, full docs, and `v0.1.0`. It is the milestone where the application stops
+being a thing its author can run and becomes a thing a stranger can install,
+and it is the first milestone whose *tests* are mostly not Go tests.
 
 **M10's optimistic fragments are the one piece of its list that is not finished.**
 `web/static/wiki.js` has the toast region and the patch handler, and the editor's

@@ -353,6 +353,16 @@
   installed added `wordcount`" is the first question a DM asks about a command they did
   not write, and ADR 0022 said the attribution would be printed; it was not, until a
   test that asserted it.
+- **[ADR 0023](docs/adr/0023-a-fields-value-is-redacted-under-the-decision.md)
+  records what a field's value is and who redacts it**, `docs/plugins.md` gains the
+  field-renderer section, and §12 now carries what the field capability became rather
+  than what it was sketched as — the way §8 and §9 do.
+- **§12's `Fields` capability turned out to be one function, not a schema.** A plugin
+  claims a key, hands over a renderer, and the core decides which keys a page has, in
+  what order, and whether a value may be shown. Everything else — a spell's level
+  becoming a word, a statline keeping the DM's own rows, fifteen fields served by one
+  renderer — is the plugin, which is the shape §1's "core is system-agnostic" was
+  reaching for.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

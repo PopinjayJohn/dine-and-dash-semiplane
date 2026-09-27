@@ -489,6 +489,41 @@ version is:
   hash, so a saved page is a new key, and a capability that exists only to be
   demonstrated is not a capability.
 
+**What became of the field capability, in M12.** §12's
+`Fields FieldTypes // new field kinds: dice, statline, ref, ...` shipped in M11 as a
+*claim* — a plugin reserving a frontmatter key and saying what its value is — and the
+claim's own doc comment said the key would be "readable today and writable by nobody".
+**Readable turned out to mean readable and invisible**, because nothing rendered
+fields. M12 is the milestone that renders them, and
+[ADR 0023](adr/0023-a-fields-value-is-redacted-under-the-decision.md) records what
+that cost:
+
+- **`AddFieldType` takes a renderer as well as a claim.** A claim with no renderer is
+  a key that renders as nothing.
+- **A field's value is redacted under the decision before a plugin sees it**, with
+  the same `PublicText` that fills `body_public` and the same condition the body's
+  stripper uses. Redacting *unconditionally* is the version that looked right and
+  handed the DM `[…]` for a field the DM wrote and can read in the body of the same
+  page.
+- **A field's HTML goes into the page's buffer and the one sanitiser runs over it.**
+  No exemption, no second sanitiser, no pre-rendered string on a row.
+- **There is no fallback renderer.** A key nobody claimed renders as nothing, because
+  a page with a row for every frontmatter key the DM has ever typed is a page nobody
+  asked for. ADR 0013's "unknown keys are preserved" is about the *file*; preserving
+  is not displaying.
+- **The field block is at the top, before the body, in the DM's order** — before the
+  body because a spell's casting time and a character's hit points are both looked at
+  first, and in the DM's order because a page whose fields rearrange themselves
+  between builds is a page nobody can screenshot.
+- **A claimed key is read through a seam that bypasses the vault's *write-side*
+  closed set, and only the write side.** ADR 0013 closed the set so that "a bug that
+  writes `titel: Rivergate` into somebody's campaign" cannot reach the filesystem;
+  `Set` is still closed, and `AddFieldType` refuses a core key so a plugin cannot
+  shadow `visibility:`.
+- **A claim and a key the DM wrote are compared folded** — case, `_`, `.` and
+  spaces to `-`. A plugin claims `casting-time`; a DM writes `casting_time`; the
+  first version compared the strings and rendered nothing *and errored about nothing*.
+
 The authoring guide is [docs/plugins.md](plugins.md).
 
 **Known limitation:** a DM cannot share a secret with two players but not a
@@ -643,7 +678,7 @@ Core owns the generic page types (`note`, `location`, `npc`, `quest`, `item`,
 
 | Plugin | Demonstrates | Ships |
 |---|---|---|
-| `dnd5e` | page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | M12 |
+| `dnd5e` | page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | M12 (shipped) |
 | `house-rules` | render hook + event subscriber that invalidates the render cache | M11 |
 | `spoilerbox` | `access.Policies` contributor + render hook | M11 |
 | `wordcount` | Datastar fragment + `SearchFields` + CLI command | M11 |
@@ -1168,6 +1203,32 @@ middlewares a page gets.
 The seventh is the ADR, and it is the one worth reading first: four of §12's
 answers were wrong and three of them were wrong the same way, which is that the
 sketch left a placement open and the code had to close it.
+
+### M12 commit sequence
+
+```
+feat(render): a field a plugin renders, and the value it is handed redacted
+feat(plugins): dnd5e, which is a ruleset rather than a demonstration
+docs(adr): record what a field's value is, and who redacts it
+chore: record where the project actually is
+```
+
+M12 is a two-commit milestone and the smallness is the finding. §12's
+`Fields` capability looked like a field *schema* and turned out to be one
+function: a plugin claims a frontmatter key, hands over a renderer, and the
+core decides which keys a page has, in what order, and whether a value may be
+shown. Everything else — a spell's level becoming a word, a statline keeping
+the DM's own rows, fifteen fields served by one renderer — is the plugin.
+
+The security question is the one §9's rule is about, asked of a *plugin's*
+output for the first time. A DM can mark a frontmatter field secret with a
+`[!SECRET]` callout inside its value, and the field block is plugin-authored
+HTML on a page a player reads. So the value is redacted **under the decision**
+before a plugin sees it, and the plugin's output is written into the page's
+own buffer so the one sanitiser runs over it. The first version redacted
+unconditionally and handed the DM `[…]` for a field they could read in the
+body of the same page — which is the asymmetry between a search index's
+`body_public` and a render's decision, and it is worth a named test.
 
 ### Definition of Done
 
