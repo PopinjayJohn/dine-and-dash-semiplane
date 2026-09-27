@@ -271,7 +271,7 @@
   than written into `commands` at init, because the map holds `runServe`, which builds
   a registry: the initialisation cycle is the dependency graph being honest about the
   fact that a command and a server are the same thing here.
-- **[ADR 0021](docs/adr/0021-where-a-plugin-sits.md) records where a plugin sits and
+- **[ADR 0021](docs/adr/0022-where-a-plugin-sits.md) records where a plugin sits and
   what it may take away**, and **`docs/plugins.md` is the authoring guide.** Four of
   §12's answers turned out to be wrong and three of them were wrong the same way:
   the sketch left a *placement* open and the code had to close it. §12 now carries

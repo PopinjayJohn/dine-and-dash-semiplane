@@ -234,7 +234,7 @@ re-litigate one without a new ADR that supersedes it.
   `internal/plugin/contract` is the suite every plugin runs; `plugins/` holds the
   three the milestone names — `houserules`, `spoilerbox`, `wordcount` — and
   `cmd/wiki/plugins.go` is the compile-time list. `docs/plugins.md` is the
-  authoring guide and [ADR 0021](docs/adr/0021-where-a-plugin-sits.md) is the
+  authoring guide and [ADR 0021](docs/adr/0022-where-a-plugin-sits.md) is the
   decision.
 - **A tree hook runs after the secret stripper, and an HTML hook before the
   sanitiser.** Those two placements are the whole of M11's security argument. A

@@ -459,7 +459,7 @@ for _, path := range playerReachableRoutes {
 **What §12's plugin capability actually became.** The `Plugin` interface is as
 sketched — `Name`, `Version`, `Setup(*Registry) error` — and four of the answers
 around it are not, because the code had to decide them and the sketch left them
-open. The decisions are [ADR 0021](adr/0021-where-a-plugin-sits.md) and the short
+open. The decisions are [ADR 0021](adr/0022-where-a-plugin-sits.md) and the short
 version is:
 
 - **The `Capabilities` struct is an accessor set, not a struct.** `Registry` has

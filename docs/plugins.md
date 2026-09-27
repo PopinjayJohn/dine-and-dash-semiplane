@@ -4,7 +4,7 @@ A plugin is a Go package in `plugins/` that implements three methods and lists
 itself in `cmd/wiki/plugins.go`. It is compiled in, not loaded: there is no
 `Register`, no `init()`, no scanning and no marketplace.
 [ADR 0002](adr/0002-plugin-registry-in-process.md) recorded why, and
-[ADR 0021](adr/0021-where-a-plugin-sits.md) recorded where in the application a
+[ADR 0021](adr/0022-where-a-plugin-sits.md) recorded where in the application a
 plugin is allowed to sit — which is the document to read before you write one.
 
 ## The shortest plugin that compiles
