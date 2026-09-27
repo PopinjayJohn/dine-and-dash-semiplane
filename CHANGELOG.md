@@ -2,6 +2,17 @@
 
 ### Added
 
+- **`make generate` and `make generate-check`, and `generate-check` is in
+  `make check` and in CI.** The templ output is committed, so a `.templ` edited
+  without regenerating it is a template and a `_templ.go` that disagree, and the
+  disagreement is invisible until the page renders the old thing. The check
+  compares the bytes on disk before and after regenerating rather than asking git
+  whether the tree is clean, because a contributor who has already run
+  `make generate` and staged the result has a *correct* generated file.
+- **The CI smoke test boots the wiki and asks it for `/_/healthz`**, which is what
+  the M0 comment said M8 would replace. It then fetches a campaign root and asks
+  the process to stop, because a server that does not shut down cleanly leaves a
+  lock file behind and the next start waits out the stale window.
 - **`wiki serve`: the HTTP server, the index watchers, and the lock that keeps two
   of either off one data directory.** The listener comes up *before* the index is
   read, so the port a DM is told about is a port that is already accepting

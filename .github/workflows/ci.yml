@@ -48,6 +48,13 @@ jobs:
         id: pinned
         run: echo "version=$(make --no-print-directory print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
 
+      # The generated templ output is committed, so a `.templ` edited without a
+      # regeneration would otherwise be a template and a `_templ.go` that
+      # disagree, and the disagreement is invisible until the page renders the old
+      # thing.
+      - name: Generated code is up to date
+        run: make generate-check
+
       - name: Lint
         uses: golangci/golangci-lint-action@v9.3.0 # ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
@@ -118,14 +125,47 @@ jobs:
       - name: Build
         run: make build
 
-      # A binary that compiles is not a binary that runs. M8 replaces this
-      # with a real /healthz request against a booted server.
+      # A binary that compiles is not a binary that runs, and the thing this
+      # milestone shipped is the part that runs.
+      #
+      # The wiki is booted against a data directory with one campaign in it, the
+      # health line is asked for over HTTP, and the process is then asked to stop
+      # and has to actually stop -- a server that does not shut down cleanly leaves
+      # a lock file behind, and that is a bug the tests found once and will find
+      # again.
       - name: Smoke test
         run: |
           ./bin/wiki version
           ./bin/wiki help
           # A single static binary, or ADR 0004's claim is quietly false.
           file bin/wiki
+
+          data=$(mktemp -d)
+          mkdir -p "$data/vault/blackwater"
+          printf -- '---\ntitle: The Blackwater\n---\n\nA campaign.\n' \
+            > "$data/vault/blackwater/campaign.md"
+
+          ./bin/wiki serve --data-dir "$data" --addr 127.0.0.1:8123 --no-watch &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8123/_/healthz > healthz.json; then
+              break
+            fi
+            sleep 0.2
+          done
+
+          cat healthz.json
+          grep -q '"status": "ok"' healthz.json
+
+          # And a campaign root, which is the first thing a player sees and the
+          # first thing that has to not be a stack trace.
+          curl -fsS http://127.0.0.1:8123/c/blackwater/ > root.html
+          grep -q 'The Blackwater' root.html
+
+          kill -TERM "$server"
+          wait "$server"
 
   changelog:
     name: changelog

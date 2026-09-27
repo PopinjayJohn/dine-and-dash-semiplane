@@ -121,29 +121,62 @@ re-litigate one without a new ADR that supersedes it.
   to how fields are derived would leave every row stale with matching hashes. One
   function decides it, so `Sync` and `Check` cannot disagree about what is out of
   step.
-- **Ownership is resolved but not stored.** A page is character-owned when its
-  path begins with `characters/<slug>/` or its frontmatter declares
-  `character: <slug>`, and the path wins where they disagree. The column arrives
-  with M7; the rule and its validation are here, because the rule decides which
-  subtree a player may write in and is easy to get subtly wrong.
-- **The renderer's `Decision` is not `access.Decision`, and its zero value
-  permits no secrets.** That is the safe direction: a caller that has not
-  decided anything gets a page with no secrets in it, which is a missing
-  feature rather than a disclosure. M7 replaces the field with the real
-  decision, and the render cache is keyed by it, so a render made for a DM can
-  never be served to a player.
+- **Ownership is resolved, and the page's *owner* is the character.** A page is
+  character-owned when its path begins with `characters/<slug>/` or its
+  frontmatter declares `character: <slug>`, and the path wins where they
+  disagree. The `dm-and-owner` ownership test correlates on the page's
+  **owner**, which is not the same as correlating on the page: the version that
+  correlates on the page gives a player the one file they are bound to and not
+  the twenty notes under it.
+- **The renderer's `Decision` is `access.Decision` and the render cache is keyed
+  by it and by the campaign.** Two campaigns can each hold a
+  `locations/rivergate` with byte-identical content — two DMs who both started
+  from the same template — and a shared entry would serve one campaign's URLs
+  inside the other's HTML. A page rendered with no campaign resolves no links,
+  which is the same fail-closed answer as everywhere else and the reason a
+  handler that forgets the field is a visible bug.
+- **The read predicate asks whose campaign the principal is of, not just which
+  campaign the caller asked about.** Nothing had ever asked before M8, because
+  every caller was the sync engine passing `AsDM(campaignID)` and is therefore
+  always of the campaign it is reading. A predicate that is only correct for
+  callers who get their arguments right is a predicate one handler away from a
+  disclosure. Tenancy is not authorisation, so it is not in `access.For`, and
+  the 36-cell matrix test is unaffected on purpose.
+- **The SSE hub carries a notice, not a page.** Each subscriber re-reads and
+  re-renders under its own decision, through the same `renderPage` the page route
+  uses. The obvious design — render once, hand the same component to every
+  watcher — has no correct version, because a DM and a player can be watching
+  the same page and the publisher can only pick one decision. It is also what
+  makes dropping a frame sound: a change is not a delta, so a skipped
+  notification is one the next read would have replaced anyway.
+- **`?raw=1` and `?stream=1` are query parameters, not path segments.** A path
+  segment would be a first-segment name the vault could not also use, and the
+  vault is the source of truth, so it wins any argument about what a URL may
+  look like. The raw endpoint's body is `render.PublicText` under the same
+  decision as the HTML, which is what keeps it from being the place a secret
+  leaks.
+- **The 500 page asks the store for nothing.** The store is the thing that has
+  just failed, and a store that *panics* rather than errors takes the process
+  down from inside the recovery handler, with every other player's session on
+  it. `TestAPanicIsAPageAndNotADeadProcess` is the named test.
+- **The query string is not logged.** `?k=<token>` is the share-link credential
+  and `r.URL.String()` would put it in every log line, in every proxy in front
+  of the server, and in whatever a DM pastes into a bug report.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M8 — Web shell**. The chi router, the layouts, the Datastar
-components, the SSE hub, `/_/healthz`, and **the wiring for everything M6 and M7
-built** — the cookie attributes ADR 0003 has been holding, the login and redeem
-routes, and the first `TestSecretStrippedFromAllSurfaces`, which walks the
-player-reachable routes and asserts a canary is absent from each raw response
-body. It has no plugins yet; M11 brings the plugin host.
+Next milestone: **M9 — Editing**. The editor, autosave, the preview that reuses
+the render path, `ETag` plus 409 and the three-way diff, archive and purge,
+rename, revisions and restore, **player editing of their own character pages**,
+and the `users new`/`users revoke` buttons that mint and revoke share links —
+which is the missing half of what a DM needs to hand somebody a link. M9 is the
+first milestone in which anything writes a markdown file, so ADR 0001's other
+half comes under pressure for the first time: the editor is a writer, and every
+invariant above that says "the sync engine never writes a file" is about the
+sync engine, not about the application.
 
 ## Non-negotiable invariants
 
@@ -187,7 +220,9 @@ needs an explicit decision recorded as a new ADR.
 - One milestone is one branch, one PR, one changelog section.
 - Commits are small and independently green. A commit that breaks the build
   does not get pushed, not even "just to push it and fix it next".
-- One concern per package, under `internal/`, except `cmd/wiki` and `plugins/`.
+- One concern per package, under `internal/`, except `cmd/wiki`, `plugins/` and
+  `web/` — the last of which exists because `go:embed` cannot reach outside its
+  own package directory and the static assets are in `web/static/`.
 - Interfaces are declared by the consumer, never by the provider.
 - Deterministic output. No `time.Now()` or `rand` outside an injected `Clock`
   or `IDGen` — this is what makes golden files work.
@@ -198,7 +233,7 @@ needs an explicit decision recorded as a new ADR.
 runs the same targets, so a green local `make check` is a green CI.
 
 ```
-make check    # fmt-check, vet, lint, go test -race -shuffle=on ./...
+make check    # fmt-check, generate-check, vet, lint, go test -race -shuffle=on ./...
 make test     # tests only
 make lint     # golangci-lint run
 make cover    # coverage report, fails below the 80% gate
@@ -206,12 +241,23 @@ make fuzz     # short fuzz runs
 make spike    # the Datastar spike, a separate module under spike/
 make run      # build and serve
 make reindex  # wiki reindex --full against the local data dir
+make generate # regenerate the templ templates from their .templ sources
 make install-tools  # the pinned golangci-lint and templ
 ```
 
-`run` and `reindex` name subcommands that arrive in later milestones, so they
-do nothing yet. The pinned tool versions live in the `Makefile` and nowhere
-else; CI reads them from there with `make print-<tool>-version`.
+The pinned tool versions live in the `Makefile` and nowhere else; CI reads them
+from there with `make print-<tool>-version`.
+
+**The templ templates are committed as generated code, and `make check` fails if
+they are stale.** `internal/http/templates_templ.go` is what `go build` compiles
+and what the reviewer reads, so it is committed rather than built — but a `.templ`
+edited without regenerating it is a template and a `_templ.go` that disagree,
+and the disagreement is invisible until the page renders the old thing.
+`make generate` rewrites them and `make generate-check` is in `make check` and in
+CI. The generated files are excluded from `.golangci.yml` and from the coverage
+profile, for the same reason: they are not code anybody wrote, and measuring them
+says something about the templates' element branches rather than about whether the
+application is tested.
 
 **The Go toolchain is pinned in the `Makefile` too, and it is pinned for
 formatting.** `gofmt` may change its output in any release, on purpose, and
@@ -258,3 +304,14 @@ Concrete mistakes this project has already designed against:
   deleting the DM's notes from their own vault.
 - Accepting a raw `sqlite` `UPDATE` from a handler instead of going through
   `Store`.
+- Asking a store method for a page with a *different* campaign's id and a
+  principal from this one, and trusting the role clause to notice.
+- Rendering a page in the SSE publisher and handing the result to every
+  subscriber, because that is the one place a DM's page and a player's page are
+  the same string.
+- Writing `page.Body` into a `?raw=1` response. It is the file as the DM wrote
+  it, `[!SECRET]` blocks and all; `render.PublicText` under the request's
+  decision is what goes out.
+- Making the cookie's name a constant. A `__Host-` cookie without `Secure` is
+  refused *silently*, so a local deployment that keeps the prefix is a wiki that
+  forgets every player after every link.
