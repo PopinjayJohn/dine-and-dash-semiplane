@@ -50,10 +50,43 @@ type indexQuery struct {
 	// an index with one indexed column and nothing to weigh.
 	weights string
 
+	// tags, pageType and visibility are the query's three filters, carried
+	// alongside the scope so that the clause and its arguments are built from one
+	// value rather than from a call site that has to remember them.
+	tags       []string
+	pageType   string
+	visibility string
+
 	// secrets marks which of the two this is, for the hit field that says where
 	// an excerpt came from.
 	secrets bool
 }
+
+// withQuery carries a parsed query's filters into the statement, and returns the
+// query unchanged if it has no filters.
+func (q indexQuery) withQuery(parsed search.Query) indexQuery {
+	q.tags = parsed.Tags
+	q.pageType = parsed.Type.String()
+	q.visibility = parsed.Visibility.String()
+	return q
+}
+
+// filterArgs are the filter arguments, in the order `filters` puts them.
+func (q indexQuery) filterArgs() []any {
+	args := make([]any, 0, len(q.tags)+2)
+	if len(q.tags) > 0 {
+		args = append(args, tagMatch(q.tags))
+	}
+	if q.pageType != "" {
+		args = append(args, q.pageType)
+	}
+	if q.visibility != "" {
+		args = append(args, q.visibility)
+	}
+	return args
+}
+
+// The FTS table is not aliased anywhere in this file.
 
 // The public index's ranking weights, one per column, in the order the table
 // declares them -- page_id, title, aliases, body, tags, kind -- with the page_id
@@ -122,7 +155,7 @@ func (q indexQuery) statement(withMatch bool) string {
 	return `SELECT p.id, p.path, p.title, p.type, ` + q.excerpt(withMatch) + `
 		FROM ` + q.table + `
 		JOIN pages p ON p.id = ` + q.table + `.page_id
-		WHERE ` + q.match(withMatch) + ` AND (` + q.sc.where + `)%s
+		WHERE ` + q.match(withMatch) + ` AND (` + q.sc.where + `)` + filters(q) + `
 		ORDER BY ` + q.order(withMatch) + `
 		LIMIT ?`
 }
@@ -152,6 +185,37 @@ func (q indexQuery) order(withMatch bool) string {
 		return `p.path`
 	}
 	return `bm25(` + q.table + q.weights + `), p.path`
+}
+
+// filters is the tail of the WHERE clause: the three query-language filters, none
+// of which is an FTS5 match.
+//
+// They are all SQL, and that is a decision rather than a convenience. An FTS5
+// column filter is itself a match — the value is tokenised and the tokens have to
+// be adjacent — so `type:homebrew-thing` as a column filter would be the phrase
+// "homebrew thing", and a filter that quietly means something adjacent to what was
+// asked for cannot be debugged from the results.
+//
+// `tag:` has a second reason, which is that tags are a property of the *page* and
+// the public index is where a page's tags are indexed. Applying it as a column
+// filter on whichever index the query happens to be reading would ask the private
+// index for a column it does not have, and asking for one page's tags inside the
+// search for that page's secret text is a question only the public index can
+// answer. It is asked as a subquery against the public index, and a subquery is
+// also what keeps the tag value a bound parameter rather than a spliced one.
+func filters(q indexQuery) string {
+	tail := ""
+
+	if len(q.tags) > 0 {
+		tail += ` AND p.id IN (SELECT page_id FROM ` + publicIndex + ` WHERE ` + publicIndex + ` MATCH ?)`
+	}
+	if q.pageType != "" {
+		tail += ` AND p.type = ?`
+	}
+	if q.visibility != "" {
+		tail += ` AND p.visibility = ?`
+	}
+	return tail
 }
 
 // The FTS table is not aliased anywhere in this file. `MATCH`'s left operand has
@@ -213,18 +277,18 @@ func (s *Store) search(ctx context.Context, q indexQuery, parsed search.Query, l
 
 	match := ftsMatch(parsed)
 	withMatch := match != ""
-	extra, extraArgs := columnFilters(parsed)
 
-	args := make([]any, 0, len(q.sc.args)+len(extraArgs)+2)
+	q = q.withQuery(parsed)
+
+	args := make([]any, 0, len(q.sc.args)+len(q.tags)+3)
 	if withMatch {
 		args = append(args, match)
 	}
 	args = append(args, q.sc.args...)
-	args = append(args, extraArgs...)
+	args = append(args, q.filterArgs()...)
 	args = append(args, boundedLimit(limit))
 
-	rows, err := s.read.QueryContext(ctx,
-		fmt.Sprintf(q.statement(withMatch), extra), args...)
+	rows, err := s.read.QueryContext(ctx, q.statement(withMatch), args...)
 	if err != nil {
 		return nil, fmt.Errorf("searching %s: %w", q.table, err)
 	}
@@ -261,30 +325,17 @@ func scanHits(rows *sql.Rows, secrets bool, what string) ([]search.Hit, error) {
 	return hits, nil
 }
 
-// ftsMatch renders a parsed query as an FTS5 match expression, or the empty
-// string when the query has no text in it.
+// ftsMatch renders a parsed query's *text* as an FTS5 match expression, or the
+// empty string when it has none. The three filters are not here: they are SQL, and
+// filters builds them.
 //
 // Every clause goes through ftsLiteral, which is FTS5's own string quoting: a
 // double quote around it and any quote inside it doubled. Inside that quoting
 // there are no operators, no prefixes, no column filters and no parentheses, so
 // what comes out of here is a conjunction of literals and there is nothing for a
 // caller to have escaped.
-//
-// The `tag:` filters are the one exception and they are not really one: they name
-// a column, which is FTS5 syntax, so they are built as column filters and the
-// *values* still go through ftsLiteral. They are ORed inside parentheses because
-// `OR` binds looser than `AND` in FTS5, and a bare `a OR b AND c` is `a OR (b AND
-// c)` — which would quietly require the text query to be on the second tag.
 func ftsMatch(q search.Query) string {
-	clauses := make([]string, 0, q.Clauses()+len(q.Tags)+1)
-
-	if len(q.Tags) > 0 {
-		filters := make([]string, 0, len(q.Tags))
-		for _, tag := range q.Tags {
-			filters = append(filters, "tags : "+ftsLiteral(tag))
-		}
-		clauses = append(clauses, "("+strings.Join(filters, " OR ")+")")
-	}
+	clauses := make([]string, 0, q.Clauses())
 
 	for _, term := range q.Terms {
 		clauses = append(clauses, ftsLiteral(term))
@@ -294,6 +345,24 @@ func ftsMatch(q search.Query) string {
 	}
 
 	return strings.Join(clauses, " AND ")
+}
+
+// tagMatch renders the tag filters as one expression, to be bound as a single
+// parameter of the subquery in `filters`.
+//
+// The tags are ORed inside parentheses, and the parentheses are the point: `OR`
+// binds looser than `AND` in FTS5, so a bare `a OR b AND c` is `a OR (b AND c)`
+// and a query with text in it would then require the text to be on the second
+// tag.
+func tagMatch(tags []string) string {
+	clauses := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		clauses = append(clauses, "tags : "+ftsLiteral(tag))
+	}
+	if len(clauses) == 1 {
+		return clauses[0]
+	}
+	return "(" + strings.Join(clauses, " OR ") + ")"
 }
 
 // ftsLiteral quotes a value as an FTS5 string.
@@ -310,31 +379,6 @@ func ftsLiteral(value string) string {
 		return `"` + value + `"`
 	}
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
-}
-
-// columnFilters returns the parts of a query that are SQL rather than FTS5: the
-// `type:` and `is:` filters, which are exact matches on a column.
-//
-// They are SQL rather than FTS5 column filters on purpose. An FTS5 column filter
-// is itself a match — the value is tokenised and the tokens have to be adjacent —
-// so `type:homebrew-thing` would be the phrase "homebrew thing", and a filter that
-// quietly means something adjacent to what was asked for is a filter nobody can
-// debug from the results. `p.type = ?` says exactly what it says.
-//
-// `is:` being SQL is what makes it a filter rather than a bypass: it lands in the
-// same WHERE clause as the audience scope, so a player who searches `is:dm-only`
-// gets the empty intersection of "dm-only" and "not dm-only" rather than a page.
-func columnFilters(q search.Query) (string, []any) {
-	switch {
-	case q.Type != "" && q.Visibility != "":
-		return ` AND p.type = ? AND p.visibility = ?`, []any{q.Type.String(), q.Visibility.String()}
-	case q.Type != "":
-		return ` AND p.type = ?`, []any{q.Type.String()}
-	case q.Visibility != "":
-		return ` AND p.visibility = ?`, []any{q.Visibility.String()}
-	default:
-		return "", nil
-	}
 }
 
 // boundedLimit clamps a caller's limit into the range the search package

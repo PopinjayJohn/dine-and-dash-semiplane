@@ -24,6 +24,51 @@ House rules:
 
 ### Added
 
+- **Reciprocal Rank Fusion** merges the two ranked lists: a page's score is
+  `Σ 1 / (60 + rank)` over the lists it appears in, so a page whose title matches
+  *and* whose secret contains the phrase outranks a page whose title matches
+  alone. BM25 scores from two indexes over two corpora of different sizes are not
+  comparable, and any normalisation that made them agree would be a constant
+  fitted to one corpus. `60` is the published default and is not tuned.
+- Where a page matched in both, the **excerpt from the private index wins** — it
+  is the more specific answer, and it is safe because the page is in the private
+  list at all only if the stricter scope admitted this principal.
+- Ranks are **renumbered** after the merge, because rank 2 of two lists is not
+  rank 2 of one. Ties break on the best rank any list gave, then on the order the
+  pages arrived in — not on the id, which a reader cannot see. Two identical
+  requests give the same list.
+- `search.Run` is the entry point: parse, refuse or stop early, one query per
+  index, fuse, cut. It takes the backend as an argument and holds nothing, so the
+  whole of it is testable with a fixture and no database — which is what makes
+  the relevance and ordering tests as many as they are.
+- Each index is read **five times deeper than the requested result count**,
+  because RRF can lift a page that was eleventh in one list and first in the other
+  and a fusion over two lists of exactly N cannot find it. A bound rather than a
+  fit, and not tuned.
+- A filter that names something the caller may not see is not information, so
+  `is:dm-only` for a player is the empty intersection rather than an error, and a
+  failure in either query is reported with the index named rather than dropping
+  the private half and answering with a list that looks complete.
+- **Benchmarks**, which is what ADR 0009 asks for where it says "kilobytes" and
+  "roughly double". Over 400 synthetic pages of 200 words, on the machine this
+  was written on: writing both indexes 229ms, the settled check 84ms, a one-word
+  search 5.3ms, a search that matches nothing 0.4ms, and the fusion itself
+  0.09ms with no database in the process. The numbers are a baseline to compare
+  against, not a target.
+
+### Fixed
+
+- A `tag:` filter asked whichever index the query was reading for a `tags`
+  column, and the private index has no `tags` column — so `tag:hub` was a SQL
+  error on every secret search. Tags are a property of the *page*, and the public
+  index is where a page's tags are indexed, so `tag:` is now a subquery against
+  the public index in both queries. It was found by the benchmark above, which is
+  the argument for having one.
+- `type:`, `is:` and now `tag:` are all SQL rather than FTS5 column filters,
+  because an FTS5 column filter is itself a *match*: `type:homebrew-thing` would
+  be the phrase "homebrew thing", and a filter that quietly means something
+  adjacent to what was asked for cannot be debugged from the results.
+
 - `render.SecretText` lifts a page's **unrevealed `[!SECRET]` text off the parse
   tree**, which is what the private search index is fed. It is in `render` rather
   than in the indexer because the `[!SECRET]` grammar has to be read the same way

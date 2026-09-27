@@ -46,7 +46,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))%s
+				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))
 		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0), p.path
 		LIMIT ?`,
 		},
@@ -59,7 +59,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))%s
+				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -73,7 +73,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 ))
-		AND ( ? = 'dm' OR 1 = 0 ))%s
+		AND ( ? = 'dm' OR 1 = 0 ))
 		ORDER BY bm25(pages_secrets_fts), p.path
 		LIMIT ?`,
 		},
@@ -87,7 +87,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 ))
-		AND ( ? = 'dm' OR 1 = 0 ))%s
+		AND ( ? = 'dm' OR 1 = 0 ))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -126,6 +126,85 @@ func TestSearchStatementsCarryTheirReadScope(t *testing.T) {
 	}
 	if !strings.Contains(secret, "AND ( ? = 'dm' OR 1 = 0 )") {
 		t.Errorf("the private statement does not carry the secret scope's own test:\n%s", secret)
+	}
+}
+
+// The three filters are a SQL tail rather than part of the match expression, and
+// the tail differs between the two indexes only in the subquery it carries. This
+// pins all six statements a filtered search can run, because "the filter is
+// applied" is not the same claim as "the filter is applied in both queries with
+// the same subquery", and only one of those is what keeps a `tag:` filter from
+// asking the private index for a column it does not have.
+func TestFilteredSearchStatements(t *testing.T) {
+	t.Parallel()
+
+	dm := domain.Principal{ID: "p-1", Role: domain.RoleDM}
+	parsed, err := search.Parse(`tag:hub tag:revealed type:npc is:players toll "a phrase"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	public := publicIndexQuery.withScope(readable("campaign-1", dm)).withQuery(parsed)
+	secret := secretIndexQuery.withScope(readableWithSecrets("campaign-1", dm)).withQuery(parsed)
+
+	tests := map[string]struct {
+		query     indexQuery
+		withMatch bool
+		want      string
+	}{
+		"the public index, with a match and every filter": {
+			query: public, withMatch: true,
+			want: ` AND p.id IN (SELECT page_id FROM pages_fts WHERE pages_fts MATCH ?) AND p.type = ? AND p.visibility = ?`,
+		},
+		"the public index, filters only": {
+			query: public, withMatch: false,
+			want: ` AND p.id IN (SELECT page_id FROM pages_fts WHERE pages_fts MATCH ?) AND p.type = ? AND p.visibility = ?`,
+		},
+		"the private index, with a match and every filter": {
+			query: secret, withMatch: true,
+			want: ` AND p.id IN (SELECT page_id FROM pages_fts WHERE pages_fts MATCH ?) AND p.type = ? AND p.visibility = ?`,
+		},
+		"the private index, filters only": {
+			query: secret, withMatch: false,
+			want: ` AND p.id IN (SELECT page_id FROM pages_fts WHERE pages_fts MATCH ?) AND p.type = ? AND p.visibility = ?`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := filters(tt.query); got != tt.want {
+				t.Errorf("the filter tail is\n%q\n\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+
+	// The tail is in both statements, which is the part that matters: a filter
+	// applied to one query and not the other is a search that answers a different
+	// question depending on which index a match came from.
+	for name, query := range map[string]indexQuery{"public": public, "private": secret} {
+		for _, withMatch := range []bool{true, false} {
+			statement := query.statement(withMatch)
+			if !strings.Contains(statement, "p.id IN (SELECT page_id FROM pages_fts") {
+				t.Errorf("the %s statement does not carry the tag subquery:\n%s", name, statement)
+			}
+			if !strings.Contains(statement, "AND p.type = ?") {
+				t.Errorf("the %s statement does not carry the type filter:\n%s", name, statement)
+			}
+			if !strings.Contains(statement, "AND p.visibility = ?") {
+				t.Errorf("the %s statement does not carry the visibility filter:\n%s", name, statement)
+			}
+		}
+	}
+
+	// And one argument per placeholder, in the order the clause puts them.
+	placeholders := strings.Count(filters(public)+public.match(true)+public.sc.where, "?")
+	if got := len(public.filterArgs()) + 1 /* the match */ + len(public.sc.args); got != placeholders {
+		t.Errorf("the statement has %d placeholders and %d arguments", placeholders, got)
+	}
+	// The match, the campaign, the role, the tags, the type, the audience, the
+	// limit: seven, in that order.
+	if got, want := strings.Count(public.statement(true), "?"), 7; got != want {
+		t.Errorf("a fully filtered statement has %d placeholders, want %d", got, want)
 	}
 }
 

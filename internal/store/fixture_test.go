@@ -108,3 +108,39 @@ func mustCreatePage(t *testing.T, s *store.Store, campaignID string) domain.Page
 	}
 	return p
 }
+
+// newStoreTB is newStore for a benchmark, which is a *testing.B and not a
+// *testing.T. The two differ only in what they report, so the helper takes the
+// interface and both get their own temp directory and their own cleanup.
+func newStoreTB(tb testing.TB) *store.Store {
+	tb.Helper()
+
+	s, err := store.Open(context.Background(), filepath.Join(tb.TempDir(), "campaigns.db"), store.Options{
+		Clock: clock.NewFixed(testTime, time.Minute),
+		IDGen: idgen.NewSequence("id"),
+	})
+	if err != nil {
+		tb.Fatalf("store.Open: %v", err)
+	}
+	tb.Cleanup(func() {
+		if closeErr := s.Close(); closeErr != nil {
+			tb.Errorf("closing the store: %v", closeErr)
+		}
+	})
+
+	if _, err := s.Migrate(context.Background()); err != nil {
+		tb.Fatalf("migrating: %v", err)
+	}
+	return s
+}
+
+// mustCreateCampaignTB is mustCreateCampaign for a benchmark.
+func mustCreateCampaignTB(tb testing.TB, s *store.Store) domain.Campaign {
+	tb.Helper()
+
+	c, err := s.CreateCampaign(context.Background(), campaign())
+	if err != nil {
+		tb.Fatalf("CreateCampaign: %v", err)
+	}
+	return c
+}
