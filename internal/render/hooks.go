@@ -22,6 +22,19 @@ import (
 // stay valid, and a hook mechanism that changed the bytes of a page nobody had
 // asked it to change would be a hook mechanism nobody could review.
 type Hooks struct {
+	// Fields maps a claimed frontmatter key to the plugin that renders it, and it is
+	// a *map* rather than an ordered slice for the reason the ordering guarantee does
+	// not apply here: the registry refuses a second claim on a key, so there is at
+	// most one renderer per field and an order would have nothing to decide. The
+	// order the *fields* appear in a page is the order the DM wrote them, and that
+	// comes from `Page.Fields`, not from here.
+	//
+	// The map is the plugin's own doing rather than core's, which is why a field's
+	// renderer is chosen by key instead of by asking every renderer in turn. Asking
+	// in turn would make two plugins able to answer for one key, and the first one in
+	// plugin order would win — a race with a name rather than a decision.
+	Fields map[string]FieldSpec
+
 	// Exts are goldmark extensions, registered in order. They see the source before
 	// the core's own extensions have finished with it, which is goldmark's
 	// arrangement and not something this package reshapes.
@@ -65,9 +78,11 @@ type RenderHook struct {
 // loop entirely rather than iterating an empty slice on every page.
 //
 // It is a method rather than a `len(h.Hooks) == 0` at the call site because the
-// extension slice has to be checked too, and there are three call sites that would
-// otherwise each remember that.
-func (h Hooks) IsEmpty() bool { return len(h.Exts) == 0 && len(h.Hooks) == 0 }
+// extension slice and the field map have to be checked too, and there are four call
+// sites that would otherwise each remember that.
+func (h Hooks) IsEmpty() bool {
+	return len(h.Exts) == 0 && len(h.Hooks) == 0 && len(h.Fields) == 0
+}
 
 // Contributing returns the names of the plugins that changed this renderer's
 // output, sorted and deduplicated.

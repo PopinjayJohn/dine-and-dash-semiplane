@@ -276,6 +276,43 @@
   §12's answers turned out to be wrong and three of them were wrong the same way:
   the sketch left a *placement* open and the code had to close it. §12 now carries
   the corrections rather than the sketch, the way §8 and §9 do.
+- **A claimed frontmatter key is now rendered, which is what M11's claim was for.**
+  `render.FieldRenderer` turns one field's value into the page's HTML, and the three
+  rules are the hooks' three rules: **the value is redacted under the decision
+  before a plugin sees it**, **the output goes through the one sanitiser**, and
+  **there is no fallback** — a key nobody claimed renders as nothing, so a page does
+  not grow a row for `created:` and `tags:` and every key the DM has ever typed. The
+  claim is the switch.
+- **A field's value is redacted under the decision, and the condition is the whole of
+  it.** Redacting unconditionally is the version that looked right and was wrong:
+  `PublicText` alone hands the DM `[…]` for a field the DM wrote and can read in the
+  body of the same page, which is a field that stops being true for the one person it
+  was written for. `TestTheDmStillSeesTheFieldSecret` is the test that would have
+  caught it.
+- **A claim and a renderer are one argument now.** `AddFieldType(FieldType,
+  render.FieldRenderer)` rather than `AddFieldType(FieldType)`. M11 could let them be
+  separate because nothing rendered fields; "readable" turned out to mean *readable
+  and invisible*, and a claim with no renderer is a plugin that half works in a way no
+  test can see. A build with no plugins still renders byte-identical output.
+- **`internal/fields` is a package of one function, and it exists for the dependency
+  direction.** `internal/http` and `internal/edit` both need it, `internal/plugin`
+  knows the claims, and `plugin` cannot be imported by the HTTP layer because the
+  HTTP layer is the thing plugins attach *to*. So it reads the claims out of
+  `render.Hooks`, walks the frontmatter, and returns `[]render.Field` — deciding
+  *which* keys and *in what order*, and nothing about whether a value may be shown,
+  which is the render's under the decision.
+- **A YAML key is not a slug, and the first version of the seam compared the two
+  strings.** A plugin claims `casting-time` because claims are normalised; a DM
+  writes `casting_time` because that is what their editor produced; and a field that
+  does not match is a key the page does not have, so **nothing rendered and nothing
+  errored**. Both sides are now folded — case, `_`, `.` and spaces — which is ADR
+  0013's "read is forgiving; write is conventional" applied to the plugin's build as
+  well as the DM's file. A repeated key takes the first position and the last value,
+  which is what most YAML readers do.
+- **`Page.Fields` is not a cache key field, and `ContentHash` is why.** A field lives
+  in the frontmatter and the frontmatter is part of the file, so a field change is
+  already a content-hash change. A second field for a value `ContentHash` covers
+  would be a second answer to "has this page changed".
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

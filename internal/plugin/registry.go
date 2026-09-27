@@ -53,8 +53,21 @@ type Registry struct {
 	// pages is the page types the plugins contribute, keyed by the type name.
 	pages map[domain.PageType]string
 
-	// fields is the frontmatter keys the plugins claim, keyed by the key.
+	// fields is the frontmatter keys the plugins claim, keyed by the key, with the
+	// kind and the summary. The *renderers* live in `specs`, keyed the same way, and
+	// they are two fields rather than one because a reader of the registry has to be
+	// able to ask "what has been claimed" without holding a reference to a plugin's
+	// code, which is what `FieldTypes()` is for.
 	fields map[vault.Key]FieldType
+
+	// specs maps a claimed key to the field's kind and the plugin that draws it.
+	//
+	// A map and not an ordered slice, and the reason is the claim itself: a key can
+	// be claimed once, so there is exactly one renderer per field and an order would
+	// have nothing to decide. The order the *fields* appear in a page comes from the
+	// page's frontmatter, which is the DM's order, and a page whose fields rearrange
+	// themselves between builds is a page nobody can screenshot.
+	specs map[string]render.FieldSpec
 
 	// hooks and exts are the plugins' render contributions, in the plugins'
 	// `(Priority, Name)` order. The goldmark extensions are a flat list because
@@ -114,6 +127,7 @@ func New(log *slog.Logger) *Registry {
 		pages:    make(map[domain.PageType]string),
 		fields:   make(map[vault.Key]FieldType),
 		commands: make(map[string]Command),
+		specs:    make(map[string]render.FieldSpec),
 		bus:      events.New(log),
 	}
 }

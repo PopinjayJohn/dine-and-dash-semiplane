@@ -8,6 +8,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/fields"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
@@ -156,13 +157,26 @@ func (a *app) ownersBound(
 // is one campaign per request, so there is one way to be wrong, and this is not
 // it.
 func (a *app) renderPage(ctx context.Context, campaign domain.Campaign, page domain.Page, as domain.Principal) (render.Result, error) {
-	return a.rendererFor(campaign.Slug).Render(ctx, render.Page{
+	return a.rendererFor(campaign.Slug).Render(ctx, a.pageFor(campaign, page), a.decisionFor(ctx, page, as))
+}
+
+// pageFor is the renderer-facing value of a stored page, and it is a function
+// because three call sites build one and a `render.Page` literal in three places is
+// three places that will disagree about which fields it carries.
+//
+// The fields come from the row's `frontmatter` and the build's claims, and this is
+// the one place the two meet on the read path. The redaction of a field's value
+// happens later and elsewhere -- inside `internal/render`, under the decision -- so
+// that there is one answer to "may this reader see this text" and it is the render's.
+func (a *app) pageFor(campaign domain.Campaign, page domain.Page) render.Page {
+	return render.Page{
 		Campaign:    campaign.Slug.String(),
 		Path:        page.Path,
 		Body:        page.Body,
 		ContentHash: page.ContentHash,
 		Type:        page.Type.String(),
-	}, a.decisionFor(ctx, page, as))
+		Fields:      fields.Of(a.cfg.Hooks, page.Frontmatter),
+	}
 }
 
 // fail answers a request whose work could not be completed, and logs what it was.

@@ -240,12 +240,7 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := a.rendererFor(req.Campaign.Slug).Render(r.Context(), render.Page{
-		Campaign:    req.Campaign.Slug.String(),
-		Path:        stored.Path,
-		Body:        stored.Body,
-		ContentHash: stored.ContentHash,
-	}, decision)
+	result, err := a.rendererFor(req.Campaign.Slug).Render(r.Context(), a.pageFor(req.Campaign, stored), decision)
 	if err != nil {
 		a.fail(w, r, "rendering "+path, err)
 		return

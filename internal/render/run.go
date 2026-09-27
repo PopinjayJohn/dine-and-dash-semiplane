@@ -64,6 +64,91 @@ func (r *Renderer) runBefore(ctx context.Context, page Page, decision Decision, 
 	return doc
 }
 
+// fields is the field block: every claimed field the page carries, rendered by the
+// plugin that claimed it, in the order the DM wrote the keys.
+//
+// The order comes from [Page.Fields] and not from the registry, and the difference
+// matters to a reader: a spell whose frontmatter says `level` then `school` shows
+// level then school however the plugins happen to be registered, and a page whose
+// fields rearrange themselves between builds is a page nobody can screenshot.
+//
+// A field nobody claimed is not in [Page.Fields] at all, so there is no fallback
+// path here and no "render it as plain text" branch. The claim is the switch.
+//
+// The redaction is on this path and not at the call site that built [Page.Fields],
+// because it is the only place that has the decision. A page's field list is
+// assembled by a handler that knows the principal, but the *render* is the thing
+// that decides what may be shown, and a field redacted anywhere else would be a
+// field redacted under somebody else's decision.
+func (r *Renderer) fields(ctx context.Context, page Page, decision Decision, out *bytes.Buffer) {
+	if len(r.hooks.Fields) == 0 || len(page.Fields) == 0 {
+		return
+	}
+
+	for _, field := range page.Fields {
+		spec, claimed := r.hooks.Fields[field.Name]
+		if !claimed || spec.Renderer == nil {
+			// Unreachable while the claim is the switch, and a skip rather than an
+			// error because the alternative is a page that will not render because
+			// one field's owner went missing.
+			continue
+		}
+
+		// The redaction, under the decision, exactly as the body is. See rule 1 in
+		// field.go: this is the only thing between a DM's
+		// `mood: "[!SECRET] he is lying"` and a player's browser, and a plugin is
+		// code compiled into this binary so it cannot be a promise a plugin makes.
+		//
+		// The `CanSeeSecrets` test is the whole of the difference, and it is the
+		// difference the body also makes. Redacting unconditionally -- with
+		// `PublicText` and no test -- would hand the DM `[...]` for a field the DM
+		// wrote and can see in the body of the same page, which is a field that
+		// stops being true for the one person it was written for.
+		public := field.Value
+		if !decision.CanSeeSecrets {
+			public, _ = PublicText(field.Value)
+		}
+
+		html := r.callFieldRenderer(ctx, spec.Renderer, field.Name, page, decision, Field{
+			Name:  field.Name,
+			Value: public,
+			Kind:  spec.Kind,
+		})
+		if html == "" {
+			continue
+		}
+
+		out.WriteString(html)
+	}
+}
+
+// callFieldRenderer runs one renderer and recovers its panic, returning the HTML or
+// the empty string.
+//
+// The same shape as the two hook loops and for the same reason: the caller's usable
+// value is assigned before the call, so a panic is a field that renders as nothing
+// rather than a page that will not render. A field is decoration on top of a page a
+// DM has to be able to read, and a broken field renderer is a bug in a build somebody
+// can fix.
+func (r *Renderer) callFieldRenderer(
+	ctx context.Context, renderer FieldRenderer, name string, page Page, decision Decision, field Field,
+) string {
+	html := ""
+
+	func() {
+		defer safe.Guard(r.log, "field:"+name, "RenderField")
+
+		produced, err := renderer.RenderField(ctx, page, decision, field)
+		if err != nil {
+			r.logHook("field:"+name, "RenderField", err)
+			return
+		}
+		html = produced
+	}()
+
+	return html
+}
+
 // runAfter runs every registered HTML hook in order, against the buffer.
 //
 // The buffer is shared, so one hook's output is the next hook's input and the

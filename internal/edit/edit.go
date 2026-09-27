@@ -55,6 +55,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/fields"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -473,12 +474,22 @@ func (e *Editor) Preview(ctx context.Context, path string, markdown []byte, as d
 		return render.Result{}, fmt.Errorf("previewing %s: %w", checked, err)
 	}
 
-	return e.rendererFor(checked).Render(ctx, render.Page{
+	// The fields come from the *submitted* frontmatter and not from a stored row,
+	// because a preview of unsaved text is a preview of fields the DM has just typed
+	// and the row behind the page does not have yet. A preview showing the old
+	// statline beside the new prose is a preview that lied, and the changelog's "a
+	// preview is the save's own four steps" is what makes this the same answer.
+	frontmatter, _ := doc.FrontmatterText()
+	page := render.Page{
 		Campaign:    e.campaign.Slug.String(),
 		Path:        checked,
 		Body:        doc.Body(),
 		ContentHash: vault.Hash(markdown),
-	}, decision)
+		Fields:      fields.Of(e.hooks, frontmatter),
+	}
+	page.Type = doc.PageType().String()
+
+	return e.rendererFor(checked).Render(ctx, page, decision)
 }
 
 // rendererFor is a renderer for this campaign, with the same link resolver the sync

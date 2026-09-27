@@ -174,6 +174,18 @@ func (r *Renderer) render(ctx context.Context, page Page, decision Decision) (Re
 	toc := buildTOC(doc, source)
 
 	var rendered bytes.Buffer
+
+	// The fields, before the body, into the same buffer. This is the whole of "a
+	// field goes through the one sanitiser": there is no second buffer, no second
+	// pass, and no path from a field renderer's output to the response that does not
+	// go through the `Sanitise` call below.
+	//
+	// Before the body because both of the things this is for want to be looked at
+	// first: a spell's casting time, a character's hit points. A field block under
+	// three paragraphs of description is a field block nobody reads, and the DM
+	// would stop filling it in.
+	r.fields(ctx, page, decision, &rendered)
+
 	if err := r.md.Renderer().Render(&rendered, source, doc); err != nil {
 		return Result{}, fmt.Errorf("rendering %s: %w", page.Path, err)
 	}

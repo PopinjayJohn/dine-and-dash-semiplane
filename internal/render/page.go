@@ -46,6 +46,23 @@ type Page struct {
 	// remove it.
 	Body string
 
+	// Fields are the claimed frontmatter keys and their values, in the order the DM
+	// wrote them.
+	//
+	// **The values are the raw ones.** A field's value can hold a `[!SECRET]` — a
+	// DM marking a field secret is the obvious way to use one — and the redaction
+	// happens in `Renderer.fields`, under the decision, on the way to a plugin. The
+	// same split as `Body`: the pipeline's input does not arrive pre-redacted,
+	// because the redaction is the pipeline's job and doing it twice would be two
+	// answers to "is this text safe to be shown".
+	//
+	// It is not a cache key field, and the reason is worth stating because the other
+	// five fields *are*: a field lives in the frontmatter, and the frontmatter is
+	// part of the file, so `ContentHash` already changes when one does. A second
+	// field for a value `ContentHash` covers would be a second answer to "has this
+	// page changed".
+	Fields []Field
+
 	// ContentHash is the hash of the file this body came from, per
 	// domain.Page. It is part of the cache key, and it is the index's copy of
 	// it, so the two cannot disagree about whether a render is current.
