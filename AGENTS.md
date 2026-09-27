@@ -176,6 +176,20 @@ make install-tools  # the pinned golangci-lint and templ
 do nothing yet. The pinned tool versions live in the `Makefile` and nowhere
 else; CI reads them from there with `make print-<tool>-version`.
 
+**The Go toolchain is pinned in the `Makefile` too, and it is pinned for
+formatting.** `gofmt` may change its output in any release, on purpose, and
+`make fmt-check` is a byte-for-byte comparison — so a developer's `gofmt` and
+CI's disagreeing is a red build over nothing. `make fmt` and `make fmt-check`
+run the *pinned* toolchain's `gofmt` (reached with `GOTOOLCHAIN` and
+`go env GOROOT`, because `gofmt` is a separate binary from the `go` command and
+`GOTOOLCHAIN` does not reach the one on `PATH`), and `make check-go-version`
+fails if the pin and the `go` line in `go.mod` drift apart, since CI installs Go
+from `go.mod` and formats with the pin. **Do not run a bare `gofmt` on this
+repository** — use `make fmt`, or `make fmt-check` to check. One consequence to
+know: a map or struct literal with a key far wider than its neighbours is
+formatted differently by Go 1.25 and Go 1.26+, so keep test-table keys of a
+similar width.
+
 ## Testing expectations
 
 Every change ships with tests. Before proposing a milestone as done:

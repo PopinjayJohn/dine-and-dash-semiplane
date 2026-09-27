@@ -738,6 +738,25 @@
   to the named test that enforces it, and six accepted limitations stated
   rather than discovered.
 
+### Development
+
+- **The Go toolchain that formats the code is now pinned in the `Makefile`**, and
+  `make fmt` and `make fmt-check` run that toolchain's `gofmt` rather than
+  whatever is on `PATH`. Every other tool was already pinned this way; the one
+  that decides whether CI is green was not, and that is how the build failed — a
+  `gofmt` from the developer's Go rewriting a file CI's `gofmt` had just
+  accepted. `gofmt` may change its output in any release, on purpose, so this
+  cannot be left to chance when the check is a byte-for-byte comparison. It is
+  reached with `GOTOOLCHAIN` and `go env GOROOT`, because `gofmt` is a separate
+  binary from the `go` command and `GOTOOLCHAIN` does not reach the one on
+  `PATH`, and it is resolved inside the recipe so that `make help` does not
+  download a toolchain.
+- `make check-go-version` fails if the pin and the `go` line in `go.mod` drift
+  apart, because CI installs Go from `go.mod` and formats with the pin: a drift
+  is `fmt-check` failing on a file nobody changed, reached by the very mechanism
+  meant to prevent it. `fmt-check` depends on it, so any formatting check catches
+  it.
+
 ## [0.1.0] - TBD
 
 _First release. Will cover milestones M0 through M12; see `docs/spec.md`

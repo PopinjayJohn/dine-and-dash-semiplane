@@ -94,8 +94,15 @@ Every change ships with tests. The suite is a stated project priority; see
 - Coverage must not drop below the gate. `make cover` reports and enforces.
 - Regenerating golden files is a deliberate act. Review the diff — a surprise
   golden diff is a bug until proven otherwise.
-- Run `make check` before every push. It is `lint`, `vet` and
+- Run `make check` before every push. It is `fmt-check`, `vet`, `lint` and
   `go test -race -shuffle=on ./...`.
+
+**Formatting.** Use `make fmt` and `make fmt-check`, never a bare `gofmt`.
+`gofmt` may change its output in any release, on purpose, and `fmt-check` is a
+byte-for-byte comparison, so a `gofmt` from a different Go than the one CI runs
+will either fail the build over nothing or be quietly undone by the next
+person's `make fmt`. The toolchain is pinned in the `Makefile` and both targets
+use it, so this is a one-word rule rather than a thing to remember.
 
 ## Pull requests
 
