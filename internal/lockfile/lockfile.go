@@ -50,6 +50,18 @@ type Lock struct {
 // refreshes on a timer rather than after each unit of work: a full reindex of a
 // large campaign is a second or two, and the window is minutes.
 func Acquire(locksDir string, campaign string, now time.Time, stale time.Duration) (*Lock, error) {
+	return acquire(locksDir, campaign, now, stale, os.Remove)
+}
+
+// acquire is Acquire with the unlink step passed in.
+//
+// The seam is here because "stale by timestamp but the file will not go" is a
+// branch with a message in it, and reaching it needs the unlink to fail. Making
+// it fail portably is not possible — a read-only directory stops the unlink on
+// Unix and not on Windows, and a read-only *file* does the opposite — and a
+// package-level variable holding os.Remove would be a data race against this
+// package's parallel tests, which is a worse thing to add than one parameter.
+func acquire(locksDir string, campaign string, now time.Time, stale time.Duration, unlink func(string) error) (*Lock, error) {
 	if err := os.MkdirAll(locksDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating %s: %w", locksDir, err)
 	}
@@ -68,15 +80,33 @@ func Acquire(locksDir string, campaign string, now time.Time, stale time.Duratio
 		if refreshErr != nil {
 			return nil, refreshErr
 		}
-		if age := now.Sub(heldBy.at); age < stale {
+		age := now.Sub(heldBy.at)
+		if age < stale {
 			return nil, fmt.Errorf("%w: %s, held by process %d since %s (%s ago); if that process is gone, delete %s",
 				ErrHeld, campaign, heldBy.pid, heldBy.at.Format(time.RFC3339), age.Round(time.Second).String(), path)
 		}
 
 		// Stale: the holder is gone, or its clock is. Take it over, and say so in
 		// the file the next reader will find.
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("clearing the stale lock at %s: %w", path, err)
+		if unlinkErr := unlink(path); unlinkErr != nil && !errors.Is(unlinkErr, fs.ErrNotExist) {
+			// Stale by timestamp, and still not removable, so it is still held.
+			//
+			// This is the Windows case and it is not an edge: a file with an open
+			// handle cannot be deleted there at all, so a holder that is alive but
+			// has stopped making progress — paused in a debugger, a machine
+			// asleep, a process that is simply stuck — produces exactly this. The
+			// holder is not gone. The stale window was the wrong signal, because
+			// it is about elapsed time and this is about the handle.
+			//
+			// ErrHeld rather than a "could not clean up" error is the difference
+			// between a caller that can tell somebody else has this campaign from
+			// one that cannot, and the message says what to do, because deleting
+			// the file is exactly what does not work here.
+			return nil, fmt.Errorf("%w: %s, held by process %d since %s (%s ago, past the %s window), "+
+				"and the file at %s will not be deleted while that process has it open; "+
+				"stop that process and try again: %w",
+				ErrHeld, campaign, heldBy.pid, heldBy.at.Format(time.RFC3339),
+				age.Round(time.Second), stale, path, unlinkErr)
 		}
 		reopened, reopenErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 		if reopenErr != nil {

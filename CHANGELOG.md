@@ -393,6 +393,20 @@ House rules:
 
 ### Fixed
 
+- **A lock that looks stale but will not be deleted was reported as a failure to
+  clean up, and now reports itself as held.** On Windows a file with an open
+  handle cannot be deleted at all, so a holder that is alive but has stopped
+  making progress — paused in a debugger, a machine asleep, a process that is
+  simply stuck — produces an `os.Remove` failure the moment the stale window
+  passes. The old message said "clearing the stale lock" and wrapped the
+  operating system's complaint, which told a DM nothing they could act on, and
+  it did not match `ErrHeld`, so a caller distinguishing "somebody else has this
+  campaign" from "the lock file is unreadable" — the whole reason `ErrHeld` is a
+  named error — could not tell which it had. It now says the lock is held, names
+  the process to stop, says how old the lock is and what the window was, and
+  **does not** tell the reader to delete the file, because that is the one thing
+  that will not work. The stale window was the wrong signal: it is about elapsed
+  time and this is about the handle.
 - **A stale lock could not be taken over on Windows, and the test that said so
   was testing the wrong thing.** `TestAStaleLockIsTakenOver` acquired a lock and
   then tried to take it over *while still holding it*, which works on Linux —
