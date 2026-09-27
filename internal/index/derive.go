@@ -81,6 +81,88 @@ type plan struct {
 	refusal *Refusal
 }
 
+// CheckWritableAs answers whether `as` may write the page at `pagePath`, and
+// writes nothing at all.
+//
+// It exists because the order of an editor's save is not free, and the wrong
+// order is a hole:
+//
+//  1. write the file, then re-derive the row as `as` -- and on a refusal undo the
+//     file.
+//
+// That is refused here for a reason that has nothing to do with tidiness. **The
+// watcher indexes files as the DM**, so a player's file that is on disk for as
+// long as the refusal takes is a file the watcher will index, as the DM, into a
+// page the store's gate would not have allowed. The gate is the thing that has to
+// run *before* the file is written, and the only code that can ask the same
+// question the write will ask is the code that derives the page -- which is this
+// package.
+//
+// It is a dry run of the write, and it is not wasted: it is also the answer to
+// "may I offer a Save button", which is the same question asked a moment earlier
+// and is why a page's Edit affordance is computed by the same function that
+// validates the save.
+//
+// The settlement check is deliberately *not* short-circuited. A save whose
+// content is already indexed would be a no-op -- and a no-op that skipped the
+// gate is a principal who may write anything, as long as what they write is what
+// the index already says. That is not a hypothetical: it is what a player
+// re-saving an unchanged page does, and `TestAWriteIsGatedEvenWhenItWouldChange
+// Nothing` is the test that found it.
+func (y *Syncer) CheckWritableAs(ctx context.Context, pagePath string, as domain.Principal) error {
+	p, err := y.planFor(ctx, pagePath)
+	if err != nil {
+		return err
+	}
+	if p.refusal != nil || p.skip != nil {
+		// The file is not a page this application can index, so there is no page
+		// to be refused a write to. Reporting the reason is more use than
+		// "you may not": the DM is going to fix the frontmatter, and a player who
+		// cannot fix it needs to know what is wrong with it.
+		if p.refusal != nil {
+			return fmt.Errorf("indexing %s: %s", pagePath, p.refusal.Reason)
+		}
+		return fmt.Errorf("indexing %s: %s", pagePath, p.skip.Reason)
+	}
+	if p.page.Path == "" {
+		return fmt.Errorf("%s: there is no file for it, so there is nothing to write", pagePath)
+	}
+	if p.ownerProblem != nil {
+		// A page whose owner does not hold up cannot be written by anybody but
+		// the DM, and the reason is the one the sync report already carries.
+		return fmt.Errorf("indexing %s: %s", pagePath, p.ownerProblem.Reason)
+	}
+	if err := y.store.CheckWritable(ctx, p.page, as); err != nil {
+		return fmt.Errorf("%s: %w", pagePath, err)
+	}
+	return nil
+}
+
+// OwnerPageID is the page id of the character a page belongs to, from the same
+// two rules and through the same lookup as a sync's, and it is exposed because
+// M9's editor has to ask the same question before it writes a file.
+//
+// A caller that wanted to know "who owns this page" before writing it would
+// otherwise reimplement `OwnerOf` and the `characters/<slug>` resolution, and the
+// second implementation is how a player's spell sheet ends up owned by nobody
+// while the index says otherwise. One function, two callers, one answer.
+//
+// A page with no owner is the empty string and a nil error. A page whose owner
+// does not hold up is the empty string *and* the problem, because that is a
+// refusal a DM has to see and a page that is unowned rather than wrongly owned.
+func (y *Syncer) OwnerPageID(ctx context.Context, pagePath string, doc *vault.Document) (string, *OwnershipProblem) {
+	owner, owned := OwnerOf(pagePath, doc)
+	if !owned {
+		return "", nil
+	}
+
+	pageID, problem := y.checkOwner(ctx, pagePath, y.pageID(ctx, pagePath), doc, owner)
+	if problem != nil {
+		return "", problem
+	}
+	return pageID, nil
+}
+
 // planFor reads one file and works out what the index should hold for it.
 //
 // Every read of a file in this package goes through here, and it is the only
@@ -320,15 +402,18 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 	}
 }
 
-// apply writes a plan. It is the only function in this package that writes a
-// row, and it is called only with a plan that `isSettled` said was not already
-// there.
-func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
-	// As the DM, which is what the sync *is*: it indexes the DM's own vault and
-	// has to write every page in it, including the `dm-only` ones. The store's
-	// write gate is for the other writers, and M9's editor is the one that will
-	// be refused.
-	stored, err := y.store.UpsertPage(ctx, p.page, store.AsDM(y.campaign.ID))
+// apply writes a plan as `as`. It is the only function in this package that
+// writes a row, and it is called only with a plan that `isSettled` said was not
+// already there.
+//
+// The principal is threaded all the way to the row write and not a step short of
+// it, because the store's write gate is the only thing standing between a player's
+// editor and somebody else's page (ADR 0017), and a gate that runs after the
+// derivation but before the write is the only place it can run. What the gate
+// checks is `p.page`, whose owner came from `OwnerOf` two functions up — so the
+// caller cannot assert an owner, only the path and the frontmatter.
+func (y *Syncer) apply(ctx context.Context, p plan, as domain.Principal) (outcome, error) {
+	stored, err := y.store.UpsertPage(ctx, p.page, as)
 	if err != nil {
 		return outcome{}, fmt.Errorf("indexing %s: %w", p.path, err)
 	}

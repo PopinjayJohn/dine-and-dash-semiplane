@@ -1,7 +1,44 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The sync can write as somebody, and the store's write gate runs for an
+  editor's save.** `SyncPathAs` threads a principal all the way to the row write.
+  Until M9 every writer was the sync, which writes as the DM because indexing the
+  DM's own vault is what a sync *is* — so threading it is the only way the gate
+  (ADR 0017) can be in the editor's path at all. A handler cannot forget a
+  function signature.
+- **The gate is asked *before* the file is written, and that order is a
+  correctness property rather than a convenience.** The index watcher writes rows
+  as the DM, so a player's file sitting on disk for the length of a refused save
+  is a file the watcher indexes, as the DM, into a page the gate would not have
+  allowed. `Syncer.CheckWritableAs` derives the page and asks the gate without
+  writing anything; the editor asks it, then writes, then re-derives.
+- **A write is gated even when it would change nothing.** `SyncPathAs` writes only
+  if the index is not already what the file says, so a player re-saving unchanged
+  content never reached the gate — a no-op is neither a refusal nor a success, it
+  is an absence. The pre-check deliberately does not consult settlement for the
+  same reason, and `TestAWriteIsGatedEvenWhenItWouldChangeNothing` is the test
+  that found it.
+- **A conflicting owner is refused to a player and unowned for a DM.** A page under
+  `characters/brian/` that declares `character: aria` carries the path's answer,
+  not the frontmatter's, so the gate refuses it rather than admitting it on the
+  strength of a key the page's own path contradicts.
+- **`archive` tested the wrong sentinel for "nothing indexed and no file"** — it
+  asked `errors.Is(err, vault.ErrNotFound)` for an error the *store* returns, so
+  the tolerance never applied and a sync of a path with no file reported a failure
+  rather than saying nothing. Found by a fixture that syncs a path before its file
+  exists.
+
 ### Added
 
+- **`Syncer.OwnerPageID`, the character's page id for a path and a document**,
+  exposed so M9's editor asks the same question through the same two rules as a
+  sync instead of reimplementing `OwnerOf` and the `characters/<slug>` resolution.
+  A second implementation is how a player's spell sheet ends up owned by nobody
+  while the index says otherwise.
+- **`store.CheckWritable`, the gate asked on its own,** for the same reason: the
+  check has to come first and the file must not exist until it has passed.
 - **`make generate` and `make generate-check`, and `generate-check` is in
   `make check` and in CI.** The templ output is committed, so a `.templ` edited
   without regenerating it is a template and a `_templ.go` that disagree, and the
