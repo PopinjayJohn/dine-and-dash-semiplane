@@ -21,6 +21,40 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
+- **The read predicate's ownership test is no longer `1 = 0`.** It is an `EXISTS`
+  over `principal_characters`, correlated on `pc.character_page_id = p.id` — the
+  correlation is the whole of it, and the version without it is shorter and admits
+  every player to every `dm-and-owner` page in their campaign. The test that used to
+  assert the placeholder was still `1 = 0` — the only way to catch somebody tidying
+  away a fail-closed branch — is now a test of the behaviour: a bound player reads
+  their own `dm-and-owner` page and an unbound one does not.
+- **A player can now find their own character's secrets.** The private index was
+  readable by the DM and by nobody else, so before this milestone a player's own
+  character page's secrets were findable by nobody at all. A binding is what makes
+  ADR 0007's rule ("a character-owned page's secrets are readable by its owner")
+  reachable, and it is why the binding table and the ownership clause shipped
+  together.
+- **A role or binding change ends every session of that principal, in that order.**
+  The order is the point: the change is written first and the sessions ended second,
+  so a failure between them leaves a principal with the *new* role and stale
+  cookies, which the predicate resolves in the safe direction — a demoted DM's
+  stale cookie is a player, not a DM.
+- **Unbinding somebody takes effect on the next request.** A session is a row, and a
+  row is not told that what it may read has changed, so a player who was just
+  unbound would keep reading the page for as long as their cookie lived — a
+  fortnight. This only works because sessions are rows rather than signed blobs,
+  and it only happens because the change says so.
+- **Saving a role that was already the role rotates nothing.** A DM who opens a
+  settings page and presses save should not end every session in the campaign.
+- Three new audit actions, `role_changed`, `binding_changed` and
+  `session_rotated`. They are their own actions rather than details on a principal
+  change because "when did Alice's browser stop being a DM's browser" is a question
+  of its own, and answering it from a detail field is answering it from a string
+  somebody typed. A binding's detail is a **count and not the page ids**: the log is
+  what somebody pastes into a bug report.
+- `Store.EndSessions`, which is not revocation — revocation is a fact about the
+  link, and this is the housekeeping after a change that made every session stale.
+
 - **A redacting logger, and `TestNoTokenInLogs`.** The named test runs a *full
   auth flow* — mint, log the URL and the token, redeem, authenticate, fail a
   redemption, log out — and then greps everything it produced for every token it

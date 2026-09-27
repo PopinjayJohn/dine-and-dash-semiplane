@@ -37,6 +37,20 @@ const (
 	// AuditPrincipalRevoked is a share link revoked, which ends every session
 	// that link created.
 	AuditPrincipalRevoked AuditAction = "principal_revoked"
+
+	// The three below are the changes that make every existing session of a
+	// principal wrong, added in M6 with the binding table that makes a binding
+	// change possible. They are their own actions rather than details on a
+	// principal change, because "when did Alice's browser stop being a DM's
+	// browser" is a question of its own and answering it from a detail field is
+	// answering it from a string somebody typed.
+	AuditRoleChanged    AuditAction = "role_changed"
+	AuditBindingChanged AuditAction = "binding_changed"
+
+	// AuditSessionRotated is a principal's sessions ended because of one of those
+	// two. It is recorded whether or not any session existed: "nobody was logged
+	// in" and "we did not check" are different answers.
+	AuditSessionRotated AuditAction = "session_rotated"
 )
 
 // String returns the action as it appears in the audit log.

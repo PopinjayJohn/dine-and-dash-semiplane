@@ -23,6 +23,9 @@ type Backend interface {
 	CreateSession(ctx context.Context, sess domain.Session) (domain.Session, error)
 	SessionByID(ctx context.Context, id string) (domain.Session, bool, error)
 	DeleteSession(ctx context.Context, id string) error
+	EndSessions(ctx context.Context, principalID string) (int, error)
 	TouchPrincipal(ctx context.Context, id string) error
+	SetPrincipalRole(ctx context.Context, id string, role domain.Role) error
+	ReplacePrincipalCharacters(ctx context.Context, principalID string, pageIDs []string) error
 	AppendAudit(ctx context.Context, entry domain.AuditEntry) (domain.AuditEntry, error)
 }

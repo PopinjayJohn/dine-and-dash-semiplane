@@ -126,6 +126,32 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
+// EndSessions deletes every session of a principal and returns how many went.
+//
+// It is not revocation. Revocation is a *fact about the link* — `revoked_at` — and
+// this is the housekeeping that follows a change which makes every existing
+// session wrong: a role change, or a character binding. The caller rotates; this
+// only ends what is already stale.
+//
+// Separate from RevokePrincipal because the two are not the same event and a DM
+// looking at the principal afterwards should be able to tell them apart. A
+// principal whose sessions were rotated is still logged in — they click their link
+// again — while a revoked one has no way back.
+func (s *Store) EndSessions(ctx context.Context, principalID string) (int, error) {
+	const query = `DELETE FROM sessions WHERE principal_id = ?`
+
+	result, err := s.write.ExecContext(ctx, query, principalID)
+	if err != nil {
+		return 0, writeError("ending the sessions of the principal "+principalID, err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("ending the sessions of the principal %s: %w", principalID, err)
+	}
+	return int(affected), nil
+}
+
 // PurgeExpiredSessions deletes the sessions that no longer authenticate and
 // returns how many went.
 //
