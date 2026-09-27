@@ -73,6 +73,20 @@
   restore is a save, so it cannot overwrite a page that changed since the history
   panel was drawn.
 
+- **[ADR 0019](docs/adr/0019-the-writer-checks-before-it-writes.md):** the
+  writer checks before it writes, and the hub carries nothing. The order of a save
+  is the design, and ADR 0017's residual — the gate checks ownership but not
+  position — is closed by the gate being handed a *derived* page whose owner came
+  from the path and the frontmatter, so there is nothing for a caller to assert.
+- **[ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md):** link
+  resolution is campaign-wide, and that is a finding rather than a decision. A
+  player can tell which paths exist from whether a link resolved; it is not a
+  content disclosure, and the fix is decided and *not built* because M10 makes
+  links more visible and the two changes belong in the same conversation. The fix
+  is `domain.WithPrincipal` in the context, read by the resolver, with no change
+  to the render cache key because `CanSeeSecrets` already discriminates the output
+  completely.
+
 ### Fixed
 
 - **A page tool was silently a save.** `?edit=1&op=purge` arrived with no

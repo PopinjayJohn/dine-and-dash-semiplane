@@ -164,19 +164,55 @@ re-litigate one without a new ADR that supersedes it.
   of the server, and in whatever a DM pastes into a bug report.
 - `spike/datastar/` is a separate Go module. `go test ./...` at the root does
   not reach it; `make spike` does. It is deleted in M10.
+- **`internal/edit` is the only writer, and it checks before it writes.** The
+  order is the design: read the file, compare its hash, **ask the store's gate
+  about the content**, write the file, re-derive the row, keep the old text. The
+  gate before the write because **the index watcher writes rows as the DM** — a
+  player's file on disk for the length of a rollback is a file the watcher will
+  index, as the DM, into a page the gate refused. A refused write is laundered
+  into the index through the one path that writes rows without asking.
+- **The sync takes a principal, and the gate sees the *derived* owner.** So a
+  player cannot present somebody else's character as the owner of a page: the
+  derivation decides who the owner is and the gate checks that, and neither is a
+  value in a request. This closed the residual ADR 0017 left for the editor.
+- **A write is gated even when it would change nothing.** A sync writes only if
+  the index is not already what the file says, so a player re-saving unchanged
+  content never reached the gate. A no-op is neither a refusal nor a success.
+- **A preview is the save's own four steps** — parse, derive, decide, render —
+  in the same function. It started as a handler that rendered the whole file and
+  produced an `<hr>` where the frontmatter fences were. One render path, one
+  place the answer is made.
+- **A conflict is three texts and no merge.** A merge is a decision about
+  somebody's prose, and a server that makes it silently has edited a DM's page
+  without asking. The base is empty — not guessed — when this application has not
+  kept the text the edit was made from.
+- **A rename rewrites links by byte offset, never by re-rendering.** A
+  `WikiLink` carries no source segment, so an AST rewrite would have to
+  re-serialise the page, and re-serialising a DM's markdown is the one thing
+  this project must never do to a file. goldmark is used for the one thing it
+  is reliable about, which is where the code blocks are.
+- **An archive removes the file and keeps the row; a purge deletes the row.** The
+  pair is recoverable-and-not, and a purge asks for a typed confirmation because
+  a browser's `confirm()` is suppressed by a prefetch and is not announced by a
+  screen reader.
+- **The users page mints a link and shows it once, and the list shows no token,
+  no hash and no hint.** Four characters of a 32-byte credential is a
+  fingerprint worth having in a list of six people at a table.
+- **Link resolution is campaign-wide, and that is a finding, not a decision.**
+  A player can tell which paths exist from whether a link resolved. It is not a
+  content disclosure, and the fix is decided and not built because M10 makes
+  links more visible and the conversation belongs there — see
+  [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md).
 - The full plan lives in `docs/spec.md`. The milestone list is the last section
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M9 — Editing**. The editor, autosave, the preview that reuses
-the render path, `ETag` plus 409 and the three-way diff, archive and purge,
-rename, revisions and restore, **player editing of their own character pages**,
-and the `users new`/`users revoke` buttons that mint and revoke share links —
-which is the missing half of what a DM needs to hand somebody a link. M9 is the
-first milestone in which anything writes a markdown file, so ADR 0001's other
-half comes under pressure for the first time: the editor is a writer, and every
-invariant above that says "the sync engine never writes a file" is about the
-sync engine, not about the application.
+Next milestone: **M10 — Datastar**. The interactive layer: search-as-you-type
+with resolved candidates, the session log, toasts, optimistic fragments, and
+**the fix for ADR 0020's link resolution** — which is why it is here rather than
+deferred again. The sparkline of a search result, a page's live update and a
+resolved link title are the same question asked three ways, and this milestone
+answers it once. `spike/datastar/` is deleted at the end of it.
 
 ## Non-negotiable invariants
 
