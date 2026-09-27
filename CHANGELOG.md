@@ -2,6 +2,32 @@
 
 ### Added
 
+- **`internal/auth`, and the minting half of it.** 32 bytes from `crypto/rand`,
+  hex-encoded, shown once and never stored. What is kept is the SHA-256 and four
+  characters of it, so a dump of the campaign database identifies a token and
+  cannot use one. The hash is SHA-256 and not a password hash on purpose: a token
+  is 256 bits of entropy, so there are no cheap inputs for a KDF to defend
+  against, and one would be 100ms of latency on every redemption to slow an attack
+  that already cannot succeed.
+- **`Token` is a type that cannot print itself.** A bare string is the shape of
+  every other value in this program, and the one value that must never be logged.
+  It implements `String`, `GoString` *and* `Format`, and the last two are not
+  belt-and-braces: **`%#v` does not consult `String`**, it prints the Go-syntax
+  representation, and **`%x` on a struct hex-encodes its fields** — so a Token
+  with only `String` hands the whole credential to `t.Errorf("%#v", err)` and to
+  the struct-dumping log handlers. Both were found by the test that checks every
+  verb, and `Format` closes the set rather than closing the two that were noticed.
+- A minted link is refused when there is nowhere to point it, no campaign to scope
+  it to, a role that is not one, or **no label** — because the label is the only
+  thing that tells two links apart in the DM's list, and a list of six links with
+  no labels is a list of six sixteen-bit numbers.
+- **A link has no expiry by default**, which is the default most DMs want: a link
+  that quietly expired would arrive as "my player's link stopped working" with no
+  cause, and revocation is the thing a DM thinks of doing.
+- The store seam is **nine methods, declared by this package** — by the consumer,
+  so a second implementation is a compile error away rather than a runtime
+  surprise.
+
 - **Share links, sessions, an audit log and character bindings**, and the store
   methods that keep them. `principals`, `sessions` and `audit_log` were already in
   the base migration, written down before any of them was needed; this milestone
@@ -248,7 +274,6 @@
   far as the string was concerned. A filter value beginning with a colon is now
   quoted on the way out as well, so `tag: :00` survives a round trip.
 
-
 ### Fixed
 
 - **A test fixture's table keys were long enough to make two Go versions
@@ -274,7 +299,6 @@
   adjacent to what was asked for cannot be debugged from the results.
 
 ### Changed
-
 
 - The migration names in the spec were wrong, and §5 now says which is which:
   `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both
