@@ -353,6 +353,29 @@ func (f *fixture) indexNew(path string) {
 	}
 }
 
+// fileFor is a public note's file, for a test that needs a page that exists and
+// whose title the test knows.
+func fileFor(title, body string) string {
+	return fmt.Sprintf("---\ntitle: %q\ntype: %s\nvisibility: players\n---\n\n%s", title, domain.PageTypeNote, body)
+}
+
+// indexed is a row, for a test that wants to know what the index says — which is
+// the *only* way to learn when the index last changed a page, because that is not a
+// fact about any file.
+func (f *fixture) indexed(path string) domain.Page {
+	f.t.Helper()
+
+	page, err := f.store.GetPageArchived(f.t.Context(), f.campaign.ID, path, store.AsDM(f.campaign.ID))
+	if err != nil {
+		f.t.Fatalf("reading back %s: %v", path, err)
+	}
+	return page
+}
+
+// newTinyHub is a hub that will take one stream and refuse the second, for the
+// tests about what a full hub answers.
+func newTinyHub() *sse.Hub { return sse.NewHub(1) }
+
 // readFile is what is on disk, for a test that wants to know what a save did
 // rather than what the index says about it.
 func (f *fixture) readFile(path string) string {

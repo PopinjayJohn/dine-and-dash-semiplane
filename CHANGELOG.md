@@ -35,6 +35,25 @@
   `TestSearchMatchExpressionQuotesEveryClause` holds the line that nothing else
   can. A field on the query rather than a flag on the store's method, so a caller
   widens the index by name.
+- **The session log.** `?log=1` is the list and `?log=live` is the stream, and it
+  is the same hub, the same notice and the same "the subscriber renders it under
+  its own decision" rule as a live page, over a *campaign-wide* topic — so it is
+  nearly free: one more subscriber on a topic the publisher was already publishing
+  to, and one query the page view did not need.
+- **`store.ListRecentlyChanged`**, ordered by `updated_at` and nothing else. That
+  is when the row was last written, which is when a DM saved the page, which is
+  what a reader of a change log is asking about. There is no ordering in a
+  directory of markdown files, and inventing one — by mtime, by path — would be a
+  claim about what happened that this application cannot support.
+- **The log has no author and no excerpt, on purpose.** The row carries
+  `updated_at` and that is what a line says; a page's history is where the prose
+  and the who are. A log that guessed at either would be wrong on the first edit
+  made through a file rather than through the editor.
+- **The log is the *reader's* campaign.** The listing is the read predicate, so a
+  player watching it sees the public pages and never the DM's changes to the
+  private ones — including the fact that a private page moved, because a row that
+  does not come back is a row that is not in the list. A log that announced hidden
+  edits would undo ADR 0020's fix through a different route.
 - **`web/static/wiki.js`**, the reading layer: the dropdown, the live page and the
   toasts. The patch handler honours a selector of `#page` and **drops any other**,
   so a hijacked stream can at worst put a stale page on screen; and every surface

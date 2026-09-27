@@ -58,6 +58,10 @@ func (b brokenStore) SearchSecrets(context.Context, string, domain.Principal, se
 	return nil, b.out("SearchSecrets")
 }
 
+func (b brokenStore) ListRecentlyChanged(context.Context, string, domain.Principal, int) ([]domain.Page, error) {
+	return nil, b.out("ListRecentlyChanged")
+}
+
 func (b brokenStore) ListPrincipals(context.Context, string) ([]domain.Principal, error) {
 	return nil, b.out("ListPrincipals")
 }

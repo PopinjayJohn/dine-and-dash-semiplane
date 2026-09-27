@@ -76,6 +76,7 @@ templ sidebar(v shell) {
 			<a class="brand" href={ v.Campaign.Root }>{ v.Campaign.Name }</a>
 			<span class="brand-sub">A wiki for one table</span>
 			@searchBox(v.Campaign)
+			@logLink(v.Campaign)
 			<h2>Pages</h2>
 			if len(v.Tree) == 0 {
 				<p class="tree-empty">Nothing here yet.</p>
@@ -202,6 +203,22 @@ templ searchBox(c campaignNav) {
 			data-search-results={ c.Root + "?search=1" }
 		/>
 		<div id="search-results" class="search-dropdown" data-search-dropdown hidden></div>
+	</form>
+}
+
+// logLink is the log's entry point: a button in the sidebar, so the log is
+// something a reader can arrive at rather than a stream nobody opens. `?log=live`
+// is the stream and `?log=1` is the list once, and a reader whose script is
+// blocked sees the list.
+//
+// It is a form with a submit button and not a link, and the reason is that `?log=1`
+// is not a URL a reader can keep: the log is a thing you watch, and a watched
+// thing is a request that does not end. A link would open the list once and look
+// broken.
+templ logLink(c campaignNav) {
+	<form class="log-form" method="get" action={ c.Root } role="search">
+		<input type="hidden" name="log" value="live"/>
+		<button type="submit" class="log-open">Watch what changes</button>
 	</form>
 }
 

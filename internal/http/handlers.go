@@ -82,6 +82,17 @@ func (a *app) browse(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Query().Has("new"):
 		a.newPage(w, r)
 		return
+	case r.URL.Query().Has("log"):
+		// The session log, and `?log=live` for the stream. One route with a mode
+		// rather than two paths, for the reason every auxiliary surface here is a
+		// query: `log` is a name a DM writes pages under.
+		if r.URL.Query().Get("log") == "live" {
+			a.liveLog(w, r)
+			return
+		}
+		a.logResults(w, r)
+		return
+
 	case r.URL.Query().Has("search"):
 		// The search dropdown, and it hangs off the root as a query for the reason
 		// every auxiliary surface in this application does: a path segment would be

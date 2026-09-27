@@ -436,3 +436,29 @@ templ searchCandidateRow(c candidate) {
 		}
 	</a>
 }
+
+// # The session log
+//
+// A list of what changed, and the stream that keeps it current. The `id` is the
+// one the stream patches, and it is a constant named in two files because a
+// stream that could patch anything in a page is a stream asking the browser to
+// believe more than it should.
+templ log(v logView) {
+	<div class="log" id="session-log">
+		<h2>What has changed</h2>
+		if len(v.Entries) == 0 {
+			<p class="tree-empty">Nothing yet.</p>
+		} else {
+			<ol class="log-entries">
+				for _, e := range v.Entries {
+					<li class="log-entry">
+						<a href={ e.URL }>{ e.Title }</a>
+						<span class="log-kind">{ e.Kind }</span>
+						<span class="log-path">{ e.Path }</span>
+						<time class="log-time" datetime={ e.Changed }>{ e.Changed }</time>
+					</li>
+				}
+			</ol>
+		}
+	</div>
+}

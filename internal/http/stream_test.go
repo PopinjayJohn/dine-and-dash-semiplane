@@ -95,8 +95,17 @@ func (e event) text() string { return strings.Join(e.data, "\n") }
 func (f *fixture) openStream(t *testing.T, path string, cookie *http.Cookie) (*stream, event) {
 	t.Helper()
 
+	return f.openSSE(t, path+"?stream=1", cookie)
+}
+
+// openSSE is the general form, for a stream whose URL is not a page's — the session
+// log's `?log=live` is the other one. It takes the target verbatim, which is the
+// whole difference and which `openStream` hides behind its own `?stream=1`.
+func (f *fixture) openSSE(t *testing.T, target string, cookie *http.Cookie) (*stream, event) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(t.Context())
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, path+"?stream=1", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -129,7 +138,7 @@ func (f *fixture) openStream(t *testing.T, path string, cookie *http.Cookie) (*s
 
 	first, err := s.next(5 * time.Second)
 	if err != nil {
-		t.Fatalf("the first frame of a stream for %s: %v", path, err)
+		t.Fatalf("the first frame of a stream for %s: %v", target, err)
 	}
 	return s, first
 }

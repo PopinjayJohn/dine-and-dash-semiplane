@@ -984,3 +984,46 @@ a:hover {
   box-shadow: 0 6px 18px rgb(0 0 0 / 14%);
   font-size: 0.9rem;
 }
+
+/* ------------------------------------------------------------------ log ---- */
+
+.log-form {
+  margin: 0.4rem 0 0;
+}
+
+.log-open {
+  width: 100%;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.log {
+  max-width: var(--measure);
+}
+
+.log-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.log-kind,
+.log-path,
+.log-time {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.log-time {
+  margin-left: auto;
+  font-family: var(--mono);
+}

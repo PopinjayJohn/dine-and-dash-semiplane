@@ -334,6 +334,33 @@ type candidate struct {
 	Secret bool
 }
 
+// logView is the session log: a campaign's recently changed pages, newest first.
+//
+// It is a *list* and not a set of loose `<li>`s, because Datastar's
+// `datastar-swap` replaces the whole element and a list is the one shape where
+// replacing the whole thing is what the reader wants: the order is the content, and
+// a reader who scrolled wants the order to change under them if a change happened.
+type logView struct {
+	Entries []logEntry
+}
+
+// logEntry is one line of the log.
+//
+// **There is no author and no excerpt.** The row carries `updated_at` and that is
+// what is shown; a page's history is where the prose and the who are, and a log
+// that guessed at either would be wrong on the first edit made through a file
+// rather than through the editor.
+type logEntry struct {
+	Title string
+	Path  string
+	Kind  string
+	URL   string
+
+	// Changed is RFC 3339 in UTC, for the same reason the page's `updated` is, and
+	// the browser's `<time>` localises it.
+	Changed string
+}
+
 // usersView is the campaign's principals.
 //
 // It carries a `shell` and not a `page`, because there is no page: a list of
