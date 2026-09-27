@@ -21,6 +21,31 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
+- **A rate limit on redemption**, ten attempts a minute per address, and the
+  named test `TestRateLimitedRedemption` is written so that a limiter refusing the
+  *second* attempt cannot pass it. Ten is about right for a campaign at a table: a
+  player redeems once, a DM redeems twice testing a link they just minted, and a
+  legitimate player never reaches the limit — a limit a real player hits is a
+  player locked out of their campaign with no cause.
+- **The limit counts the requests it refuses.** A limiter that does not is a
+  limiter that refuses the tenth and then allows the eleventh, which is a limit of
+  one. And it runs on the *redemption*, not on the store lookup, so a player who
+  fumbled nine times and then pasted the right link is a player.
+- **A forwarded header is believed only from a proxy this deployment is
+  configured to trust.** A forwarded header is attacker-controlled on any direct
+  connection, so believing it unconditionally means the limit is bypassed by
+  sending a fresh `X-Forwarded-For` per attempt — exactly the attack the limit
+  exists to slow. A request with no identifiable address is counted *together*
+  with every other such request, because a limiter that skips unidentified
+  requests makes "hide your address" a way to be unlimited.
+- **The limiter is bounded and the bound is testable.** Every attempt from a new
+  address allocates, so a botnet gets a free allocation each; past the bound the
+  oldest window is dropped and the limit becomes approximate, which is the
+  documented price. `Tracked()` exists so the bound is an observable claim rather
+  than a comment. The closed-window sweep is **amortised rather than run on every
+  check**, which the 20,000-distinct-addresses test found the hard way: O(n) per
+  check is quadratic under exactly the burst the bound exists to absorb.
+
 - **Redemption, and the token leaving the URL.** A token is parsed, hashed, and
   looked up by its hash in a UNIQUE column; then the campaign, the revocation and
   the expiry are checked; then the session is created, the last use stamped and
