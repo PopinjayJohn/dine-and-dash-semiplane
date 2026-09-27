@@ -134,13 +134,11 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Query().Get("stream") != "" {
-		// The stream is not a thing this build serves, and saying so with the
-		// stream's own 404 rather than serving the page is deliberate: a URL that
-		// looks like one thing and is another is a URL nobody can debug.
-		a.notFound(w, r)
-		return
-	}
+	// The stream is a different response to the same resource, and it reads the
+	// page itself: the 404 below has to be the same 404 for both, or a reader who
+	// asked for a live copy of a page they may not see gets one thing and a reader
+	// who asked for the page gets another.
+	streaming := r.URL.Query().Has("stream")
 
 	stored, err := a.cfg.Store.GetPage(r.Context(), req.Campaign.ID, path, req.Principal)
 	if err != nil {
@@ -152,6 +150,11 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.fail(w, r, "reading "+path, err)
+		return
+	}
+
+	if streaming {
+		a.pageStream(w, r, path)
 		return
 	}
 
@@ -169,14 +172,15 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 	view := pageData{
 		shell: a.shellFor(req, a.pagesIn(r), stored.Title),
 		Page: renderedPage{
-			Path:     stored.Path,
-			Title:    stored.Title,
-			Kind:     stored.Type.String(),
-			Updated:  stored.UpdatedAt.UTC().Format(time.RFC3339),
-			Audience: stored.Visibility.String(),
-			HTML:     pageFragment(result.HTML),
-			TOC:      result.TOC,
-			RawURL:   rawURL(req.Campaign, stored.Path),
+			Path:      stored.Path,
+			Title:     stored.Title,
+			Kind:      stored.Type.String(),
+			Updated:   stored.UpdatedAt.UTC().Format(time.RFC3339),
+			Audience:  stored.Visibility.String(),
+			HTML:      pageFragment(result.HTML),
+			TOC:       result.TOC,
+			RawURL:    rawURL(req.Campaign, stored.Path),
+			StreamURL: streamURL(req.Campaign, stored.Path),
 		},
 	}
 	view.Current = stored.Path
@@ -441,11 +445,17 @@ func (a *app) redirect(w http.ResponseWriter, status int, to string) {
 	w.WriteHeader(status)
 }
 
-// rawURL is where a page's markdown is. It is here rather than in the template
-// because a template that builds a URL is a template that can build the wrong one,
-// and this one has to agree with `pageSource` about the parameter's name.
+// rawURL is where a page's markdown is, and streamURL where its stream is. Both are
+// here rather than in the template because a template that builds a URL is a
+// template that can build the wrong one, and these two have to agree with the
+// handler about the parameter's names -- `pageSource` and `pageStream` are what
+// read them back.
 func rawURL(campaign domain.Campaign, path string) string {
 	return render.PageURL(campaign.Slug.String(), path) + "?raw=1"
+}
+
+func streamURL(campaign domain.Campaign, path string) string {
+	return render.PageURL(campaign.Slug.String(), path) + "?stream=1"
 }
 
 // campaignNavFor is the three template-visible facts about a campaign, and it is a

@@ -2,6 +2,34 @@
 
 ### Added
 
+- **A live page.** `?stream=1` on a page URL is a stream of that page's changes,
+  and each frame patches the `#page` article and nothing else — so a reader who is
+  halfway down the page keeps their scroll position and their place in the sidebar,
+  which is the difference between a live page and a page that reloads itself under
+  you.
+- **The hub carries a *notice*, not content, and that is the security property.**
+  The obvious design — the watcher renders the changed page once and hands the same
+  component to everyone watching it — has no correct version: a DM and a player are
+  watching the same page, the watcher can only pick one decision, and so either the
+  DM's page is full of secrets in a player's stream or the player's is missing them.
+  So each subscriber re-reads and re-renders under its own principal and its own
+  decision, through the same `renderPage` the page route uses. One rendering path,
+  one decision per reader, and the bytes on a player's stream are produced by code
+  holding that player's decision.
+- **A stream for a page its reader may not see is a 404, before the upgrade.** A
+  stream that never sends anything is a connection a client reconnects to for ever.
+- **A stream is bounded, and a full hub is a 500 with a `Retry-After`,** because a
+  reader who is told "come back in a moment" gets a page that updates in a moment.
+- **The keep-alive is a comment frame written by hand in the handler,** because
+  `internal/sse` has four functions and none of them is a comment, and inventing a
+  fifth is a change to ADR 0006 rather than a detail. The handler is the one place
+  in the application that knows the framing's spelling, and the comment says so.
+- **`PageChanged` is a function taking the hub, not a method on the application,
+** because the hub is the caller's — the same rule that says the caller closes the
+  store it opened — and the only other thing it needs is the rule for a topic's
+  name, which is a rule about how this package spells a page.
+- **`Config.Hub` is required rather than optional,** for the same reason: a hub the
+  application built for itself is one nobody can close.
 - **`internal/http`: the web shell.** The chi router, the middleware, the
   handlers and the templates. A handler is handed everything the middleware
   decided and takes no principal as an argument, because a handler that takes a

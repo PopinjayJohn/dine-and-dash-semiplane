@@ -334,26 +334,6 @@ func TestAPageReadFailsClosedOnTheOwnershipLookup(t *testing.T) {
 	}
 }
 
-// TestTheStreamQueryIsRefusedRatherThanIgnored: `?stream=1` is not a thing this
-// build serves, and a URL that looks like one thing and is another is a URL nobody
-// can debug. It is answered with the stream's own 404.
-func TestTheStreamQueryIsRefusedRatherThanIgnored(t *testing.T) {
-	t.Parallel()
-
-	f := newFixture(t)
-	player := f.playerSession()
-
-	for _, target := range []string{
-		f.pageURL("locations/rivergate") + "?stream=1",
-		f.pageURL("locations/rivergate") + "?stream=maybe",
-	} {
-		got := f.get(target, player)
-		if got.status != http.StatusNotFound {
-			t.Errorf("GET %s is %d, want 404", target, got.status)
-		}
-	}
-}
-
 // TestARawQueryOnlyForTheExactValue: `?raw=1` is the markdown and `?raw=true` or
 // `?raw=yes` are the page. Three spellings of a boolean is one too many, and the
 // one that matters is the one the link in the page uses.

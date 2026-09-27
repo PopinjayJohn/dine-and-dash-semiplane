@@ -19,6 +19,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/idgen"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 )
@@ -72,6 +73,11 @@ type fixture struct {
 	// ariaID is the character page the player is bound to, which the ownership
 	// tests need as an owner column value.
 	ariaID string
+
+	// hub is the fixture's, because the hub is the caller's -- the same rule that
+	// says the caller closes the store it opened. A test that wants to publish a
+	// change publishes it on this one.
+	hub *sse.Hub
 
 	dmLink     auth.Issued
 	playerLink auth.Issued
@@ -157,9 +163,11 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	// principal who is of somewhere else.
 	f.otherLink = mustIssue(t, s, authCfg, other, domain.RolePlayer, "a player of Thornford")
 
+	f.hub = sse.NewHub(wiki.DefaultStreams)
 	f.cfg = wiki.Config{
 		Store:      s,
 		Redeemer:   auth.Redeemer{Backend: s, Config: authCfg},
+		Hub:        f.hub,
 		Version:    version.Get(),
 		Now:        f.hands.now,
 		Logger:     slog.New(slog.NewJSONHandler(f.logs, nil)),

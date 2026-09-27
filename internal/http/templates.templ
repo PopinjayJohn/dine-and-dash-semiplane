@@ -155,6 +155,12 @@ templ article(p renderedPage) {
 		</div>
 		<p class="page-meta">
 			<a href={ p.RawURL }>Source</a>
+			// A plain link to the stream, and a `data-stream` attribute naming it
+			// for whatever script opens the connection. M8 has the stream and the
+			// client and not the script that joins them, so this is also the way a
+			// DM checks that the live copy works: open it in a browser tab and the
+			// events arrive as text.
+			<a href={ p.StreamURL } data-stream={ p.StreamURL }>Live</a>
 		</p>
 	</article>
 }

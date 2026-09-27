@@ -20,19 +20,19 @@ func TestTheHubFansOneUpdateOutToEveryStreamOnTheTopic(t *testing.T) {
 	hub := sse.NewHub(8)
 	defer hub.Close()
 
-	watching, _ := subscribe(t, hub, "blackwater/locations/rivergate")
-	elsewhere, _ := subscribe(t, hub, "blackwater/sessions/14")
+	watching, _ := subscribe(t, hub, "blackwater/locations/rivergate", "changed")
+	elsewhere, _ := subscribe(t, hub, "blackwater/sessions/14", "the log")
 
-	// Two subscribers on the same topic both take it, which is the case a
-	// single global channel would have got wrong in the other direction.
-	alsoWatching, _ := subscribe(t, hub, "blackwater/locations/rivergate")
+	// Two subscribers on the same topic both take it, which is the case a single
+	// global channel would have got wrong in the other direction.
+	alsoWatching, _ := subscribe(t, hub, "blackwater/locations/rivergate", "changed too")
 
-	if got := hub.Publish("blackwater/locations/rivergate", "page", static("changed")); got != 2 {
+	if got := hub.Publish("blackwater/locations/rivergate"); got != 2 {
 		t.Fatalf("Publish reached %d streams, want 2", got)
 	}
 
 	assertPatch(t, watching, "page", "changed")
-	assertPatch(t, alsoWatching, "page", "changed")
+	assertPatch(t, alsoWatching, "page", "changed too")
 	select {
 	case patch := <-elsewhere:
 		t.Errorf("a stream on another topic received a patch: %v", patch)
@@ -50,7 +50,7 @@ func TestAHubWithNoSubscribersPublishesToNobody(t *testing.T) {
 	hub := sse.NewHub(8)
 	defer hub.Close()
 
-	if got := hub.Publish("nothing/watching", "page", static("x")); got != 0 {
+	if got := hub.Publish("nothing/watching"); got != 0 {
 		t.Errorf("Publish reported %d deliveries to an empty hub", got)
 	}
 	if hub.Subscribers() != 0 {
@@ -68,10 +68,10 @@ func TestTheHubIsBounded(t *testing.T) {
 	hub := sse.NewHub(2)
 	defer hub.Close()
 
-	_, firstCancel := subscribe(t, hub, "a")
-	_, _ = subscribe(t, hub, "b")
+	_, firstCancel := subscribe(t, hub, "a", "x")
+	_, _ = subscribe(t, hub, "b", "x")
 
-	if _, _, err := hub.Subscribe("c"); !errors.Is(err, sse.ErrHubFull) {
+	if _, _, err := hub.Subscribe("c", noPatch); !errors.Is(err, sse.ErrHubFull) {
 		t.Fatalf("a third subscription on a hub of two returned %v, want ErrHubFull", err)
 	}
 
@@ -85,7 +85,7 @@ func TestTheHubIsBounded(t *testing.T) {
 	// Ending one makes room, which is what makes a refused stream recoverable
 	// rather than permanent.
 	firstCancel()
-	if _, _, err := hub.Subscribe("c"); err != nil {
+	if _, _, err := hub.Subscribe("c", noPatch); err != nil {
 		t.Errorf("subscribing after a cancel returned %v", err)
 	}
 }
@@ -102,7 +102,7 @@ func TestASlowSubscriberLosesAFrameRatherThanThePublisher(t *testing.T) {
 	defer hub.Close()
 
 	// A subscriber that is never read from: the reader is the point of the test.
-	subscribe(t, hub, "a")
+	subscribe(t, hub, "a", "x")
 
 	// Three publishes into a buffer of one. The first is taken and the other two
 	// are dropped rather than queued, and none of them blocks.
@@ -110,7 +110,7 @@ func TestASlowSubscriberLosesAFrameRatherThanThePublisher(t *testing.T) {
 	go func() {
 		total := 0
 		for range 3 {
-			total += hub.Publish("a", "page", static("x"))
+			total += hub.Publish("a")
 		}
 		done <- total
 	}()
@@ -138,13 +138,13 @@ func TestCancellingStopsTheUpdates(t *testing.T) {
 	hub := sse.NewHub(8)
 	defer hub.Close()
 
-	patches, cancel := subscribe(t, hub, "a")
+	patches, cancel := subscribe(t, hub, "a", "x")
 	cancel()
 
 	if hub.Subscribers() != 0 {
 		t.Errorf("a cancelled subscription is still counted: %d", hub.Subscribers())
 	}
-	if got := hub.Publish("a", "page", static("x")); got != 0 {
+	if got := hub.Publish("a"); got != 0 {
 		t.Errorf("a cancelled subscription took %d updates", got)
 	}
 
@@ -165,8 +165,8 @@ func TestClosingTheHubDrainsEveryStream(t *testing.T) {
 	t.Parallel()
 
 	hub := sse.NewHub(8)
-	first, _ := subscribe(t, hub, "a")
-	second, _ := subscribe(t, hub, "b")
+	first, _ := subscribe(t, hub, "a", "x")
+	second, _ := subscribe(t, hub, "b", "x")
 
 	// Both handlers finish on their own, from a goroutine each, which is the
 	// shape a real handler has.
@@ -192,7 +192,7 @@ func TestClosingTheHubDrainsEveryStream(t *testing.T) {
 		t.Fatal("closing the hub did not end the streams reading from it")
 	}
 
-	if _, _, err := hub.Subscribe("a"); !errors.Is(err, sse.ErrHubClosed) {
+	if _, _, err := hub.Subscribe("a", noPatch); !errors.Is(err, sse.ErrHubClosed) {
 		t.Errorf("subscribing to a closed hub returned %v, want ErrHubClosed", err)
 	}
 }
@@ -213,24 +213,36 @@ func TestConcurrentSubscribeAndPublishIsRaceFree(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			if _, cancel, err := hub.Subscribe(topic); err == nil {
+			if _, cancel, err := hub.Subscribe(topic, noPatch); err == nil {
 				cancel()
 			}
 		}()
 		go func() {
 			defer wg.Done()
 			for range 16 {
-				hub.Publish(topic, "page", static("x"))
+				hub.Publish(topic)
 			}
 		}()
 	}
 	wg.Wait()
 }
 
-func subscribe(t *testing.T, hub *sse.Hub, topic string) (<-chan sse.Patch, func()) {
+// noPatch is a subscriber that never changes anything, for the tests that are
+// about the hub's bookkeeping rather than about a subscriber's bytes.
+func noPatch() (sse.Patch, error) {
+	return func(*sse.Sender) error { return nil }, nil
+}
+
+// subscribe is a stream whose patch swaps `#page` for the given HTML, which is the
+// shape every real subscriber in this project has. The id is fixed because it is
+// the same fixed id everywhere, and a helper whose second argument is always "page"
+// is a parameter a test cannot learn anything from.
+func subscribe(t *testing.T, hub *sse.Hub, topic, html string) (<-chan sse.Patch, func()) {
 	t.Helper()
 
-	patches, cancel, err := hub.Subscribe(topic)
+	patches, cancel, err := hub.Subscribe(topic, func() (sse.Patch, error) {
+		return func(stream *sse.Sender) error { return stream.Swap("page", static(html)) }, nil
+	})
 	if err != nil {
 		t.Fatalf("Subscribe(%q): %v", topic, err)
 	}

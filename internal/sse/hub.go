@@ -3,12 +3,24 @@ package sse
 import (
 	"errors"
 	"sync"
-
-	"github.com/a-h/templ"
 )
 
 // Hub is the fan-out behind a live page: one thing changed, and every browser
 // watching it is told.
+//
+// # The hub carries a signal, not content
+//
+// `Publish` takes a topic and nothing else. What the reader does about it is the
+// subscriber's own business, so each subscriber re-reads and re-renders under its
+// *own* access decision.
+//
+// That is not a convenience. The obvious alternative -- the publisher rendering
+// the change once and handing the same component to everyone -- is a way for a
+// DM's render to reach a player's stream, because the two are watching the same
+// page and the publisher can only pick one decision. With a signal, the decision
+// never crosses the hub at all: a subscriber's bytes are produced by its own
+// code, from its own decision, and the question does not arise. It is also what
+// makes the drop property sound, which is the next thing.
 //
 // # Why a hub and not a broadcaster channel
 //
@@ -19,16 +31,16 @@ import (
 // correctness question ("did I drop the one that was mine?") wearing a
 // performance question's clothes.
 //
-// # Why dropping an update is safe here and would not be elsewhere
+// # Why dropping a change is safe here and would not be elsewhere
 //
-// A subscriber's channel holds one update and a publish never blocks on it, so a
-// slow reader loses frames. That is only sound because an update is a *whole
-// element*: the next one carries the page as it is then, so a skipped frame is a
-// frame the reader would have replaced anyway. A hub carrying deltas, or ordered
+// A subscriber's channel holds one change and a publish never blocks on it, so a
+// slow reader loses some. That is only sound because a change is not a *delta*:
+// the subscriber re-reads the current state, so a skipped notification is one it
+// would have replaced with a newer read anyway. A hub carrying deltas, or ordered
 // events such as a chat log, cannot drop, and a caller who needs that has to say
-// so rather than inherit this guarantee by accident. The dropped count is
-// reported rather than swallowed, so a test -- and a curious DM reading the
-// server's log -- can see it happening.
+// so rather than inherit this guarantee by accident. The dropped count is reported
+// rather than swallowed, so a test -- and a curious DM reading the server's log
+// -- can see it happening.
 //
 // # The bound
 //
@@ -87,23 +99,35 @@ func NewHub(limit int) *Hub {
 // read: give it the stream the handler is holding and it swaps the element in.
 //
 // It is a function rather than a struct with an id and a component because those
-// two things are only meaningful together -- an id with no component is a
-// deletion and a component with no id is a patch of nothing -- and a struct
-// invites a handler to read one without the other. The hub is also the only
-// thing that knows both, because it is what received the page.
+// two things are only meaningful together -- an id with no component is a deletion
+// and a component with no id is a patch of nothing -- and a struct invites a
+// handler to read one without the other.
 type Patch func(*Sender) error
 
-// Subscribe starts watching a topic.
+// builder makes the patch for one change, and it is the subscriber's own code.
 //
-// It returns the channel updates arrive on and the function that ends the
-// subscription. Both halves are needed: the handler ranges over the channel
-// until it closes, and it has to close it, or it leaves a goroutine parked on a
-// channel nothing will ever write to and a subscriber in the hub's map for ever.
+// An error from it ends the subscriber's stream rather than sending an empty
+// patch: the page it was watching has gone, or become something its decision will
+// not admit, and there is nothing to keep sending.
+type builder func() (Patch, error)
+
+// Subscribe starts watching a topic, with the function that turns one change into
+// one patch.
+//
+// The builder is given at subscription rather than at publish because it belongs
+// to the subscriber: it holds the access decision, the campaign and the page, and
+// none of those are the hub's to know. That is the whole reason a change carries
+// no content -- see the type's own comment.
+//
+// It returns the channel patches arrive on and the function that ends the
+// subscription. Both halves are needed: the handler ranges over the channel until
+// it closes, and it has to close it, or it leaves a goroutine parked on a channel
+// nothing will ever write to and a subscriber in the hub's map for ever.
 //
 // The channel is closed by the cancel function and by `Hub.Close`, so a
 // `for range` in a handler ends in both cases without the handler checking
 // anything.
-func (h *Hub) Subscribe(topic string) (<-chan Patch, func(), error) {
+func (h *Hub) Subscribe(topic string, build builder) (<-chan Patch, func(), error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -115,9 +139,10 @@ func (h *Hub) Subscribe(topic string) (<-chan Patch, func(), error) {
 	}
 
 	sub := &subscriber{
-		hub:   h,
-		topic: topic,
-		patch: make(chan Patch, patchBuffer),
+		hub:     h,
+		topic:   topic,
+		build:   build,
+		patches: make(chan Patch, patchBuffer),
 	}
 
 	h.subs[sub] = struct{}{}
@@ -126,19 +151,18 @@ func (h *Hub) Subscribe(topic string) (<-chan Patch, func(), error) {
 	}
 	h.topics[topic][sub] = struct{}{}
 
-	return sub.patch, sub.cancel, nil
+	return sub.patches, sub.cancel, nil
 }
 
-// Publish sends an update to every subscriber on a topic and returns how many
-// took it. It never blocks, and it never queues: a subscriber that is behind
-// loses this update and is counted in Dropped.
+// Publish says that a topic changed, to every subscriber on it, and returns how
+// many took the notice. It never blocks, and it never queues: a subscriber that is
+// behind loses this one and is counted in Dropped.
 //
-// The component is handed over, not rendered here. Rendering under the hub's lock
-// would serialise every stream in the server behind the slowest render, and the
-// handler that subscribed is the one that knows the access decision the render
-// has to be made under -- which is the field the render cache is keyed on, and
-// therefore a field a hub-level render would have to invent.
-func (h *Hub) Publish(topic, id string, c templ.Component) int {
+// Each subscriber's own builder makes the patch, so the work happens on whichever
+// goroutine the handler is already running rather than here -- publishing from the
+// index watcher must not serialise every stream in the server behind the slowest
+// render, and it must not have to know any of them.
+func (h *Hub) Publish(topic string) int {
 	h.mu.Lock()
 	subs := make([]*subscriber, 0, len(h.topics[topic]))
 	for sub := range h.topics[topic] {
@@ -146,12 +170,20 @@ func (h *Hub) Publish(topic, id string, c templ.Component) int {
 	}
 	h.mu.Unlock()
 
-	patch := Patch(func(s *Sender) error { return s.Swap(id, c) })
-
 	delivered := 0
 	for _, sub := range subs {
+		patch, err := sub.build()
+		if err != nil {
+			// The subscriber cannot make sense of the change, so it is finished:
+			// its page is gone or its decision no longer admits it. It is not
+			// counted as dropped -- nothing was lost that it could have had -- and
+			// it is not removed here, because closing a channel from outside the
+			// lock that owns it is the race this package does not have.
+			continue
+		}
+
 		select {
-		case sub.patch <- patch:
+		case sub.patches <- patch:
 			delivered++
 		default:
 			h.mu.Lock()
@@ -218,7 +250,8 @@ type subscriber struct {
 	hub   *Hub
 	topic string
 
-	patch chan Patch
+	build   builder
+	patches chan Patch
 
 	mu     sync.Mutex
 	closed bool
@@ -252,5 +285,5 @@ func (s *subscriber) close() {
 		return
 	}
 	s.closed = true
-	close(s.patch)
+	close(s.patches)
 }

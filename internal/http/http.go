@@ -89,8 +89,13 @@ type Config struct {
 	// and a Config and has no state of its own.
 	Redeemer auth.Redeemer
 
-	// Hub is the SSE fan-out. Nil means there are no live pages and the stream
-	// route answers 404, which is a missing feature rather than a broken page.
+	// Hub is the SSE fan-out, and it is required rather than optional.
+	//
+	// The hub is the caller's because its lifecycle is the caller's: `wiki serve`
+	// closes it on the way out, which is the drain ADR 0006 asks for, and a hub
+	// the application built for itself would be one nobody could close. `Streams`
+	// is how one is built, and a test that does not care about live pages makes
+	// one with a bound of one.
 	Hub *sse.Hub
 
 	// Logger is where the request log goes. Nil means the default slog logger,
@@ -114,10 +119,6 @@ type Config struct {
 	// cookie the browser refuses is a wiki nobody can log in to.
 	Production bool
 
-	// Streams bounds the number of live page streams, and is only used when Hub
-	// is nil -- in which case one is built. Zero means DefaultStreams.
-	Streams int
-
 	// AllowedOrigin is the scheme and host a mutation has to come from, checked
 	// against `Origin` so that a page on another site cannot post to this one.
 	// Empty skips the check, which is the right default on a LAN where a browser
@@ -139,7 +140,8 @@ type Config struct {
 // DefaultStreams is how many live page streams one server holds open. A campaign
 // is a DM and four players, each with a tab or two open, so this is generous; it
 // is here rather than hard-coded into the hub because the hub is a general
-// fan-out and this is one deployment's appetite.
+// fan-out and this is one deployment's appetite, and it is a constant so that the
+// one test that wants a bound can ask for a different one.
 const DefaultStreams = 32
 
 // Store is what the HTTP layer reads through.
@@ -206,9 +208,9 @@ func (r *request) identified() bool { return r.Principal.ID != "" }
 // fourth Decision field in the resolver for nothing.
 func (r *request) isDM() bool { return r.Principal.Role == domain.RoleDM }
 
-// app is the assembled application. It is unexported and handed back as an
-// `http.Handler`, because there is nothing a caller can do with the type that it
-// cannot do by making a request.
+// app is the application's own state, and it is a separate type from `Server` so
+// that the two things a caller can do beyond making a request are visible on the
+// type and everything else is not.
 type app struct {
 	cfg Config
 	log *slog.Logger
@@ -233,10 +235,36 @@ type app struct {
 	renderers   map[domain.Slug]*render.Renderer
 }
 
-// errNoStore is what New refuses with, and it is a refusal rather than a
-// default: an application with no store answers every request with a 500, and a
-// DM finds that out by looking at their campaign.
-var errNoStore = errors.New("http: no store was configured")
+// The two things New refuses without. They are refusals rather than defaults
+// because an application with no store answers every request with a 500, and one
+// with a hub nobody can close leaks a goroutine per open tab on every restart.
+var (
+	errNoStore = errors.New("http: no store was configured")
+	errNoHub   = errors.New("http: no stream hub was configured")
+)
+
+// PageChanged says that a page's rows have been written, so every browser reading
+// it is sent a new copy.
+//
+// The paths are the ones a sync reported -- `index.Report.Indexed` and
+// `index.Report.Archived` -- because those are the pages whose *rows* moved. A file
+// that was written and produced no change is not a change, and telling every open
+// page about it would be a render per reader per keystroke in an editor.
+//
+// It is a function taking the hub and not a method on the application because the
+// only thing it needs is the hub and the rule for a topic's name, and the rule for
+// a topic's name is a rule about how this package spells a page. A watcher that
+// had to agree with the router about that would be a second implementation of a
+// URL.
+//
+// It is exported rather than a method because the caller of `New` is the only thing
+// that knows when a sync has finished, and the hub is the caller's -- the same
+// rule that says the caller closes the store it opened.
+func PageChanged(hub *sse.Hub, campaignID string, paths ...string) {
+	for _, path := range paths {
+		hub.Publish(streamTopic(campaignID, path))
+	}
+}
 
 // New returns the application.
 func New(cfg Config) (http.Handler, error) {
@@ -249,11 +277,8 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.Streams < 1 {
-		cfg.Streams = DefaultStreams
-	}
 	if cfg.Hub == nil {
-		cfg.Hub = sse.NewHub(cfg.Streams)
+		return nil, errNoHub
 	}
 
 	a := &app{
