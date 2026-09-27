@@ -158,6 +158,15 @@ type Config struct {
 	// process, where a per-process secret would mean a form written by one is
 	// refused by the other.
 	Secret []byte
+
+	// Hooks are the plugins' render hooks, and the editor is given the same set
+	// from `EditorFor` -- a caller that wires one and not the other has a preview
+	// that disagrees with the page it precedes, which is a bug that is reported as
+	// "the preview lies" rather than as a missing plugin.
+	//
+	// The zero value renders exactly what a build without plugins rendered, so
+	// every test that does not care about plugins does not have to say so.
+	Hooks render.Hooks
 }
 
 // DefaultStreams is how many live page streams one server holds open. A campaign
@@ -453,7 +462,11 @@ func (a *app) rendererFor(slug domain.Slug) *render.Renderer {
 		return existing
 	}
 
-	built := render.NewWithLinks(index.NewResolver(a.cfg.Store, slug.String()))
+	built := render.NewWith(render.Options{
+		Links: index.NewResolver(a.cfg.Store, slug.String()),
+		Hooks: a.cfg.Hooks,
+		Log:   a.log,
+	})
 	a.renderers[slug] = built
 	return built
 }

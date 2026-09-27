@@ -43,6 +43,28 @@ import (
 // their links resolve against the right place. It costs a few bytes and it
 // removes a class of bug where a stub page inherits another page's resolved
 // links.
+//
+// # What is not in the key, and why
+//
+// **Plugins.** A plugin's hooks change the bytes a render produces for the same
+// input, which is exactly what `Version` is for, and the obvious move would be a
+// `Plugins` field listing them. It is not needed, and the reason is a property of
+// the cache rather than of the key: **a [Renderer]'s hook set is fixed when it is
+// constructed, and every Renderer owns its own [Cache].** Two renderers with
+// different plugin sets never consult the same map, so a key field naming the
+// plugins would separate entries that were never in the same bucket.
+//
+// `RendererVersion` is a constant, and that is a *different* reason: a plugin is
+// compiled in, so a plugin that changes the output changes what the constant means
+// without changing its value. That is harmless for the cache — two binaries are two
+// processes — and it is not what `pages.renderer_version` is about, because that
+// column records the renderer an *index row* was built against and a hook changes
+// HTML rather than the index. The thing that would *not* be safe is a persisted
+// render, and nothing persists one: the files are the source of truth and this
+// cache dies with the process.
+//
+// So a future capability that varies a render by anything outside these six fields
+// has to answer this paragraph rather than assume it.
 
 // CacheKey identifies one render.
 type CacheKey struct {

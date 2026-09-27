@@ -38,6 +38,64 @@
 - **`domain.CorePageTypes()` and `vault.CoreKeys()`**, so the authoring guide and
   `wiki help` can print the two closed sets from the code that owns them rather than
   from a list in a document.
+- **A render hook, and the two places it may sit.** `render.BeforeRenderer` sees the
+  page's tree and returns the tree to render; `render.AfterRenderer` sees the HTML
+  and may change it. ADR 0002 and §12 both sketch *one* `RenderHook` with both
+  methods, and the sketch is worth taking apart: a hook that only post-processes the
+  HTML — which is what both of M11's bundled plugins do — would have to write a
+  `BeforeRender` that returns the tree it was given. A no-op with a signature somebody
+  has to get right, in a plugin written by somebody who does not read the source. So
+  they are two interfaces and a `render.RenderHook` record that carries either, both
+  or neither.
+- **A tree hook runs *after* the secrets are stripped, and that placement is the
+  whole of the security argument.** The hook is handed the tree at a point where the
+  links have already been resolved and the secret subtrees have already been
+  unlinked, so the tree contains no secret text and **no transform of it can put any
+  back**. A hook that ran before the stripper could lift a `[!SECRET]` callout's
+  contents into the open body and the stripper would then have nothing to remove —
+  which is not a bug in a plugin, it is the capability the placement would hand it.
+  The cost is that a hook cannot see a secret, and the DM, who can, is who writes
+  house rules. `TestATreeHookNeverSeesASecret`.
+- **An HTML hook runs *before* the sanitiser, never after it.** ADR 0002's
+  `AfterRender(ctx, p, out *bytes.Buffer)` is ambiguous about exactly this, and the
+  ambiguity is the decision: a hook that ran after `Sanitise` would be a way for a
+  plugin to put unsanitised HTML on a page a player reads, in a project whose fourth
+  invariant is that rendered markdown is sanitised for every author. "A plugin is not
+  an author" is not an exception this codebase can make. Before the sanitiser, a
+  plugin's bytes are filtered by exactly the allow-list the DM's own markdown is — and
+  that is also why a plugin that needs a new element or a new class discovers it
+  cannot have one. `TestAPluginRunsBeforeTheSanitiserIsTheWholeArgumentForThisFile`
+  puts the XSS corpus's payload in a plugin rather than in a DM's notes.
+- **A hook that fails or panics is logged and skipped; the page still renders.**
+  Both cases, deliberately treated as the same event, because from the render's point
+  of view "this hook did not manage to contribute" is one thing — and propagating the
+  error would make a plugin capable of denying service against every page in the
+  campaign. The caller's usable value is assigned *before* the call, which is what
+  makes a panic a no-op rather than an empty page.
+  `TestOneBrokenPluginDoesNotTakeTheOthersDownWithIt` is the version a DM would
+  notice: their word count works and the spoiler box does not.
+- **`internal/safe`**, the one place that answer is written down, and a `defer`-shaped
+  function rather than a wrapper so it can be applied to a function whose signature is
+  somebody else's to change. It is not a boundary: a plugin is compiled into the
+  binary and can read the vault and open the database, so what makes one survivable to
+  ship is that a panic is a bug in a build somebody can fix.
+- **A goldmark extension may be contributed, and the render cache key does not grow a
+  field for it.** A renderer's hook set is fixed at construction and every renderer
+  owns its own cache, so two renderers with different plugins never consult the same
+  map and a key field naming them would separate entries that were never in the same
+  bucket. `cache.go` now says so, and names the thing that *would* not be safe — a
+  persisted render, which nothing has. The cache is also given the logger it needs, so
+  a nil one cannot turn a hook's panic into a nil-pointer panic in the handler.
+- **A preview is the page.** `edit.Options` carries the same `render.Hooks` the HTTP
+  layer's renderer does, because a preview that rendered without a plugin's
+  contribution would be a preview that disagreed with the save it precedes — which is
+  reported as "the preview lies" rather than as a missing plugin. The third place a
+  plugin's capabilities have to be threaded is why it is a struct with one field
+  rather than a function parameter that will have two next milestone.
+- **An empty hook set renders byte for byte what a build before plugins rendered**,
+  which is the property that let every existing golden file stay valid. It is a test
+  because a hook mechanism that changed the bytes of a page nobody had asked it to
+  change would be a hook mechanism nobody could review.
 - **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
   of candidates and nothing else, so the page's chrome is not re-rendered
   underneath a reader's cursor. The candidates are the ACL's answer and not a

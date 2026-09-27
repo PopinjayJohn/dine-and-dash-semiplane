@@ -69,6 +69,12 @@ type Editor struct {
 	campaign domain.Campaign
 	sync     *index.Syncer
 
+	// hooks are the plugins' render hooks, and they are here so that a preview is
+	// the page. A preview that rendered without a plugin's contribution would be a
+	// preview that disagreed with the save it precedes, which is the one thing a
+	// preview must not do.
+	hooks render.Hooks
+
 	// renderers is one renderer for this campaign's previews, built on first use
 	// for the same reason the HTTP layer keeps one per campaign: a renderer holds a
 	// link resolver and a resolver belongs to a campaign.
@@ -81,11 +87,17 @@ type Editor struct {
 // campaign, and a caller cannot pair an editor with another campaign's syncer by
 // accident.
 func New(v *vault.Vault, s *store.Store, campaign domain.Campaign) *Editor {
+	return NewWith(v, s, campaign, Options{})
+}
+
+// NewWith is [New] with the plugins' capabilities, for the caller that has them.
+func NewWith(v *vault.Vault, s *store.Store, campaign domain.Campaign, opts Options) *Editor {
 	return &Editor{
 		vault:     v,
 		store:     s,
 		campaign:  campaign,
 		sync:      index.New(v, s, campaign),
+		hooks:     opts.Hooks,
 		renderers: map[domain.Slug]*render.Renderer{},
 	}
 }
@@ -448,7 +460,10 @@ func (e *Editor) rendererFor(_ string) *render.Renderer {
 		return existing
 	}
 
-	built := render.NewWithLinks(index.NewResolver(e.store, e.campaign.ID))
+	built := render.NewWith(render.Options{
+		Links: index.NewResolver(e.store, e.campaign.ID),
+		Hooks: e.hooks,
+	})
 	e.renderers[e.campaign.Slug] = built
 	return built
 }
