@@ -523,6 +523,14 @@
   `openssl x509 -fingerprint -sha256` form so the thing they read in the dialog and
   the thing they can type into a shell are the same string. Shipping one certificate
   was the alternative and it means every DM in the world shares a private key.
+- **`TestOfflineBoot` exists.** `docs/security.md` lists "The app boots and serves
+  with no network" as a control and `docs/spec.md` §14 lists it in the test table, and
+  neither had a test. It is worth one because every way it breaks is an *addition* — a
+  CDN link in a template, a font the browser fetches, a release check that phones home
+  — and none of those is a bug when it lands. The test also checks that the page shell
+  references nothing external, because a server that answers 200 with a
+  `<script src="https://…">` in it is a server that does not work offline and nothing
+  in the Go code would say so.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a
