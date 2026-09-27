@@ -41,12 +41,17 @@ import (
 //
 // aclOwnership is `1 = 0` today, and that is deliberate rather than a stub. The
 // ownership test needs a table of which principal owns which character page,
-// and that table does not exist yet; the alternative shapes are to leave the
-// branch out, which silently widens it, or to admit every player to every
-// `dm-and-owner` page, which is a disclosure the moment one is written. So the
-// branch is present, explicit, and false, and a test asserts that it is there —
-// a predicate that fails open is the one bug in this file that cannot be found
-// by running it.
+// It is no longer `1 = 0`. `principal_characters` shipped in M6 and this is the
+// `EXISTS` over it that replaced the placeholder, and the two arguments it added
+// are the reason the scope's argument list is checked by a test: a scope with a
+// spare `?` is a driver error on a player's request.
+//
+// The shape it shipped as mattered. Leaving the branch out would have silently
+// widened every `dm-and-owner` page to every player, and admitting every player to
+// one would have been a disclosure the moment a DM wrote one — so the branch was
+// written down as false rather than omitted, and a test asserted it was still
+// there. A predicate that fails open is the one bug in this file that running it
+// cannot find, and the way that is avoided is by the branch being visible.
 
 // The audience test, shared by both scopes.
 //
@@ -65,12 +70,23 @@ const aclAudience = `p.visibility = 'players'
 
 // aclOwnership is "and this principal owns the page".
 //
-// It is `1 = 0` because no principal owns anything yet: the binding table is the
-// next milestone's, and until it exists a `dm-and-owner` page belongs to nobody,
-// which is the correct reading of a page nobody has claimed. The next milestone
-// replaces this one line with an `EXISTS` over the bindings, and adds one
-// argument to each scope.
-const aclOwnership = `1 = 0`
+// It is an EXISTS over the binding table, correlated on the page being tested, and
+// that correlation is the whole of it: the row has to be about *this* page, not
+// about some page the principal owns. `pc.character_page_id = p.id` is what makes
+// it that, and a subquery that compared against the campaign instead would admit
+// every player to every `dm-and-owner` page in their campaign, which is the
+// failure this file exists to not have.
+//
+// The principal's id is a placeholder, and there are two of them in
+// aclSecretScope because the ownership test is asked twice there: once for "may
+// read the page" and once for "may see its secrets". ADR 0007 is why the answers
+// differ for a `players` page — its owner may read it and may not read its
+// secrets.
+// It is written on one line even though the rest of this file wraps: it appears
+// twice in every secret-scope statement, and a five-line subquery inline makes the
+// statements this package runs unreadable in the one place they are written down.
+const aclOwnership = `EXISTS (SELECT 1 FROM principal_characters pc` +
+	` WHERE pc.principal_id = ? AND pc.character_page_id = p.id)`
 
 // The common prefix: a live page, in this campaign.
 const aclScopeBase = `p.is_deleted = 0
@@ -100,19 +116,24 @@ type scope struct {
 }
 
 // readable returns the scope that admits what as may read.
+//
+// The arguments are in the order the placeholders appear in the clause, which is
+// the only order that works: campaign, role, principal.
 func readable(campaignID string, as domain.Principal) scope {
-	return scope{where: aclScope, args: []any{campaignID, as.Role.String()}}
+	return scope{where: aclScope, args: []any{campaignID, as.Role.String(), as.ID}}
 }
 
 // readableWithSecrets returns the scope that admits what as may read, *and* whose
 // secrets they may see.
 //
-// The order of the arguments is the order the placeholders appear in the clause,
-// which is why the second role comes last: the audience test is the shared prefix
-// and the secret test is appended to it.
+// Five arguments, in the order the placeholders appear: campaign, role, principal
+// (for the audience test), then role and principal again (for the secret test). The
+// repetition is the cost of composing one audience test into two, and it is why
+// TestScopesHaveOneArgumentPerPlaceholder walks both rather than trusting the
+// count.
 func readableWithSecrets(campaignID string, as domain.Principal) scope {
 	return scope{
 		where: aclSecretScope,
-		args:  []any{campaignID, as.Role.String(), as.Role.String()},
+		args:  []any{campaignID, as.Role.String(), as.ID, as.Role.String(), as.ID},
 	}
 }

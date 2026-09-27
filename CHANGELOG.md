@@ -2,6 +2,198 @@
 
 ### Added
 
+- **`internal/auth`, and the minting half of it.** 32 bytes from `crypto/rand`,
+  hex-encoded, shown once and never stored. What is kept is the SHA-256 and four
+  characters of it, so a dump of the campaign database identifies a token and
+  cannot use one. The hash is SHA-256 and not a password hash on purpose: a token
+  is 256 bits of entropy, so there are no cheap inputs for a KDF to defend
+  against, and one would be 100ms of latency on every redemption to slow an attack
+  that already cannot succeed.
+- **`Token` is a type that cannot print itself.** A bare string is the shape of
+  every other value in this program, and the one value that must never be logged.
+  It implements `String`, `GoString` *and* `Format`, and the last two are not
+  belt-and-braces: **`%#v` does not consult `String`**, it prints the Go-syntax
+  representation, and **`%x` on a struct hex-encodes its fields** — so a Token
+  with only `String` hands the whole credential to `t.Errorf("%#v", err)` and to
+  the struct-dumping log handlers. Both were found by the test that checks every
+  verb, and `Format` closes the set rather than closing the two that were noticed.
+- A minted link is refused when there is nowhere to point it, no campaign to scope
+  it to, a role that is not one, or **no label** — because the label is the only
+  thing that tells two links apart in the DM's list, and a list of six links with
+  no labels is a list of six sixteen-bit numbers.
+- **The read predicate's ownership test is no longer `1 = 0`.** It is an `EXISTS`
+  over `principal_characters`, correlated on `pc.character_page_id = p.id` — the
+  correlation is the whole of it, and the version without it is shorter and admits
+  every player to every `dm-and-owner` page in their campaign. The test that used to
+  assert the placeholder was still `1 = 0` — the only way to catch somebody tidying
+  away a fail-closed branch — is now a test of the behaviour: a bound player reads
+  their own `dm-and-owner` page and an unbound one does not.
+- **A player can now find their own character's secrets.** The private index was
+  readable by the DM and by nobody else, so before this milestone a player's own
+  character page's secrets were findable by nobody at all. A binding is what makes
+  ADR 0007's rule ("a character-owned page's secrets are readable by its owner")
+  reachable, and it is why the binding table and the ownership clause shipped
+  together.
+- **A role or binding change ends every session of that principal, in that order.**
+  The order is the point: the change is written first and the sessions ended second,
+  so a failure between them leaves a principal with the *new* role and stale
+  cookies, which the predicate resolves in the safe direction — a demoted DM's
+  stale cookie is a player, not a DM.
+- **Unbinding somebody takes effect on the next request.** A session is a row, and a
+  row is not told that what it may read has changed, so a player who was just
+  unbound would keep reading the page for as long as their cookie lived — a
+  fortnight. This only works because sessions are rows rather than signed blobs,
+  and it only happens because the change says so.
+- **Saving a role that was already the role rotates nothing.** A DM who opens a
+  settings page and presses save should not end every session in the campaign.
+- Three new audit actions, `role_changed`, `binding_changed` and
+  `session_rotated`. They are their own actions rather than details on a principal
+  change because "when did Alice's browser stop being a DM's browser" is a question
+  of its own, and answering it from a detail field is answering it from a string
+  somebody typed. A binding's detail is a **count and not the page ids**: the log is
+  what somebody pastes into a bug report.
+- `Store.EndSessions`, which is not revocation — revocation is a fact about the
+  link, and this is the housekeeping after a change that made every session stale.
+
+- **A redacting logger, and `TestNoTokenInLogs`.** The named test runs a *full
+  auth flow* — mint, log the URL and the token, redeem, authenticate, fail a
+  redemption, log out — and then greps everything it produced for every token it
+  touched. Both halves matter and are not the same check: a test that only
+  exercised the redaction unit would pass against a logger that redacts and a flow
+  that never logs the token, which is a logger nobody has connected to the thing
+  that matters.
+- **Redaction is by attribute name *and* by shape**, because a caller who logs a
+  whole URL is doing something a shape check alone only catches by luck. A caller
+  who logs something under the key `token` is telling us what it is.
+- Two bugs the tests found in the redactor itself. **`Redacted` checked the whole
+  remaining string for hex rather than the 64-character window**, so a token at the
+  start of a sentence followed by a space was not recognised — a leak in every
+  message anybody ever wrote. And **a token's SHA-256 is 64 hex characters, and so
+  is the token**, so the shape check redacts a hash along with a credential; the
+  plan had been that a hash is a fingerprint worth logging, the cost is one
+  correlation, and the log carries the principal id anyway. Requiring a delimiter
+  after the window would have left "redeem `<token>`1" unredacted, so a 65-character
+  hex run has its first 64 redacted and the last one left — a decision, and the
+  wrong version of it is easy to imagine.
+- **The redaction is a handler, not a rule callers remember**, so a caller who logs
+  a request struct is covered by the same rule as one who logs a token
+  deliberately, and a JSON logger gets the same redaction rather than a way round
+  it. Redaction that leaves nothing readable teaches a DM to stop reading the log,
+  which is how the next real problem goes unnoticed — so the test also asserts
+  that the log still says what it did.
+
+- **A rate limit on redemption**, ten attempts a minute per address, and the
+  named test `TestRateLimitedRedemption` is written so that a limiter refusing the
+  *second* attempt cannot pass it. Ten is about right for a campaign at a table: a
+  player redeems once, a DM redeems twice testing a link they just minted, and a
+  legitimate player never reaches the limit — a limit a real player hits is a
+  player locked out of their campaign with no cause.
+- **The limit counts the requests it refuses.** A limiter that does not is a
+  limiter that refuses the tenth and then allows the eleventh, which is a limit of
+  one. And it runs on the *redemption*, not on the store lookup, so a player who
+  fumbled nine times and then pasted the right link is a player.
+- **A forwarded header is believed only from a proxy this deployment is
+  configured to trust.** A forwarded header is attacker-controlled on any direct
+  connection, so believing it unconditionally means the limit is bypassed by
+  sending a fresh `X-Forwarded-For` per attempt — exactly the attack the limit
+  exists to slow. A request with no identifiable address is counted *together*
+  with every other such request, because a limiter that skips unidentified
+  requests makes "hide your address" a way to be unlimited.
+- **The limiter is bounded and the bound is testable.** Every attempt from a new
+  address allocates, so a botnet gets a free allocation each; past the bound the
+  oldest window is dropped and the limit becomes approximate, which is the
+  documented price. `Tracked()` exists so the bound is an observable claim rather
+  than a comment. The closed-window sweep is **amortised rather than run on every
+  check**, which the 20,000-distinct-addresses test found the hard way: O(n) per
+  check is quadratic under exactly the burst the bound exists to absorb.
+
+- **Redemption, and the token leaving the URL.** A token is parsed, hashed, and
+  looked up by its hash in a UNIQUE column; then the campaign, the revocation and
+  the expiry are checked; then the session is created, the last use stamped and
+  the redemption recorded — and only then is a redirect handed back, built from
+  the campaign's slug rather than from the request. The redirect is the one
+  response in the program whose entire job is to send a browser somewhere, so a
+  target that came from the incoming URL would be a target an attacker chose.
+- **A token either matches its hash or it is not the link.** Nothing compares a
+  presented token to a stored value, so there is **no constant-time comparison
+  here and none is needed** — the lookup is a b-tree search on an index, not a
+  scan, and there is no comparison whose duration could depend on where the first
+  differing character is. The property that *is* asserted is that a truncated,
+  prefixed, doubled or one-character-different token is refused. The §10 hardening
+  item and this reasoning are recorded in ADR 0016.
+- **A wrong token and a wrong campaign are different errors**, and revocation and
+  expiry are separate from both. A DM who pastes a link into the wrong campaign is
+  told so, because that is a mistake they can fix. A player whose link was revoked
+  is told *that*, because it is not a secret — it is the answer to why their
+  browser stopped working, and "not valid" would send them to the DM to ask. A
+  caller who could tell the three apart could use the difference to learn which
+  campaigns a DM has links for, so the two token failures are one error.
+- **A lapsed session is deleted, not merely refused.** A row that is found and
+  rejected on every request for the rest of its life is a row nobody will ever
+  prune, and revocation is a delete; expiry is the same idea for the clock's
+  version of it.
+- **A refused redemption records nothing.** A log that said "this link was used"
+  for a token that was not would be worse than no log, because it sends a DM
+  looking at the wrong player.
+- `Config` holds the two windows in one place, because a link's expiry and a
+  session's lifetime are *one* policy and not two — and two structs with a field
+  each is a way to set them out of step.
+
+- **A link has no expiry by default**, which is the default most DMs want: a link
+  that quietly expired would arrive as "my player's link stopped working" with no
+  cause, and revocation is the thing a DM thinks of doing.
+- The store seam is **nine methods, declared by this package** — by the consumer,
+  so a second implementation is a compile error away rather than a runtime
+  surprise.
+
+- **Share links, sessions, an audit log and character bindings**, and the store
+  methods that keep them. `principals`, `sessions` and `audit_log` were already in
+  the base migration, written down before any of them was needed; this milestone
+  adds the one that could not be — `principal_characters`, a table whose rows come
+  from a decision somebody makes later, about a page that may not exist yet. It is
+  also what the read predicate has been waiting for: its ownership test ships as
+  `1 = 0` because no principal owned anything, so every `dm-and-owner` page
+  belonged to no one. An empty binding table and a missing one behave the same, so
+  shipping it early changes no answer.
+- **A revocation is the flag and the sessions, in one transaction.** A player whose
+  link was pasted into a Discord channel has to be logged out *now*, and a revoke
+  that set `revoked_at` and then failed to delete the sessions would leave a
+  browser working with a link the DM believes is dead. Revocation has three
+  answers and a DM clicking a button can tell them apart: not found, already
+  revoked (a no-op, not an error — a DM who clicks twice must not be told
+  something is wrong), and revoked now. The row is flagged rather than deleted,
+  because the audit log's question is "was this link ever used" and a deleted
+  principal cannot answer it.
+- **"Everyone sign in again" is scoped to one campaign**, and a DM with two
+  campaigns cannot log out the other one's players by accident. The sessions of
+  *already*-revoked principals in that campaign are cleared too, which repairs the
+  state a failed revoke leaves.
+- **A stored session always has an expiry.** `domain.Session.Expired` treats a zero
+  expiry as "never", so a zero-valued struct is safe to ask; the store refuses to
+  *store* one, because a session with no expiry is a credential that outlives the
+  reason it was issued. The boundary is `>=`, so a session whose expiry is exactly
+  now is expired — the same rule as `Expired`, and the same direction, because
+  being wrong by the smallest possible amount is still being wrong.
+- **A principal is found by the SHA-256 of its token and never by the token**, which
+  is a property of what the method takes rather than a promise about discipline. The
+  hash is UNIQUE, so two principals sharing one token is a conflict: two accounts
+  for one credential, and a DM with two links in their list and one that does
+  nothing.
+- **A character binding is a replace, not an add**, because a binding is a statement
+  about what a player owns *now*. A player who is given a new character and loses
+  the old one has to stop reading the old one's pages on their next request, and an
+  add-only table is a table where that does not happen. A duplicate page id is one
+  binding rather than an error, because the caller is usually a sync and a sync
+  should not fail a campaign over a page bound twice.
+- All of it is **in the store contract suite**, so a second `Store` is held to the
+  same split: a link found by its hash and never by its token, a revocation that
+  ends sessions, a stored session that expires, a binding that replaces, and an
+  audit log read newest-first.
+- `OwnerExists` answers **false for a blank principal** rather than an error. A
+  request that failed to identify its caller has no principal, so nobody owns the
+  page, so the `dm-and-owner` branch of the predicate is empty. An error there
+  would turn "not logged in" into a 500 for the one caller who must not see the page.
+
 - **The sync keeps both search indexes in step.** A page is indexed from its file
   on the same pass that writes its row, and the settled check asks whether the
   index already holds what the file derives — so a page whose search rows were
@@ -200,7 +392,6 @@
   far as the string was concerned. A filter value beginning with a colon is now
   quoted on the way out as well, so `tag: :00` survives a round trip.
 
-
 ### Fixed
 
 - **A test fixture's table keys were long enough to make two Go versions
@@ -227,6 +418,30 @@
 
 ### Changed
 
+- **A session now slides, and its lifetime is a config setting defaulting to 30
+  days.** Every authenticated request pushes the expiry out to now plus the
+  lifetime, so a player who plays every week is never asked for their link again.
+  A DM who plays once a year wants a week and one who plays weekly wants a month,
+  so the number is configuration rather than a constant in a package they do not
+  read; a week is one line, and a DM who sets it logs their players out
+  periodically on purpose.
+- The trade is written down in `docs/security.md` rather than left to be
+  discovered: **a leaked *cookie* can no longer be aged out by waiting, only ended
+  by revoking.** A fixed window would let thirty days of doing nothing retire one
+  by itself. What still ends a session immediately is a revocation, a role change
+  or a binding change, and all three are row deletes rather than something the
+  clock has to agree with — so a DM who suspects a cookie is in the wrong hands
+  revokes, and does not wait.
+- **Only a success slides.** A wrong cookie must not extend anything, or a script
+  guessing session ids keeps sessions alive by trying them.
+- **An expiry never moves backwards**, and the rule is enforced in the store next
+  to the column rather than only in the caller that has to remember it. A clock
+  that goes backwards is a machine whose battery died, and the failure is a player
+  logged out mid-session with no cause.
+- The slide is one `UPDATE` on a row that has just been read. The alternative —
+  refreshing only when the remaining life drops below half — bounds the writes at
+  the price of an effective session length that is not a number a person can state,
+  which is the wrong trade for a security-relevant value.
 
 - The migration names in the spec were wrong, and §5 now says which is which:
   `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both

@@ -62,7 +62,14 @@ DM is simply another principal with `role = 'dm'`.
 
 **Hardening**, each with a named test in `docs/spec.md` § Authentication:
 
-- Constant-time comparison on the token hash.
+- ~~Constant-time comparison on the token hash.~~ **Amended by
+  [ADR 0016](0016-auth-decides-and-returns-values.md):** there is no comparison
+  to make constant-time. Redemption hashes the presented token and looks the hash up
+  in a `UNIQUE` column, so nothing is ever compared to a stored value, and the
+  lookup is a b-tree search on an index rather than a scan. What is asserted
+  instead is the property that makes the absence safe: a wrong, truncated,
+  prefixed, doubled or one-character-different token is refused, and the two halves
+  of the package share one `ParseToken` so that "what a token is" cannot drift.
 - A redacting logger. The token is never written to any log; a test runs a full
   auth flow and greps the captured log output for it.
 - `Referrer-Policy: no-referrer`, `Cache-Control: no-store` and

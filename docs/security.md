@@ -51,8 +51,12 @@ your own input more than a player's.
 | Rendered markdown is sanitised **for the DM too** | `TestPlayerAuthoredXSSSanitisedForDM` |
 | A player cannot create a world page | `TestPlayerCannotCreateWorldPage` |
 | A player cannot reveal another player's secret | `TestPlayerCannotRevealOthersSecret` |
-| A share-link token appears in no log line after a full auth flow | `TestNoTokenInLogs` |
-| Redemption is refused past the rate limit | `TestRateLimitedRedemption` |
+| A share-link token appears in no log line after a full auth flow | `TestNoTokenInLogs` — and the log's redaction is a handler, so logging a request struct is covered by the same rule as logging a token |
+| Redemption is refused past the limit, and the limit counts the attempts it refuses | `TestRateLimitedRedemption` |
+| A revoked link stops working on the *next* request, and every session it made dies with it | `TestRevokingALinkStopsTheBrowserOnItsNextRequest` |
+| A role or character-binding change ends every session of that principal | `TestARoleChangeEndsEverySession`, `TestABindingChangeEndsEverySession` |
+| A player can read their own `dm-and-owner` page, and nobody else's | `TestABoundPrincipalReadsTheirOwnCharacterPage` |
+| A player can search their own character's secret text, and nobody else's | `TestABoundPrincipalReadsTheirOwnSecretText` |
 | A vault backup plus `reindex --full` rebuilds a byte-identical index | `TestBackupsRestoreIdenticalIndex` |
 | The app boots and serves with no network | `TestOfflineBoot` |
 
@@ -85,10 +89,26 @@ nobody discovers it at a table.
    player *cannot* search for a secret they cannot read — which is correct, and
    is also a small amount of information ("that word is not findable") that this
    project does not try to hide.
-5. **The DM's machine is trusted.** The binary runs there, the vault is on it,
+5. **A session slides, so a leaked *cookie* cannot be aged out.** Every
+   authenticated request pushes the session's expiry out to now plus the session
+   lifetime — thirty days by default, and a configuration setting. The trade is
+   explicit: a player who plays every week is never asked for their link again, and
+   in exchange a stolen cookie stays valid for as long as the thief keeps using it,
+   which for a weekly campaign is for ever. A *fixed* window would let the
+   passage of thirty days retire a leaked cookie by itself, and this project gave
+   that up.
+
+   What still ends a session immediately, all of them row deletes rather than
+   something the clock has to agree with: revoking the link, changing the
+   principal's role, and changing their character bindings. So a DM who suspects
+   a cookie is in the wrong hands revokes, and does not wait. The other half of
+   the answer is that a session id is never in a URL, a `Cache-Control: no-store`
+   response is not written to a disk cache, and the cookie is `HttpOnly` and
+   `SameSite=Lax`.
+6. **The DM's machine is trusted.** The binary runs there, the vault is on it,
    the database is on it. A wiki cannot defend a compromised host and does not
    pretend to.
-6. **Self-signed TLS produces a browser warning.** `--lan` is a convenience for
+7. **Self-signed TLS produces a browser warning.** `--lan` is a convenience for
    playing at a table, not a secure channel across the internet. Do not expose
    a self-hosted instance to the open internet.
 

@@ -46,7 +46,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))
+				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) )))
 		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0), p.path
 		LIMIT ?`,
 		},
@@ -59,7 +59,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 )))
+				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) )))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -72,8 +72,8 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 ))
-		AND ( ? = 'dm' OR 1 = 0 ))
+				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
+		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
 		ORDER BY bm25(pages_secrets_fts), p.path
 		LIMIT ?`,
 		},
@@ -86,8 +86,8 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		AND p.campaign_id = ?
 		AND (p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND 1 = 0 ))
-		AND ( ? = 'dm' OR 1 = 0 ))
+				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
+		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -124,7 +124,7 @@ func TestSearchStatementsCarryTheirReadScope(t *testing.T) {
 	if strings.Contains(public, "OR 1 = 0 ) )") {
 		t.Error("the public statement carries the secret scope's ownership test")
 	}
-	if !strings.Contains(secret, "AND ( ? = 'dm' OR 1 = 0 )") {
+	if !strings.Contains(secret, "AND ( ? = 'dm' OR "+aclOwnership+" )") {
 		t.Errorf("the private statement does not carry the secret scope's own test:\n%s", secret)
 	}
 }
@@ -201,9 +201,11 @@ func TestFilteredSearchStatements(t *testing.T) {
 	if got := len(public.filterArgs()) + 1 /* the match */ + len(public.sc.args); got != placeholders {
 		t.Errorf("the statement has %d placeholders and %d arguments", placeholders, got)
 	}
-	// The match, the campaign, the role, the tags, the type, the audience, the
-	// limit: seven, in that order.
-	if got, want := strings.Count(public.statement(true), "?"), 7; got != want {
+	// The match, the campaign, the role, the principal, the tags, the type, the
+	// audience and the limit: eight, in that order. The principal is the one the
+	// ownership clause added, and it is the one a missing argument would turn into
+	// a driver error on a player's request rather than a failed test here.
+	if got, want := strings.Count(public.statement(true), "?"), 8; got != want {
 		t.Errorf("a fully filtered statement has %d placeholders, want %d", got, want)
 	}
 }

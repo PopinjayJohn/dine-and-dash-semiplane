@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
 )
 
 // The read predicate is the riskiest four lines in this package, and the tests
@@ -253,22 +255,43 @@ func TestScopesHaveOneArgumentPerPlaceholder(t *testing.T) {
 	}
 }
 
-// The ownership branch is present and false, and that is a property rather than
-// a placeholder to be filled in later. A predicate that quietly drops the branch
-// while the table it needs is still missing widens the audience of every
-// `dm-and-owner` page in every campaign, and the test that would have caught it
-// is a page written after the branch was removed.
-func TestOwnershipBranchFailsClosed(t *testing.T) {
+// The ownership branch is the binding table, correlated on the page.
+//
+// It was `1 = 0` for two milestones, because no principal owned anything, and the
+// test then asserted that it was *still* `1 = 0` — which is the only way to catch
+// somebody tidying away a fail-closed branch. Now that it is a real clause the
+// equivalent test is the behaviour: a bound player reads their own `dm-and-owner`
+// page and an unbound one does not, and the subquery is correlated on the page
+// rather than on the campaign.
+//
+// The correlation is the part worth asserting separately, because the version
+// without it is shorter and admits every player to every `dm-and-owner` page in
+// their campaign — which is a disclosure, and one that a player with any character
+// page at all would find.
+func TestOwnershipBranchIsTheBindingTable(t *testing.T) {
 	t.Parallel()
 
+	// Both scopes consult it, and the secret scope consults it twice: once for
+	// "may read the page" and once for "may see its secrets", which ADR 0007 makes
+	// different answers for a `players` page.
 	if !strings.Contains(aclAudience, aclOwnership) {
 		t.Errorf("the audience test does not consult the ownership test:\n%s", aclAudience)
 	}
 	if !strings.Contains(aclSecretScope, aclOwnership) {
 		t.Errorf("the secret scope does not consult the ownership test:\n%s", aclSecretScope)
 	}
-	if aclOwnership != "1 = 0" {
-		t.Errorf("the ownership test is %q, want %q while no principal owns a page", aclOwnership, "1 = 0")
+	if got, want := strings.Count(aclSecretScope, aclOwnership), 2; got != want {
+		t.Errorf("the secret scope consults the ownership test %d times, want %d: "+
+			"the audience test and the secret test are different questions", got, want)
+	}
+
+	if !strings.Contains(aclOwnership, "pc.character_page_id = p.id") {
+		t.Errorf("the ownership test is not correlated on the page being read: %q\n"+
+			"a subquery that compared against the campaign instead would admit every "+
+			"player to every dm-and-owner page in it", aclOwnership)
+	}
+	if strings.Contains(aclOwnership, "1 = 0") {
+		t.Error("the ownership test still has the placeholder in it: no principal owns a page any more")
 	}
 }
 
@@ -310,4 +333,161 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// A `dm-and-owner` page belongs to the principal it is bound to, and to nobody
+// else. This is the case the two-milestone placeholder was standing in for, and it
+// is the one that decides whether a player can see their own character's secrets —
+// which is the whole point of the private index existing.
+func TestABoundPrincipalReadsTheirOwnCharacterPage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s, campaign := audienceFixture(t)
+	character := characterPage(t, s, campaign.ID)
+
+	// Real principal rows, because a binding's foreign key is to one: an id with
+	// no row behind it is not a principal, and a predicate that admitted a
+	// principal who does not exist would be a predicate answering a question
+	// nothing asked.
+	owner := principalRow(t, s, campaign.ID, "Alice (Ranger)", "hash-of-alice")
+	stranger := principalRow(t, s, campaign.ID, "Bob", "hash-of-bob")
+
+	// Before the binding, an owner-to-be sees only the players' page.
+	if visible := scopePaths(t, s, readable(campaign.ID, owner)); len(visible) != 1 {
+		t.Fatalf("an unbound principal can read %v, want only the players' page", visible)
+	}
+
+	if err := s.ReplacePrincipalCharacters(ctx, owner.ID, []string{character.ID}); err != nil {
+		t.Fatalf("ReplacePrincipalCharacters: %v", err)
+	}
+
+	// After it, the owner.
+	if visible := scopePaths(t, s, readable(campaign.ID, owner)); !slices.Contains(visible, "characters/aria") {
+		t.Errorf("the owner cannot read their own character page: %v", visible)
+	}
+
+	// And the stranger cannot, which is the half a campaign-wide subquery gets
+	// wrong.
+	if visible := scopePaths(t, s, readable(campaign.ID, stranger)); slices.Contains(visible, "characters/aria") {
+		t.Errorf("an unbound principal can read another player's character page: %v", visible)
+	}
+
+	// A DM can, because a DM reads everything.
+	dm := domain.Principal{ID: "principal-dm-in-the-acl-fixture", Role: domain.RoleDM}
+	if visible := scopePaths(t, s, readable(campaign.ID, dm)); !slices.Contains(visible, "characters/aria") {
+		t.Errorf("the DM cannot read a dm-and-owner page: %v", visible)
+	}
+
+	// And unbinding takes the page away again on the next read, which is the
+	// property the binding being a *replace* exists for.
+	if err := s.ReplacePrincipalCharacters(ctx, owner.ID, nil); err != nil {
+		t.Fatalf("unbinding: %v", err)
+	}
+	if visible := scopePaths(t, s, readable(campaign.ID, owner)); slices.Contains(visible, "characters/aria") {
+		t.Errorf("the owner can still read the character page they were unbound from: %v", visible)
+	}
+}
+
+// The private index is reachable by an owner, and only by an owner. This is the
+// payoff of the binding table: until it existed the private index was readable by
+// the DM and by nobody else, so a player's own character page's secrets were
+// findable by nobody at all.
+func TestABoundPrincipalReadsTheirOwnSecretText(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s, campaign := audienceFixture(t)
+	character := characterPage(t, s, campaign.ID)
+
+	owner := principalRow(t, s, campaign.ID, "Alice (Ranger)", "hash-of-alice")
+	stranger := principalRow(t, s, campaign.ID, "Bob", "hash-of-bob")
+
+	// Nobody but a DM before the binding, which is the state the milestone shipped
+	// in and the reason this test is worth writing.
+	if secrets := scopePaths(t, s, readableWithSecrets(campaign.ID, owner)); len(secrets) != 0 {
+		t.Fatalf("an unbound principal can read secret text: %v", secrets)
+	}
+
+	if err := s.ReplacePageIndex(ctx, IndexEntry{
+		PageID:     character.ID,
+		Title:      character.Title,
+		BodyPublic: "A lockpicker who owes money.\n",
+		SecretText: "Aria is the toll-collector's sister.",
+	}); err != nil {
+		t.Fatalf("ReplacePageIndex: %v", err)
+	}
+
+	if err := s.ReplacePrincipalCharacters(ctx, owner.ID, []string{character.ID}); err != nil {
+		t.Fatalf("ReplacePrincipalCharacters: %v", err)
+	}
+
+	query := mustSearchQuery(t, "sister")
+
+	found, err := s.SearchSecrets(ctx, campaign.ID, owner, query, 10)
+	if err != nil {
+		t.Fatalf("SearchSecrets as the owner: %v", err)
+	}
+	if len(found) != 1 || found[0].Path != "characters/aria" {
+		t.Errorf("the owner cannot find their own character's secret: %+v", found)
+	}
+
+	// And the stranger cannot, which is the property that makes this safe to ship.
+	theirs, err := s.SearchSecrets(ctx, campaign.ID, stranger, query, 10)
+	if err != nil {
+		t.Fatalf("SearchSecrets as a stranger: %v", err)
+	}
+	if len(theirs) != 0 {
+		t.Errorf("an unbound principal found secret text: %+v", theirs)
+	}
+}
+
+// principalRow is a stored principal, which is what a binding points at.
+func principalRow(t *testing.T, s *Store, campaignID, label, tokenHash string) domain.Principal {
+	t.Helper()
+
+	stored, err := s.CreatePrincipal(context.Background(), domain.Principal{
+		CampaignID: campaignID,
+		Label:      label,
+		Role:       domain.RolePlayer,
+		TokenHash:  tokenHash,
+		TokenHint:  "a1b2",
+	})
+	if err != nil {
+		t.Fatalf("CreatePrincipal(%q): %v", label, err)
+	}
+	return stored
+}
+
+// characterPage is a `dm-and-owner` page, which is the only audience the ownership
+// test has any bearing on.
+func characterPage(t *testing.T, s *Store, campaignID string) domain.Page {
+	t.Helper()
+
+	character, err := s.UpsertPage(context.Background(), domain.Page{
+		CampaignID:  campaignID,
+		Path:        "characters/aria",
+		Title:       "Aria",
+		Type:        domain.PageTypeNote,
+		Visibility:  domain.VisibilityDMAndOwner,
+		Frontmatter: "title: Aria\n",
+		Body:        "A lockpicker who owes the toll-collector money.\n",
+		ContentHash: "hash-of-aria",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage for the character page: %v", err)
+	}
+	return character
+}
+
+// mustSearchQuery parses a query for the cases above, which are about who can see
+// the result rather than about the language.
+func mustSearchQuery(t *testing.T, input string) search.Query {
+	t.Helper()
+
+	parsed, err := search.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", input, err)
+	}
+	return parsed
 }

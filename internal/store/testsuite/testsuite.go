@@ -21,6 +21,7 @@ package testsuite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -71,6 +72,38 @@ type API interface {
 	ReplacePageIndex(ctx context.Context, entry store.IndexEntry) error
 	PageIndexMatches(ctx context.Context, entry store.IndexEntry) (bool, error)
 	DeletePageIndex(ctx context.Context, pageID string) error
+
+	// Share links, sessions, the audit log and character bindings, added in M6.
+	//
+	// The shape of this group is the contract, not the signatures: a link is
+	// found by the *hash* of its token and never by the token, a revocation ends
+	// every session in the same breath, and a binding is a replace. A store that
+	// found a principal by token would need the plaintext, and a store whose
+	// revoke left a session behind would leave a player logged in after the DM
+	// revoked them.
+	CreatePrincipal(ctx context.Context, p domain.Principal) (domain.Principal, error)
+	PrincipalByTokenHash(ctx context.Context, tokenHash string) (domain.Principal, bool, error)
+	PrincipalByID(ctx context.Context, id string) (domain.Principal, bool, error)
+	ListPrincipals(ctx context.Context, campaignID string) ([]domain.Principal, error)
+	RevokePrincipal(ctx context.Context, id string) error
+	RevokeAllPrincipals(ctx context.Context, campaignID string) (int, error)
+	TouchPrincipal(ctx context.Context, id string) error
+	SetPrincipalRole(ctx context.Context, id string, role domain.Role) error
+
+	CreateSession(ctx context.Context, sess domain.Session) (domain.Session, error)
+	SessionByID(ctx context.Context, id string) (domain.Session, bool, error)
+	SessionsForPrincipal(ctx context.Context, principalID string, now time.Time) ([]domain.Session, error)
+	DeleteSession(ctx context.Context, id string) error
+	TouchSession(ctx context.Context, id string, expiresAt time.Time) error
+	PurgeExpiredSessions(ctx context.Context, now time.Time) (int, error)
+
+	AppendAudit(ctx context.Context, entry domain.AuditEntry) (domain.AuditEntry, error)
+	ListAudit(ctx context.Context, campaignID string, limit int) ([]domain.AuditEntry, error)
+
+	ReplacePrincipalCharacters(ctx context.Context, principalID string, pageIDs []string) error
+	PrincipalCharacters(ctx context.Context, principalID string) ([]string, error)
+	CharacterOwners(ctx context.Context, pageID string) ([]string, error)
+	OwnerExists(ctx context.Context, principalID, pageID string) (bool, error)
 }
 
 // The two errors a caller must be able to recognise without reading a message.
