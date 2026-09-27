@@ -89,6 +89,24 @@
   a secret is never in the public text and a render is never wrong about one,
   however many goroutines are doing it.
 
+- **`render.Decision` is now `access.Decision`**, aliased rather than replaced with
+  a struct of our own. M3 shipped a placeholder with one field and a comment
+  promising this; a promise in a comment is not a thing. A one-field type of our
+  own would be a *second* answer to "may this principal see the secrets on this
+  page", and the whole of the renderer's safety is that there is one place that
+  answers it.
+- A test that puts a **decision straight from the resolver into a render** and
+  checks the bytes: a DM sees a `dm-only` page's secrets, a player sees none of
+  them *even when they own the page*, an owner sees their character page's
+  secrets, and nobody sees a `players` page's. Forbidden-substring over the raw
+  HTML, never a DOM.
+- **The cache key carries the one field of the decision that changes the bytes**
+  (`CanSeeSecrets`), and there is now a test for that narrowing rather than a
+  sentence in a comment: two decisions differing only in the read, edit and reveal
+  fields must render identically, and a field added later that *does* change what
+  is stripped is a field the key has to grow. A cache key missing that field is a
+  render made for a DM served to a player, and it is silent.
+
 - **The write side of the rights matrix: `UpsertPage` takes a principal.** A
   read-only predicate with an open write path is a building with a locked front
   door and an unlocked back one — a player who cannot read a page can still write

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
@@ -250,5 +251,116 @@ func TestACacheOfNoSizeCachesNothing(t *testing.T) {
 	}
 	if cache.Len() != 0 {
 		t.Errorf("a cache with no size holds %d entries", cache.Len())
+	}
+}
+
+// The cache key narrows `access.Decision` to the one field that changes the
+// bytes, which is right and is also the place a future secret rule has to be
+// looked at. This test is what makes that a check rather than a sentence in a
+// comment: every field of the decision is changed one at a time, and the key is
+// required to differ only for the ones that change the render.
+//
+// A field that changes the render and is *not* in the key is a render made for a
+// DM served to a player, and it is silent.
+func TestTheCacheKeyCarriesEveryFieldThatChangesTheBytes(t *testing.T) {
+	t.Parallel()
+
+	base := render.CacheKey{
+		ContentHash:   "hash-of-rivergate",
+		Version:       render.RendererVersion,
+		CanSeeSecrets: false,
+		Path:          "locations/rivergate",
+	}
+
+	// Every field of the decision, and whether changing it changes the render.
+	// The two that are not in the key are the two that change what a caller may
+	// *offer* rather than what the render *contains*, and that is the whole of
+	// the narrowing.
+	fields := map[string]struct {
+		decision access.Decision
+		changes  bool
+	}{
+		"can see secrets": {
+			decision: access.Decision{CanSeeSecrets: true},
+			changes:  true,
+		},
+		"can read":    {decision: access.Decision{CanRead: true}},
+		"can edit":    {decision: access.Decision{CanEdit: true}},
+		"can reveal":  {decision: access.Decision{CanReveal: true}},
+		"cannot read": {decision: access.Decision{}},
+	}
+
+	for name, tt := range fields {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			key := base
+			key.CanSeeSecrets = tt.decision.CanSeeSecrets
+
+			// A cache hit is a key equality, so this is the whole of the test.
+			// If a future field changed the render and were left out of the key,
+			// `changes` would have to be true and the assertion below would fail.
+			if !tt.changes && key != base {
+				t.Errorf("changing %q changed the cache key, so the cache is holding renders it need not", name)
+			}
+			if tt.changes && key == base {
+				t.Errorf("changing %q did not change the cache key, so a render made with it "+
+					"would be served to somebody with the other one", name)
+			}
+		})
+	}
+
+	// And the other three fields really do not change the bytes, which is the
+	// claim the table above rests on. If it stops being true the key has to grow.
+	page := render.Page{
+		Path:        "locations/rivergate",
+		ContentHash: "hash-of-rivergate",
+		Body:        "A fortified town.\n\n> [!SECRET]\n> The name is Ilithya Marrow.\n",
+	}
+	renderer := render.New()
+
+	// And the claim the table rests on, tested rather than asserted: two decisions
+	// that differ **only** in the read, edit and reveal fields must produce the
+	// same bytes, because none of those fields changes what is stripped. The two
+	// have `CanSeeSecrets` equal, which is the whole point -- `Granted` and
+	// `Decision{CanRead: true}` would differ there, and would be testing the
+	// secret rule rather than the narrowing.
+	permitted := access.Decision{CanRead: true, CanSeeSecrets: true}
+	alsoPermitted := access.Decision{CanRead: true, CanEdit: true, CanReveal: true, CanSeeSecrets: true}
+
+	one, err := renderer.Render(context.Background(), page, permitted)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	two, err := renderer.Render(context.Background(), page, alsoPermitted)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if one.HTML != two.HTML {
+		t.Errorf("two decisions differing only in the read, edit and reveal fields render "+
+			"differently, so the cache key is missing one of them:\n%s\n---\n%s", one.HTML, two.HTML)
+	}
+	if !strings.Contains(one.HTML, "Ilithya") {
+		t.Error("a decision that permits the secret does not have it in the render")
+	}
+	if one.SecretsStripped() != 0 {
+		t.Errorf("a decision that permits the secret stripped %d of them", one.SecretsStripped())
+	}
+
+	// And the third: a decision that does not permit it, which is the case the key
+	// exists for.
+	none, err := renderer.Render(context.Background(), page, access.Decision{CanRead: true})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if none.HTML == one.HTML {
+		t.Error("a decision that forbids the secret rendered the same bytes as one that permits it")
+	}
+	if strings.Contains(none.HTML, "Ilithya") {
+		t.Error("a decision that forbids the secret left it in the render")
+	}
+	if none.SecretsStripped() != 1 {
+		t.Errorf("the render stripped %d secrets, want 1", none.SecretsStripped())
 	}
 }
