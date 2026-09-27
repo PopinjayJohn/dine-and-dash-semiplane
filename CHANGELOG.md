@@ -378,6 +378,17 @@
   such test, which is the exact failure `docs/security.md` opens on: *a security
   property nobody tests is a comment*. `TestTheCoreCommandListIsTheDispatchersOwn`
   exists now, checks both directions, and is the first thing M13 did.
+- **A `crypto/rand` failure produced a response with no `Content-Security-Policy` at
+  all.** The header was set only when a nonce had been produced, so the one time the
+  nonce could not be made was the one time the policy was missing — which is the
+  exact opposite of what `internal/http/headers.go` argues for three functions below
+  ("a constant with a placeholder in it is a string that can be served without one —
+  which is a page with a policy that does not authorise anything, i.e. a page that
+  does not work, rather than a page that is open"). The header is now unconditional
+  and an empty nonce yields `script-src 'none'`: the DM loses live updates and
+  search-as-you-type for the duration, a log line says why, and nothing an attacker
+  injected runs. The nonce source is `http.Config.Nonce` so the path is testable,
+  because a `crypto/rand` call inside a middleware is a failure path with no test.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

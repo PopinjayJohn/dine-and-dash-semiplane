@@ -133,6 +133,18 @@ type Config struct {
 	// they are running and internal/version is where that is assembled.
 	Version version.Info
 
+	// Nonce is the source of the per-response Content-Security-Policy nonce, and
+	// the error is the interesting half: a source that cannot produce one must
+	// still produce a response, and that response must carry a policy.
+	//
+	// It is here because the alternative is a `crypto/rand` call inside a
+	// middleware, which is a failure path with no test — and this failure path is
+	// the difference between a page that is open and a page whose script does not
+	// run. See [app.nonce] and `TestARequestWhoseNonceCannotBeGeneratedStillGetsAPolicy`.
+	//
+	// Nil means [crypto/rand].
+	Nonce func() (string, error)
+
 	// Now is the clock. Nil means the system clock, which is the right default
 	// for a program running on a DM's own machine and the wrong one for a test
 	// that wants a CSRF token to expire.
@@ -378,6 +390,10 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Nonce == nil {
+		cfg.Nonce = randomNonce
+	}
+
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}

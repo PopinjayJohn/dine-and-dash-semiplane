@@ -49,15 +49,27 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 		headers.Set("X-Content-Type-Options", "nosniff")
 		headers.Set("X-Frame-Options", "DENY")
 
-		if nonce := req.Nonce; nonce != "" {
-			headers.Set("Content-Security-Policy", contentSecurityPolicy(nonce))
-			// The context carries it as well as the header, because anything that
-			// injects a script after the headers are written -- an SSE stream --
-			// has to stamp the same nonce, and reaching into the header map to
-			// find one that may or may not be there is a worse way to get it.
-			// `sse.WithNonce` is where a stream picks it up.
-			*r = *r.WithContext(withNonce(r.Context(), nonce))
-		}
+		// **The policy is on every response, whatever the nonce turned out to be.**
+		//
+		// The first version set the header only when a nonce had been generated, so
+		// a `crypto/rand` failure produced a response with *no* Content-Security-Policy
+		// at all — which is the opposite of the argument this file makes about a
+		// constant with a placeholder in it. A response without a policy is not a
+		// page that does not work; it is a page that is open.
+		//
+		// An empty nonce therefore yields `script-src 'none'`: the header is present,
+		// `default-src 'none'` still applies, and the page's own script does not run.
+		// The DM loses live updates and search-as-you-type for the duration and sees
+		// a log line saying why. Nothing is served that the DM did not write, and
+		// nothing an attacker injected runs.
+		nonce := req.Nonce
+		headers.Set("Content-Security-Policy", contentSecurityPolicy(nonce))
+		// The context carries it as well as the header, because anything that
+		// injects a script after the headers are written -- an SSE stream -- has to
+		// stamp the same nonce, and reaching into the header map to find one that may
+		// or may not be there is a worse way to get it. `sse.WithNonce` is where a
+		// stream picks it up.
+		*r = *r.WithContext(withNonce(r.Context(), nonce))
 
 		next.ServeHTTP(w, r)
 	})
@@ -69,7 +81,17 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 // and a constant with a placeholder in it is a string that can be served without
 // one -- which is a page with a policy that does not authorise anything, i.e. a
 // page that does not work, rather than a page that is open.
+//
+// **An empty nonce is the one case where `script-src` is not `'nonce-'`.** A
+// `nonce-` with nothing after it is a policy whose script source matches nothing, but
+// it is *nearly* nothing, and the difference between "authorises no script" and
+// "authorises the empty nonce" is the kind of difference a future edit to this string
+// could undo by accident. `script-src 'none'` says what it means.
 func contentSecurityPolicy(nonce string) string {
+	if nonce == "" {
+		return closedContentSecurityPolicy
+	}
+
 	var policy strings.Builder
 	policy.WriteString("default-src 'none'")
 	policy.WriteString("; script-src 'nonce-" + nonce + "'")
@@ -82,6 +104,27 @@ func contentSecurityPolicy(nonce string) string {
 	policy.WriteString("; frame-ancestors 'none'")
 	return policy.String()
 }
+
+// closedContentSecurityPolicy is the policy for a response whose nonce could not be
+// produced.
+//
+// It is the same policy with the script source replaced, and it is a **constant**
+// where the other is a function, because there is nothing per-response about it: two
+// responses that both failed to get a nonce have the same policy, and a nonce that
+// was not generated cannot be stamped into a header afterwards.
+//
+// Every other directive is identical to [contentSecurityPolicy]'s, deliberately. The
+// point is not to tighten the policy on this path — it is to have a policy at all, and
+// a shorter one would be a second thing to keep in step with the first.
+const closedContentSecurityPolicy = "default-src 'none'" +
+	"; script-src 'none'" +
+	"; style-src 'self'" +
+	"; img-src 'self' data:" +
+	"; font-src 'self'" +
+	"; connect-src 'self'" +
+	"; form-action 'self'" +
+	"; base-uri 'none'" +
+	"; frame-ancestors 'none'"
 
 // nonceKey is the context key for the response nonce, and it is this package's
 // so that `sse` is handed it by a function rather than reaching for it.
