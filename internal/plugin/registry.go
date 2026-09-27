@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuin/goldmark"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
@@ -70,6 +71,10 @@ type Registry struct {
 
 	// commands are the plugins' subcommands, keyed by name.
 	commands map[string]Command
+
+	// policies is the composed access set, built on the first policy registered and
+	// handed to the HTTP layer and the editor as one value.
+	policies *access.Policies
 
 	// bus is the event bus every subscriber is registered on. It is the registry's
 	// rather than a plugin's so that the registry decides who is listening to the

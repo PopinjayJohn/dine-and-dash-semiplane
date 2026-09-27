@@ -229,6 +229,48 @@
   completion, a help listing and a log line, and a name needing quoting in any of
   those is a name nobody will type. Attribution is filled in by the registry, so
   `wiki help` can say which of four plugins added a word and cannot get it wrong.
+- **`plugins/`: house-rules, spoilerbox and wordcount**, the three the milestone
+  names, each demonstrating a different set of capabilities. `house-rules` is a render
+  hook, an event subscriber and a command; `spoilerbox` is an access policy and a
+  render hook; `wordcount` is a search field, a route and a command.
+- **`house-rules` needs no goldmark extension and no sanitiser change,** because
+  `callout-[a-z0-9-]+` is the class shape the sanitiser admits on purpose and the
+  core's callout parser already renders `> [!anything]`. §12's answer for how a
+  plugin ships a callout of its own type is the one M3 left for it, and this is the
+  first plugin to use it.
+- **`spoilerbox` narrows the secrets on a page type, not the reading of a page.** A
+  `spoiler-note` is a page the table may read whose `[!SECRET]` blocks are still the
+  DM's, *even for the player who owns the character it is about* — which is narrower
+  than the core's `dm-and-owner` and narrower on purpose, because a character page is
+  written *about* its reader and a plot note is not. Its test is a table over the
+  `dm-and-owner` cells specifically, because a plain player on a `players` page never
+  sees secrets either way and that case would pass with no plugin registered.
+- **`wordcount` says out loud that a count leaks a little.** A page's length is not
+  a secret the way its contents are, and no amount of redaction changes it; what makes
+  it acceptable is that a DM who would rather their players' search did not narrow on
+  length can remove the plugin from the build. The alternative — an index with no
+  derived values in it — is a worse wiki.
+- **`render.Page` gained a `Type`, and `CacheKey` gained one with it.** A plugin's
+  render hook that could only look at a path would be guessing with a regexp, and the
+  first draft of `spoilerbox`'s notice did exactly that: it keyed on a `spoilers/`
+  prefix, which would have shown a spoiler notice on `locations/gm-notes.md` because
+  of where somebody filed it. A `type:` change with an unchanged body is a change to
+  the output, so the key has to know it.
+- **A route's response body goes through nothing, and that is not the hook's
+  arrangement.** A render hook's output is filtered by `render.Sanitiser`; a route is
+  not a render, so `wordcount` escapes its own values. The doc comment says so, and
+  says it where a plugin author will read it.
+- **`internal/plugin/contract` is the suite every plugin runs against itself**, in one
+  function taking one value: `contract.Run(t, New())`. It follows
+  `internal/store/testsuite`, which is the same arrangement, because a suite a
+  plugin author has to *configure* is a suite somebody will configure wrong.
+- **`cmd/wiki/plugins.go` is the compile-time list, and it is a function.** No
+  scanning, no `init()`, no `go:generate`. The registry cannot be a package variable
+  — "no ambient globals" is a guarantee `internal/plugin` makes and a test enforces
+  — and the plugin commands are merged into the dispatcher by `allCommands()` rather
+  than written into `commands` at init, because the map holds `runServe`, which builds
+  a registry: the initialisation cycle is the dependency graph being honest about the
+  fact that a command and a server are the same thing here.
 - **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
   first version of it forgot `Path`.** The policy test that narrows on
   `locations/` passed anyway, because the tree in the sidebar is built from paths

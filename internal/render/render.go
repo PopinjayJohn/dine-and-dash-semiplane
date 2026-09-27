@@ -127,6 +127,7 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		ReadsAll:      decision.ReadsAll,
 		Campaign:      page.Campaign,
 		Path:          page.Path,
+		Type:          page.Type,
 	}
 	if cached, found := r.cache.Get(key); found {
 		return cached, nil

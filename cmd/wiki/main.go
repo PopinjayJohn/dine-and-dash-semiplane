@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sort"
@@ -70,8 +71,10 @@ type command struct {
 	run     func(ctx context.Context, args []string, stdout, stderr io.Writer) error
 }
 
-// commands is the complete set of subcommands. Adding one here is all the
-// registration required.
+// commands is the core set of subcommands. Adding one here is all the
+// registration required; a *plugin*'s commands are merged in at dispatch time by
+// [allCommands], because the registry cannot write into this map at init time and a
+// second map is a second answer to "what commands are there".
 var commands = map[string]command{
 	"version": {
 		summary: "print the build version",
@@ -93,6 +96,38 @@ var commands = map[string]command{
 		summary: "serve the wiki over HTTP, and watch the vaults for changes",
 		run:     runServe,
 	},
+}
+
+// allCommands is the core commands plus a plugin\'s, in one map.
+//
+// It is built per dispatch rather than once at init because the registry cannot be a
+// package variable — "no ambient globals" is a guarantee `internal/plugin` makes and
+// a test enforces — and because a plugin is constructed with a store that only exists
+// once a data directory has been opened. Three commands ask for the map twice and
+// three map builds of three entries is not worth a cache.
+func allCommands() map[string]command {
+	merged := make(map[string]command, len(commands))
+	for name, cmd := range commands {
+		merged[name] = cmd
+	}
+
+	// A nil store, because a plugin's command is asked *whether it exists* long
+	// before it is run, and a command that is never run must not have needed a
+	// database. The one plugin in this build that needs one answers "this build has
+	// no index" rather than dereferencing it.
+	registry, err := buildRegistry(nil, slog.Default())
+	if err != nil {
+		// A plugin that cannot register is a startup failure, and this is a
+		// *dispatch* rather than a startup. The core commands are still there, so a
+		// DM can still run `wiki help` and see what is wrong.
+		slog.Warn("the bundled plugins did not register, so their commands are missing", "error", err)
+		return merged
+	}
+	for name, cmd := range pluginCommands(registry) {
+		merged[name] = cmd
+	}
+
+	return merged
 }
 
 func init() {
@@ -117,7 +152,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runHelp(ctx, args[1:], stdout, stderr)
 	}
 
-	cmd, ok := commands[args[0]]
+	cmd, ok := allCommands()[args[0]]
 	if !ok {
 		if err := usage(stderr); err != nil {
 			return err
@@ -138,7 +173,7 @@ func runHelp(_ context.Context, args []string, stdout, _ io.Writer) error {
 		return usage(stdout)
 	}
 
-	cmd, ok := commands[args[0]]
+	cmd, ok := allCommands()[args[0]]
 	if !ok {
 		if err := usage(stdout); err != nil {
 			return err
@@ -150,14 +185,19 @@ func runHelp(_ context.Context, args []string, stdout, _ io.Writer) error {
 	return err
 }
 
-// usage is generated from commands, sorted for determinism.
+// usage is generated from every command there is, sorted for determinism.
+//
+// It reads [allCommands] rather than `commands`, because a plugin's subcommand that
+// is not in the help is a subcommand a DM cannot find — and the whole of the
+// capability is that a plugin can *add* one.
 func usage(w io.Writer) error {
 	var b strings.Builder
 	b.WriteString("wiki is a TTRPG wiki for DMs and their players.\n\n")
 	b.WriteString("Usage:\n  wiki <command> [flags]\n\nCommands:\n")
 
-	names := make([]string, 0, len(commands))
-	for name := range commands {
+	available := allCommands()
+	names := make([]string, 0, len(available))
+	for name := range available {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -169,7 +209,7 @@ func usage(w io.Writer) error {
 		}
 	}
 	for _, name := range names {
-		fmt.Fprintf(&b, "  %-*s  %s\n", width, name, commands[name].summary)
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, name, available[name].summary)
 	}
 
 	b.WriteString("\nRun 'wiki help <command>' for details.\n")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 )
@@ -140,6 +141,42 @@ func (r *Registry) Commands() map[string]Command {
 		copied[name] = command
 	}
 	return copied
+}
+
+// AddAccessPolicy contributes a rule to the rights matrix.
+//
+// The policy is handed the core's decision and may return a narrower one; the
+// narrowing is enforced by [access.Policies.Apply] and not by anything this function
+// does, which is the whole reason a plugin cannot widen a right even by returning
+// "granted" for everything.
+//
+// A nil set is a set with nothing in it and `Policies()` returns one, so a caller
+// hands it to the HTTP layer unconditionally.
+func (r *Registry) AddAccessPolicy(policy access.Policy) error {
+	if r == nil {
+		return errors.New("plugin: adding an access policy to a nil registry")
+	}
+	if isNil(policy) {
+		return fmt.Errorf("plugin: %q added an access policy with nothing in it", r.current)
+	}
+	if r.policies == nil {
+		r.policies = access.NewPolicies(r.log)
+	}
+
+	return r.policies.Add(r.current, policy)
+}
+
+// Policies is the composed set, for the caller that hands it to the HTTP layer and
+// the editor.
+func (r *Registry) Policies() *access.Policies {
+	if r == nil {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.policies
 }
 
 // AddRoute mounts a path inside the campaign group.

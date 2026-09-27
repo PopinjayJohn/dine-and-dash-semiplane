@@ -101,6 +101,15 @@ type CacheKey struct {
 
 	// Path is the page the entry belongs to.
 	Path string
+
+	// Type is the page's type, and its part of the identity because a plugin's hook
+	// may render a page differently according to it.
+	//
+	// A `type:` change is a change to this page's output even when the body is byte
+	// for byte the same, and a cache that did not know that would serve the old page
+	// to the new type — which for a plugin's page type is the difference between a
+	// notice being shown and not.
+	Type string
 }
 
 // Cache is a bounded map from a key to a render.

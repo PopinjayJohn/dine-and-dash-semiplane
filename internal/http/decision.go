@@ -161,6 +161,7 @@ func (a *app) renderPage(ctx context.Context, campaign domain.Campaign, page dom
 		Path:        page.Path,
 		Body:        page.Body,
 		ContentHash: page.ContentHash,
+		Type:        page.Type.String(),
 	}, a.decisionFor(ctx, page, as))
 }
 
