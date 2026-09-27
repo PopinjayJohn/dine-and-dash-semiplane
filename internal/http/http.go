@@ -61,6 +61,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
@@ -167,6 +168,17 @@ type Config struct {
 	// The zero value renders exactly what a build without plugins rendered, so
 	// every test that does not care about plugins does not have to say so.
 	Hooks render.Hooks
+
+	// Policies are the plugins' access rules, composed with the rights matrix and
+	// never replacing it. A nil one is the same application as an empty one, so
+	// the three places that ask -- `decisionFor`, the page tree and the search
+	// dropdown -- ask unconditionally.
+	//
+	// A policy narrows what is *served and listed*, not what the store's read
+	// predicate admits. That is a real line and it is the safe side of it: the SQL
+	// is the invariant, and a policy is a second, stricter layer on top. See
+	// internal/access/policy.go.
+	Policies *access.Policies
 }
 
 // DefaultStreams is how many live page streams one server holds open. A campaign

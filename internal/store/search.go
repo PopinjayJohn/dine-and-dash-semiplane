@@ -152,7 +152,8 @@ const noExcerpt = `''`
 // excerpt, and no bm25 order -- and three places is one too many to keep in step
 // by hand across four statements. A test prints all four.
 func (q indexQuery) statement(withMatch bool) string {
-	return `SELECT p.id, p.path, p.title, p.type, ` + q.excerpt(withMatch) + `
+	return `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ` + q.excerpt(withMatch) +
+		`
 		FROM ` + q.table + `
 		JOIN pages p ON p.id = ` + q.table + `.page_id
 		WHERE ` + q.match(withMatch) + ` AND (` + q.sc.where + `)` + filters(q) + `
@@ -312,7 +313,11 @@ func scanHits(rows *sql.Rows, secrets bool, what string) ([]search.Hit, error) {
 	hits := []search.Hit{}
 	for rank := 1; rows.Next(); rank++ {
 		var hit search.Hit
-		if err := rows.Scan(&hit.PageID, &hit.Path, &hit.Title, &hit.Type, &hit.Snippet); err != nil {
+		if err := rows.Scan(
+			&hit.PageID, &hit.Path, &hit.Title, &hit.Type,
+			&hit.Visibility, &hit.OwnerCharacterPageID,
+			&hit.Snippet,
+		); err != nil {
 			return nil, fmt.Errorf("%s: %w", what, err)
 		}
 		hit.Rank = rank

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
 )
 
@@ -103,7 +106,7 @@ func (a *app) searchResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.renderFragment(w, r, searchResultsView(searchFragment{
-		Candidates: candidatesFor(req, hits),
+		Candidates: a.candidatesFor(r, hits),
 		Query:      query,
 	}))
 }
@@ -113,12 +116,27 @@ func (a *app) searchResults(w http.ResponseWriter, r *http.Request) {
 //
 // **A hit's `FromSecrets` is shown to the reader and not filtered out**, because a
 // player searching their own character's page and finding it in the private index
-// is the point of the private index, and a dropdown that silently hid it would be a
+// is the point of that index, and a dropdown that silently hid it would be a
 // dropdown that lied. The scope already admitted the hit, so nothing is disclosed
 // by saying where it came from.
-func candidatesFor(req *request, hits []search.Hit) []candidate {
-	candidates := make([]candidate, 0, len(hits))
-	for _, hit := range hits {
+//
+// # And the plugins
+//
+// A hit is narrowed through the same policies as the page tree, and this is the
+// listing where skipping it would be worst: the dropdown is a list of page *titles*
+// for a reader typing one character at a time, and a title is the disclosure ADR 0020
+// spent a milestone removing from a `[[link]]`. A policy that hides a page from this
+// player has to hide its title too, or it has not hidden it.
+//
+// It is a method rather than the free function it was because it now needs the app's
+// policy set and its store, and a function that reached for either through a context
+// value would be a function that could be called without them.
+func (a *app) candidatesFor(r *http.Request, hits []search.Hit) []candidate {
+	req := requestFrom(r.Context())
+	kept := a.readableHits(r.Context(), req.Principal, hits)
+
+	candidates := make([]candidate, 0, len(kept))
+	for _, hit := range kept {
 		candidates = append(candidates, candidate{
 			Path:    hit.Path,
 			Title:   hit.Title,
@@ -129,6 +147,55 @@ func candidatesFor(req *request, hits []search.Hit) []candidate {
 		})
 	}
 	return candidates
+}
+
+// readableHits narrows a hit list through the plugins' policies.
+//
+// A hit is not a [domain.Page] and cannot be one — the store read it out of an FTS5
+// index, not out of `pages` — so the [access.PageMeta] is built from the two columns
+// the hit carries for the purpose ([search.Hit.Visibility] and
+// [search.Hit.OwnerCharacterPageID]) plus the two that are the same for every hit
+// that reached this far: it is not archived, because the store does not return an
+// archived page, and the query's own `is:` clause is a filter rather than a decision.
+func (a *app) readableHits(
+	ctx context.Context, as domain.Principal, hits []search.Hit,
+) []search.Hit {
+	if a.cfg.Policies.IsEmpty() {
+		return hits
+	}
+
+	bound := a.ownersBound(ctx, as, hitOwners(hits))
+	kept := make([]search.Hit, 0, len(hits))
+
+	for _, hit := range hits {
+		meta := access.PageMeta{
+			Type:       domain.PageType(hit.Type),
+			Visibility: domain.Visibility(hit.Visibility),
+			Path:       hit.Path,
+			Owned:      bound[hit.OwnerCharacterPageID],
+		}
+		decided := access.For(access.PrincipalOf(as), meta)
+		if a.cfg.Policies.Apply(ctx, access.PrincipalOf(as), meta, decided).CanRead {
+			kept = append(kept, hit)
+		}
+	}
+
+	return kept
+}
+
+// hitOwners is the distinct owner page ids in a hit list, for the memo to be keyed
+// on.
+func hitOwners(hits []search.Hit) []string {
+	seen := make(map[string]bool, len(hits))
+	owners := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if hit.OwnerCharacterPageID == "" || seen[hit.OwnerCharacterPageID] {
+			continue
+		}
+		seen[hit.OwnerCharacterPageID] = true
+		owners = append(owners, hit.OwnerCharacterPageID)
+	}
+	return owners
 }
 
 // renderFragment writes a fragment for the browser to swap in, and it is a

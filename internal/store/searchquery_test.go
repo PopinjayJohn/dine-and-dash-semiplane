@@ -39,7 +39,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 	}{
 		"the public index, with a match": {
 			query: public, match: true,
-			want: `SELECT p.id, p.path, p.title, p.type, snippet(pages_fts, -1, '', '', '…', 12)
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), snippet(pages_fts, -1, '', '', '…', 12)
 		FROM pages_fts
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE pages_fts MATCH ? AND (p.is_deleted = 0
@@ -53,7 +53,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		},
 		"the public index, filters only": {
 			query: public, match: false,
-			want: `SELECT p.id, p.path, p.title, p.type, ''
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ''
 		FROM pages_fts
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
@@ -67,7 +67,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		},
 		"the private index, with a match": {
 			query: secret, match: true,
-			want: `SELECT p.id, p.path, p.title, p.type, snippet(pages_secrets_fts, -1, '', '', '…', 12)
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), snippet(pages_secrets_fts, -1, '', '', '…', 12)
 		FROM pages_secrets_fts
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE pages_secrets_fts MATCH ? AND (p.is_deleted = 0
@@ -82,7 +82,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		},
 		"the private index, filters only": {
 			query: secret, match: false,
-			want: `SELECT p.id, p.path, p.title, p.type, ''
+			want: `SELECT p.id, p.path, p.title, p.type, p.visibility, COALESCE(p.owner_character_page_id, ''), ''
 		FROM pages_secrets_fts
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0

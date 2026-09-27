@@ -57,6 +57,27 @@ type PageMeta struct {
 	// Archived is whether the page has been archived. Nothing may read an archived
 	// page, including a DM.
 	Archived bool
+
+	// Type and Path are what a *plugin's* policy may narrow on, and they are not
+	// inputs to the matrix: `For` does not read them, and every cell of
+	// `TestForDecisionMatrix` would be unchanged if they were deleted.
+	//
+	// They are here because a policy is handed this same [PageMeta], and a policy
+	// that cannot see what kind of page it is looking at, or where the page lives,
+	// can only ever write a rule about visibility. That is the difference between a
+	// plugin that can express "a `spoiler-note` page is not public" and one that can
+	// only say "every page is not public", which is not a policy.
+	//
+	// A zero Type is a page with no type, which is a note, and a zero Path is a page
+	// at the root of its campaign. Both are the same "a field nobody filled in has
+	// not been restricted" convention as [PageMeta.Visibility] above, applied to
+	// fields that are informational: a policy testing `Type == "spell"` is not misled
+	// by an empty Type.
+	Type domain.PageType
+
+	// Path is the page's path within its campaign, for a policy that narrows by
+	// location — a `locations/` subtree, a `npcs/` subtree.
+	Path string
 }
 
 // audience is the visibility, resolved.

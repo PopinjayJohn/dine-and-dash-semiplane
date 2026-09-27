@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
@@ -112,9 +114,12 @@ func (a *app) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pages, err := a.cfg.Store.ListPages(r.Context(), req.Campaign.ID, req.Principal)
-	if err != nil {
-		a.fail(w, r, "listing the pages of "+req.Campaign.Slug.String(), err)
+	// The sidebar's page list, through the one helper that builds it, so that the
+	// campaign root and a page agree about what a reader may see. This had its own
+	// `ListPages` call, and the plugin policy was not asked here: the root was the
+	// one page in the application whose tree listed a page a policy had hidden.
+	pages := a.pagesIn(r)
+	if pages == nil {
 		return
 	}
 
@@ -204,6 +209,26 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The decision is computed once and used three times: to decide whether this
+	// page is served at all, to render it, and to decide whether it offers an Edit
+	// link. It is the *same* decision for all three, so the link cannot be offered
+	// to somebody the page was rendered against as somebody who may not write it —
+	// and the write gate is asked again when the editor is opened, because an
+	// affordance is a hint and a gate is a rule.
+	//
+	// **It is computed before the three branches below, not between them.** The
+	// store has already applied the read predicate; this is a second, stricter layer
+	// over the top of it. Without the `CanRead` check here a policy would narrow
+	// the HTML and not the markdown or the stream, and the same page would be served
+	// three ways with three different decisions. The store's `ErrNotFound` above
+	// stays the answer for a page the *predicate* refuses, and this is the answer
+	// for a page a *policy* refuses — the same 404, no log line, no oracle.
+	decision := a.decisionFor(r.Context(), stored, req.Principal)
+	if !decision.CanRead {
+		a.notFound(w, r)
+		return
+	}
+
 	if streaming {
 		a.pageStream(w, r, path)
 		return
@@ -214,12 +239,6 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The decision is computed once and used twice: once to render, and once to
-	// decide whether the page offers an Edit link. It is the *same* decision, so
-	// the link cannot be offered to somebody the page was rendered against as
-	// somebody who may not write it — and the write gate is asked again when the
-	// editor is opened, because an affordance is a hint and a gate is a rule.
-	decision := a.decisionFor(r.Context(), stored, req.Principal)
 	result, err := a.rendererFor(req.Campaign.Slug).Render(r.Context(), render.Page{
 		Campaign:    req.Campaign.Slug.String(),
 		Path:        stored.Path,
@@ -304,6 +323,15 @@ func (a *app) pageSource(w http.ResponseWriter, r *http.Request, page domain.Pag
 // navigation is decoration, so an empty tree is better than a 500 for a page that
 // exists. The reason is logged, because "the tree is empty" on its own is the
 // least diagnosable thing in this application.
+//
+// # And then the plugins
+//
+// `Store.ListPages` has already applied the read predicate, so everything in `pages`
+// is a page this principal may read *as far as the matrix is concerned*. A plugin's
+// policy may narrow that further, and it does so here rather than by being folded
+// into the SQL: a policy is a Go function and a `WHERE` clause cannot call one. The
+// filter is skipped entirely when no plugin has registered a policy, so a build
+// without plugins pays nothing -- not the ownership lookups, not the policy calls.
 func (a *app) pagesIn(r *http.Request) []domain.Page {
 	req := requestFrom(r.Context())
 
@@ -315,7 +343,41 @@ func (a *app) pagesIn(r *http.Request) []domain.Page {
 		)
 		return nil
 	}
-	return pages
+
+	return a.visibleIn(r.Context(), req.Principal, pages)
+}
+
+// visibleIn narrows a list of pages through the plugins' policies and returns the
+// ones that survive.
+//
+// It is the second half of [app.pagesIn] and it is a separate function because the
+// search dropdown has the same problem with a different list — hits rather than
+// pages — and two copies of "ask the policies" is two copies of the rule about
+// who a policy may be asked about.
+//
+// The decision each page is filtered by is `access.For` *then* the policies, in that
+// order, for the reason in decision.go: a policy is only ever asked about a page the
+// store already returned, so no policy is ever told a player asked for a `dm-only`
+// page.
+func (a *app) visibleIn(
+	ctx context.Context, as domain.Principal, pages []domain.Page,
+) []domain.Page {
+	if a.cfg.Policies.IsEmpty() {
+		return pages
+	}
+
+	owned := a.ownedAmong(ctx, as, pages)
+	kept := make([]domain.Page, 0, len(pages))
+
+	for i, page := range pages {
+		meta := access.MetaFor(page, owned[i])
+		decided := access.For(access.PrincipalOf(as), meta)
+		if a.cfg.Policies.Apply(ctx, access.PrincipalOf(as), meta, decided).CanRead {
+			kept = append(kept, page)
+		}
+	}
+
+	return kept
 }
 
 // logout ends a session.

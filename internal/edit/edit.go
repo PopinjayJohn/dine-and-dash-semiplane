@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
@@ -74,6 +75,16 @@ type Editor struct {
 	// preview that disagreed with the save it precedes, which is the one thing a
 	// preview must not do.
 	hooks render.Hooks
+
+	// policies are the plugins' access rules, and they are asked here rather than
+	// only in the HTTP layer because a save is a POST and a POST is a thing a
+	// player can send without ever loading a form.
+	//
+	// The store's write gate is the invariant and it is still asked -- this is a
+	// second, stricter layer, never a looser one. `CheckWritableContentAs` answers
+	// "is this content allowed here"; a policy answers "is this principal allowed
+	// here at all", which is a different question and the one a plugin has.
+	policies *access.Policies
 
 	// renderers is one renderer for this campaign's previews, built on first use
 	// for the same reason the HTTP layer keeps one per campaign: a renderer holds a
@@ -98,6 +109,7 @@ func NewWith(v *vault.Vault, s *store.Store, campaign domain.Campaign, opts Opti
 		campaign:  campaign,
 		sync:      index.New(v, s, campaign),
 		hooks:     opts.Hooks,
+		policies:  opts.Policies,
 		renderers: map[domain.Slug]*render.Renderer{},
 	}
 }
@@ -478,7 +490,36 @@ func (e *Editor) MayWrite(ctx context.Context, path string, as domain.Principal)
 	if err != nil {
 		return err
 	}
+	if err := e.policiesDenyEdit(ctx, checked, as); err != nil {
+		return err
+	}
 	return e.sync.CheckWritableAs(ctx, checked, as)
+}
+
+// policiesDenyEdit asks the plugins whether this principal may write here, for a
+// path that may not exist yet.
+//
+// It is asked *before* the store's gate and not instead of it, and the order is the
+// same one `internal/http/policy_test.go` argues for: a plugin can only take a right
+// away, so asking it first is asking a stricter question and the answer is the
+// stricter of the two.
+//
+// A path that does not exist has no `PageMeta` to ask about, so the metadata is
+// built from the path alone. A policy that narrows on a page's *stored* audience
+// cannot narrow a page that has no row yet, which is the same limit the store's own
+// gate has and the reason the two are asked together rather than one or the other.
+func (e *Editor) policiesDenyEdit(ctx context.Context, path string, as domain.Principal) error {
+	if e.policies.IsEmpty() {
+		return nil
+	}
+
+	meta := access.PageMeta{Path: path}
+	decided := access.For(access.PrincipalOf(as), meta)
+	if e.policies.Apply(ctx, access.PrincipalOf(as), meta, decided).CanEdit {
+		return nil
+	}
+
+	return store.ErrNotAllowed
 }
 
 // short is a content hash in a message. A full hash is 64 characters and a message

@@ -96,6 +96,64 @@
   which is the property that let every existing golden file stay valid. It is a test
   because a hook mechanism that changed the bytes of a page nobody had asked it to
   change would be a hook mechanism nobody could review.
+- **A plugin may add a rule to the rights matrix, and it may only take rights away.**
+  `access.Policies.Apply` ANDs the plugin's answer with the core's, field by field,
+  and there is no ordering in which a plugin runs first and the core takes its
+  answer. A policy that returns "granted" for a player gets nothing, and one that
+  returns "granted" for a page the matrix already refused cannot re-grant it.
+  `TestAPluginPolicyCanOnlyTakeRightsAway` is a table over all five fields, because a
+  composition that narrows four of them is a composition that widens the fifth.
+- **A policy that cannot run *denies*, which is the opposite of a render hook.** A
+  panicking render hook is logged and skipped, because the render already has a
+  correct answer without it. A panicking or erroring *policy* is a policy whose job
+  was to take a right away, and honouring the pre-crash decision would honour it by
+  accident. The two are opposite on purpose and the asymmetry is the reason the
+  failure cases are written down separately rather than sharing a helper.
+- **`access.PageMeta` gained `Type` and `Path`, which the matrix does not read.**
+  They are inputs for a *plugin's* rule, and the comment says so: a policy that
+  cannot see what kind of page it is looking at, or where the page lives, can only
+  ever write a rule about visibility. `TestForDecisionMatrix` is unchanged by their
+  existence, which is the point.
+- **A policy narrows what is served and what is listed, not what the store's read
+  predicate admits.** That is a real line and it is the safe side of it: the SQL is
+  the invariant and a policy is a second, stricter layer on top. It is applied in
+  three places, and each one was found by a test rather than by reading the code:
+  the page route, the editor, and the two listings.
+  `TestAPluginPolicyHidesAPageARowReaches` is the named test and it checks all three
+  surfaces a player can learn a page exists from.
+- **The page route computes its decision before it branches, not between the
+  branches.** `?raw=1` and `?stream=1` are the same resource in three shapes, and a
+  `CanRead` check placed after them would have narrowed the HTML and not the
+  markdown — so the same page would have been served two ways under two decisions.
+  A live stream ends rather than continuing, because the store's not-found already
+  ends one and the reader must not be able to tell the two apart.
+- **The campaign root had its own `ListPages` call, and the policy was not asked
+  there.** It is now the one `pagesIn` helper every sidebar goes through, which is
+  the whole argument for having a helper: the root was the one page in the
+  application whose tree listed a page a policy had hidden.
+- **A save is a POST, and a POST is something a player can send without loading the
+  form.** `edit.Options` carries the policies and `Editor.MayWrite` asks them, so the
+  write path is narrowed in Go on top of the store's gate rather than only in the
+  handler. A path that does not exist yet has no stored audience for a policy to
+  narrow on, which is the same limit the store's own gate has and the reason the two
+  are asked together rather than one or the other.
+- **`search.Hit` carries `Visibility` and `OwnerCharacterPageID`,** so a policy can
+  narrow a search hit. The dropdown is a list of page *titles* for somebody typing
+  one character at a time, and a title is the disclosure ADR 0020 spent a milestone
+  removing from a `[[link]]`; a policy that hides a page from a player and leaves its
+  title in the dropdown has not hidden it. The two extra columns ride along on a
+  `JOIN pages` that was already there, and the four search statements' goldens are
+  regenerated — `owner_character_page_id` is nullable, so it is `COALESCE`d.
+- **Listing a page's owner is memoised by owner, not by page.** A campaign has one
+  owner per character, so a sidebar of three hundred pages under five characters is
+  five queries rather than three hundred, and a build with no plugins never asks at
+  all. `internal/http/decision.go` says which of the two costs is the one that
+  mattered.
+- **`access.MetaFor` exists so that a fourth caller cannot forget a field, and the
+  first version of it forgot `Path`.** The policy test that narrows on
+  `locations/` passed anyway, because the tree in the sidebar is built from paths
+  and never contained the title the test was asserting on — a test that cannot fail
+  is worth the helper that was supposed to stop the bug it was hiding.
 - **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
   of candidates and nothing else, so the page's chrome is not re-rendered
   underneath a reader's cursor. The candidates are the ACL's answer and not a
