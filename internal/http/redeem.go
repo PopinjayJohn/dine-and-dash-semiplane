@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/events"
@@ -42,6 +44,36 @@ import (
 // `TestTheTokenNeverLeavesTheServer` checks all four at once, because the failure
 // mode is a token that survives in one of four places.
 
+// retryAfterSeconds is a `Retry-After` header's value: whole seconds, at least one.
+//
+// A zero or negative window means `auth`'s default, because `auth.NewLimiter`
+// already decided that and a `Retry-After: 0` is a client that retries immediately,
+// which is a limit that does not limit.
+func retryAfterSeconds(window time.Duration) string {
+	if window <= 0 {
+		window = auth.DefaultRedemptionWindow
+	}
+
+	seconds := int(window.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.Itoa(seconds)
+}
+
+// trustsProxy is whether a request arrived through a proxy this deployment believes.
+//
+// **With nothing configured it is false for every request**, which is the safe
+// direction: a rate limit applied per proxy is unfair to nobody in a campaign of five,
+// and a rate limit a stranger can remove by sending a header is not a rate limit.
+// See [auth.ClientIP], whose third argument is exactly this question.
+func (a *app) trustsProxy(r *http.Request) bool {
+	if len(a.cfg.TrustedProxies) == 0 {
+		return false
+	}
+	return a.proxies.Contains(r.RemoteAddr)
+}
+
 // redeem exchanges a token for a cookie and redirects.
 //
 // A request with no token is not a redemption and goes through untouched: a
@@ -53,6 +85,24 @@ func (a *app) redeem(next http.Handler) http.Handler {
 
 		if !r.URL.Query().Has("k") {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		// The rate limit, before anything is attempted with the token.
+		//
+		// **`auth.Limiter` was built and tested in M6 and never called**, and
+		// `docs/security.md` has listed `TestRateLimitedRedemption` as the control
+		// against "the network, guessing share links" ever since. A test on a
+		// component nothing calls is a test of that component, not a control on this
+		// route, and the difference is the whole of the gap.
+		//
+		// It is asked before the token is even read, so a script that is guessing
+		// pays the limit whether or not its guesses are well-formed. `trustedProxy` is
+		// **false** here and that is the safe direction: [auth.ClientIP]'s third
+		// argument asks whether this request arrived through a proxy the deployment
+		// trusts, and until `config.yaml`'s `trusted_proxies` is read, nothing does.
+		if err := a.limiter.Allow(auth.ClientIPFromRequest(r, a.trustsProxy(r))); err != nil {
+			a.redeemFailed(w, r, err)
 			return
 		}
 
@@ -161,6 +211,12 @@ func (a *app) redeemFailed(w http.ResponseWriter, r *http.Request, cause error) 
 	req := requestFrom(r.Context())
 
 	status, body := redemptionMessage(cause)
+	if status == http.StatusTooManyRequests {
+		// A 429 without a `Retry-After` is a 429 a client has to guess at, and the
+		// window is a property of the limiter rather than of this handler, so it is
+		// read back from the limiter rather than restated here.
+		w.Header().Set("Retry-After", retryAfterSeconds(a.cfg.RedemptionWindow))
+	}
 
 	a.log.LogAttrs(r.Context(), slog.LevelWarn, "redemption refused",
 		slog.String("reason", cause.Error()),
@@ -184,6 +240,14 @@ func (a *app) redeemFailed(w http.ResponseWriter, r *http.Request, cause error) 
 // can act on.
 func redemptionMessage(cause error) (int, string) {
 	switch {
+	case errors.Is(cause, auth.ErrRateLimited):
+		// A 429 rather than the default 404, and that is the one place a rate limit
+		// is *told* rather than disguised. A script cannot tell the difference between
+		// a limit and a wrong token, which is the point; a person can, and a player
+		// who has typed their own link five times deserves to be told to wait rather
+		// than told their link is broken. The `Retry-After` header is set beside it.
+		return http.StatusTooManyRequests,
+			"Too many attempts from this address. Wait a minute and try again."
 	case errors.Is(cause, auth.ErrRevoked):
 		return http.StatusForbidden, "This link has been revoked, which means the DM took it back. Ask them for a new one."
 	case errors.Is(cause, auth.ErrLinkExpired):

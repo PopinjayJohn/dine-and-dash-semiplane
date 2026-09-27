@@ -3,6 +3,8 @@ package auth
 import (
 	"errors"
 	"net"
+	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -254,6 +256,55 @@ func (l *Limiter) Tracked() int {
 func normaliseAddress(address string) string {
 	return strings.ToLower(strings.TrimSpace(address))
 }
+
+// ClientIPFromRequest is [ClientIP] for the `http.Request` an HTTP router has.
+//
+// It exists because every framework hands the router a `RemoteAddr` *string* and
+// `ClientIP` takes a `net.Addr`, so the conversion from `"10.0.0.1:54321"` to
+// something addressable is a step every caller has to invent. Inventing it in three
+// places is how one of them ends up believing the port as part of the address — which
+// is a different limit key per connection, and therefore no limit at all.
+//
+// It is a function in `auth` rather than in `http` because the decision it makes is
+// the one [ClientIP]'s doc comment argues for, and a caller that has to write the
+// parsing to get at the decision is a caller that gets the decision wrong.
+func ClientIPFromRequest(r *http.Request, trustedProxy bool) string {
+	if r == nil {
+		return ""
+	}
+	return ClientIP(remoteAddrOf(r.RemoteAddr), r.Header.Get("X-Forwarded-For"), trustedProxy)
+}
+
+// remoteAddrOf is a `RemoteAddr` string as a `net.Addr`.
+//
+// A string that is not `host:port` is handed back as an opaque address rather than
+// refused, because a router's `RemoteAddr` for a unix socket is a *path* and there is
+// nothing to split it into. `ClientIP` already handles a non-TCP address by taking its
+// `String()`; this keeps that path in one place.
+func remoteAddrOf(remote string) net.Addr {
+	if remote == "" {
+		return nil
+	}
+	// `net.LookupPort` is avoided deliberately: it takes a *service name* and can
+	// consult the system resolver, which is a network call on the path of every
+	// redemption. `netip.ParseAddrPort` does the same job in one parse and cannot
+	// block, and this function's whole purpose is to be cheap enough to call on
+	// every attempt.
+	addressPort, err := netip.ParseAddrPort(remote)
+	if err != nil {
+		// A `RemoteAddr` that is not `host:port`, which a unix socket's path and a
+		// custom listener may both be. There is no host to take out of it.
+		return opaqueAddr(remote)
+	}
+	return &net.TCPAddr{IP: addressPort.Addr().AsSlice(), Port: int(addressPort.Port())}
+}
+
+// opaqueAddr is an address with no parts this package can see, which is what a unix
+// socket path and a malformed `RemoteAddr` both are.
+type opaqueAddr string
+
+func (o opaqueAddr) Network() string { return "unix" }
+func (o opaqueAddr) String() string  { return string(o) }
 
 // ClientIP is what a router should hand the limiter, given a request.
 //

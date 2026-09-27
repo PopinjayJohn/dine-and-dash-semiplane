@@ -407,6 +407,48 @@
   either wrapped in the same handler or it is not used.
   `TestTheRedactionSurvivesTheFormat` is the test that would fail first if anybody ever
   added a raw one.
+- **The share-link rate limit was tested and never called.** `auth.Limiter` and
+  `auth.ClientIP` have existed since M6 with `TestRateLimitedRedemption` on them, and
+  `docs/security.md` has listed that test as *the control* against "the network,
+  guessing share links" ever since. Nothing called either. A test on a component
+  nothing invokes is a test of that component, not a control on the route, and the
+  route is where the attack is. It is now asked before a token is even read, so a
+  script pays the limit whether or not its guesses are well-formed.
+- **A rate limit is a 429 with a `Retry-After`, not a 404.** A script cannot tell a
+  limit from a wrong token, which is the point; a *person* can, and a player who has
+  typed their own link five times deserves to be told to wait rather than told their
+  link is broken. `auth`'s window is read back from the limiter rather than restated,
+  because a `Retry-After` and the limit it describes are two things that must not
+  disagree.
+- **`auth.ClientIPFromRequest` is new**, because every framework hands a router a
+  `RemoteAddr` *string* and `ClientIP` takes a `net.Addr`. Inventing the conversion
+  per caller is how one of them ends up counting the port as part of the address,
+  which is a different limit key per connection and therefore no limit. It uses
+  `netip.ParseAddrPort` rather than `net.LookupPort`, which is a service-name lookup
+  and can consult the system resolver — a network call on the path of every
+  redemption.
+- **`config.yaml` is read, and `DDSP_LISTEN` / `DDSP_BASE_URL` /
+  `DDSP_TRUSTED_PROXIES` exist.** `internal/datadir` declined to read a config file
+  for six milestones on the grounds that "a half-implemented config loader that
+  silently ignored a config.yaml a DM had written would be worse than one that does
+  not exist." This one is complete, and it keeps that promise three ways: a missing
+  file is not an error, a **broken file is** and names itself, and a **misspelled key
+  is** and names the key. A `config.yaml` that parses and applies nothing is a DM
+  with a setting they changed and no way to find out why.
+- **Precedence is environment over file, with the flag above both**, and it is written
+  once per *rule* rather than once per setting: `config.firstNonEmpty` for
+  environment-over-file-over-default, and `cmd/wiki.firstNonEmpty` for
+  flag-over-resolved. A variable set from an unset one is spaces rather than nothing,
+  and a listen address of spaces is a bind that fails with an error about a string
+  nobody recognises, so values are trimmed before the emptiness test.
+- **A `trusted_proxies` entry is an address or a CIDR, and a hostname is refused.**
+  A name in that list would have to be resolved on every request and can resolve
+  somewhere else tomorrow, so the answer would not be the one the DM wrote down. The
+  list is parsed once at construction rather than per request, because a CIDR entry is
+  an expensive thing to rebuild on the path of every redemption. The default trusts
+  **nothing**, which is the safe direction: a limit applied per proxy is unfair to
+  nobody in a campaign of five, and a limit a stranger removes by sending a header is
+  not a limit.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

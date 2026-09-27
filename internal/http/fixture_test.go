@@ -679,3 +679,28 @@ func (f *fixture) playerSession() *http.Cookie {
 func (f *fixture) pageURL(path string) string {
 	return "/c/" + f.campaign.Slug.String() + "/" + path
 }
+
+// redeemURL is the address a share-link redemption is attempted at, for a token.
+//
+// It is a fixture helper rather than a string in each test because the three tests
+// that redeem a *bad* token all need the same URL, and a test that spells the
+// campaign slug out is a test that fails when the fixture's campaign is renamed.
+func (f *fixture) redeemURL(token string) string {
+	return "/c/" + f.campaign.Slug.String() + "/?k=" + token
+}
+
+// mintLinks is n freshly-minted share links, as hex tokens.
+//
+// They are distinct links on purpose: redeeming the *same* link twice fails for a
+// different reason — it is single-use — and a rate-limit test that also tested
+// single-use would be unable to say which of the two it saw.
+func (f *fixture) mintLinks(n int) []string {
+	f.t.Helper()
+
+	links := make([]string, 0, n)
+	for range n {
+		issued := mustIssue(f.t, f.store, f.cfg.Redeemer.Config, f.campaign, domain.RolePlayer, "player")
+		links = append(links, issued.Token.Hex())
+	}
+	return links
+}
