@@ -1,0 +1,26 @@
+# The build context is the repository, and everything in here is either not
+# needed to build the binary or not something an image should ever contain.
+#
+# The two that matter most are at the end: a `.git` directory in a build context is
+# every commit this repository has ever made, and the Dockerfile stages the whole
+# context into the builder. `.dockerignore` is the only thing standing between a
+# `docker build` and publishing the project's history into an image layer.
+
+.git
+.github
+bin
+dist
+coverage.out
+coverage-handwritten.out
+data
+
+# The data directory a local `make run` leaves behind. It is a DM's campaign, and it
+# has no business being in an image layer.
+vault
+
+# Docs and tests are not needed to build the binary, and the tests would pull the
+# whole module graph into the context.
+docs
+e2e
+**/*_test.go
+**/testdata

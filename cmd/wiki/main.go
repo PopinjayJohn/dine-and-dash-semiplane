@@ -107,6 +107,22 @@ var commands = map[string]command{
 		summary: "serve the wiki over HTTP, and watch the vaults for changes",
 		run:     runServe,
 	},
+	"backup": {
+		summary: "write a timestamped archive of the database and the vault",
+		run:     runBackup,
+	},
+	"export": {
+		summary: "write a campaign's vault as a zip, for Obsidian or for a player",
+		run:     runExport,
+	},
+	"import": {
+		summary: "copy an Obsidian vault into a campaign, after showing what it would do",
+		run:     runImport,
+	},
+	"users": {
+		summary: "mint, revoke and list the share links for a campaign",
+		run:     runUsers,
+	},
 }
 
 // allCommands is the core commands plus a plugin\'s, in one map.

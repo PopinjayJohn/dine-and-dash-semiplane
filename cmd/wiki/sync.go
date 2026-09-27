@@ -382,13 +382,54 @@ func openCampaignStore(ctx context.Context, dir string) (*store.Store, error) {
 // parseFlags is the flag handling every subcommand shares: a bad flag is the
 // command's own error rather than the flag package's, so it is printed once.
 func parseFlags(flags *flag.FlagSet, args []string, name string) error {
+	return parseFlagsAllowing(flags, args, name, 0)
+}
+
+// parseFlagsAllowing is [parseFlags] for a command that takes `wanted` positional
+// arguments.
+//
+// A command whose whole input is one word — `wiki users new Alice` — cannot be
+// written with [parseFlags], and the version that parses and then checks `NArg` is
+// two rules in two functions, which is how a command ends up accepting two arguments
+// when it takes one. So the count is the parameter and the default is zero.
+//
+// A count of one is a separate case from zero, not a special value: a bad flag, a
+// missing argument and a surplus argument are three different mistakes and the
+// messages say which.
+func parseFlagsAllowing(flags *flag.FlagSet, args []string, name string, wanted int) error {
 	if err := flags.Parse(args); err != nil {
 		return usageError{name: name, flags: flags}
 	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%s takes no arguments, got %q", name, flags.Arg(0))
+
+	switch {
+	case flags.NArg() > wanted:
+		return fmt.Errorf("%s takes %s, got %d arguments", name, positionalName(wanted), flags.NArg())
+	case flags.NArg() < wanted:
+		return usageError{
+			name:  name,
+			flags: flags,
+			takes: positionalName(wanted),
+		}
 	}
+
 	return nil
+}
+
+// positionalName is how a command's positional arguments are described in a message:
+// "no arguments", one argument, two arguments.
+//
+// It is a function because the two mistakes a caller can make are about there being
+// too many and there being too few, and they read differently — "took 3 arguments"
+// for one and "takes no arguments, got \"x\"" for the other.
+func positionalName(count int) string {
+	switch count {
+	case 0:
+		return "no arguments"
+	case 1:
+		return "one argument"
+	default:
+		return fmt.Sprintf("%d arguments", count)
+	}
 }
 
 // usageError is "this command's flags, and a non-zero exit", carried as an error
@@ -396,17 +437,44 @@ func parseFlags(flags *flag.FlagSet, args []string, name string) error {
 type usageError struct {
 	name  string
 	flags *flag.FlagSet
+
+	// takes is the positional argument the command wanted, for the commands whose
+	// flags all have defaults and whose mistake is to leave it out. Empty means the
+	// command takes none, which is what `parseFlagsAllowing`'s zero already says.
+	takes string
 }
 
 func (e usageError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nFlags:\n", e.name)
+	fmt.Fprintf(&b, "%s\n\n", e.name)
+
+	if e.takes != "" {
+		fmt.Fprintf(&b, "Takes: %s\n\n", e.takes)
+	}
 
 	// The flag set's output is borrowed rather than given a writer, because
 	// PrintDefaults is the only way to get a flag set's own listing out of the
-	// standard library.
-	e.flags.SetOutput(&b)
-	e.flags.PrintDefaults()
+	// standard library. A nil flag set is the one caller that has no flags to show --
+	// `wiki users` with no subcommand -- and the listing is then just the sentence
+	// above, which is the whole of the useful message.
+	if e.flags != nil {
+		b.WriteString("Flags:\n")
+		e.flags.SetOutput(&b)
+		e.flags.PrintDefaults()
+	}
 
 	return b.String()
+}
+
+// flagsForSubcommandHelp is an empty flag set, for the one usage error a
+// subcommand dispatcher produces before it has parsed anything.
+//
+// It exists because a `usageError` with a nil flag set was the alternative and it
+// made `Error` conditional, and "is the flag set nil" is a question every reader of
+// `Error` would then have to answer. An empty set prints nothing, which is what
+// there is to print.
+func flagsForSubcommandHelp(_ io.Writer) *flag.FlagSet {
+	flags := flag.NewFlagSet("", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	return flags
 }

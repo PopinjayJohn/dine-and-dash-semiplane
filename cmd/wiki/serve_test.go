@@ -575,3 +575,71 @@ func between(t *testing.T, body, prefix, suffix string) string {
 	}
 	return html.UnescapeString(value)
 }
+
+// TestTheLogFormatFlagIsRefusedRatherThanIgnored: the flag exists, so a DM who
+// mistypes it has to be told. A wiki that started anyway would be logging in a format
+// the DM did not ask for, and the discovery would be a log shipper with nothing to
+// parse.
+func TestTheLogFormatFlagIsRefusedRatherThanIgnored(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	err := runServe(t.Context(),
+		[]string{"--data-dir", dir, "--addr", "127.0.0.1:0", "--log-format", "logfmt"},
+		&stdout, &stderr)
+
+	if err == nil {
+		t.Fatal("wiki serve --log-format logfmt started")
+	}
+	if !strings.Contains(err.Error(), "logfmt") {
+		t.Errorf("the refusal does not name what was typed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "text") || !strings.Contains(err.Error(), "json") {
+		t.Errorf("the refusal does not say what is accepted: %v", err)
+	}
+}
+
+// TestOfflineBoot is a control `docs/security.md` names against nothing and
+// `docs/spec.md` §14 lists in its table, and neither had a test.
+//
+// "The app boots and serves with no network" is a property of ADR 0006's decision
+// that nothing is fetched at runtime, and it is worth a test because every way it
+// breaks is an *addition*: a CDN link in a template, a font the browser fetches, a
+// release check that phones home, a plugin registry that resolves over the network.
+// None of them is a bug when it lands — each is a small convenience — and the test
+// is what makes the fifth one a conversation rather than a surprise at a table with
+// no bars.
+func TestOfflineBoot(t *testing.T) {
+	t.Parallel()
+
+	server := bootServer(t, dataDirFixture(t), "--addr", "127.0.0.1:0", "--no-watch")
+
+	// The whole of ADR 0006: a working application, from loopback, with nothing
+	// fetched to get it.
+	if got := server.get(t, "/_/healthz"); got.status != nethttp.StatusOK {
+		t.Fatalf("/_/healthz is %d, want 200\nbody: %s", got.status, got.body)
+	}
+
+	// And the page shell references nothing that would be fetched. This is the half
+	// that catches a CDN in a template: a server that answers 200 with a
+	// `<script src="https://...">` in it does not work offline, and nothing in the Go
+	// code would say so.
+	//
+	// The two directives the page *should* carry are checked at the same time, so a
+	// change that removed them — and so made this test vacuous — fails here too.
+	for _, path := range []string{"/c/blackwater/", "/c/blackwater/locations/rivergate"} {
+		got := server.get(t, path)
+		if got.status == nethttp.StatusNotFound {
+			continue
+		}
+
+		for _, external := range []string{"http://", "https://"} {
+			if strings.Contains(got.body, external) {
+				t.Errorf("%s references an external resource (%s), so the page does "+
+					"not work with no network:\n%s", path, external, got.body)
+			}
+		}
+	}
+}

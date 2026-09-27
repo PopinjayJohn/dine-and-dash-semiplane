@@ -22,6 +22,7 @@ SHELL := /bin/sh
 
 MODULE      := github.com/popinjayjohn/dine-and-dash-semiplane
 BIN_DIR     := bin
+DIST_DIR    := dist
 COVERAGE_MIN := 80
 
 GOLANGCI_LINT_VERSION := v2.13.2
@@ -54,6 +55,13 @@ build: ## Build the wiki binary into bin/
 		-ldflags "-s -w -X $(MODULE)/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev) -X $(MODULE)/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X $(MODULE)/internal/version.Date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-o $(BIN_DIR)/wiki ./cmd/wiki
 
+# The release archives. The script does the work and the target is here because
+# CI's rule is that a job runs a make target -- see .github/workflows/release.yml,
+# which is the job that runs this.
+.PHONY: dist
+dist: ## Cross-compile release archives for every supported platform into dist/
+	@scripts/dist.sh
+
 .PHONY: run
 run: ## Build and serve the wiki
 	go run ./cmd/wiki serve
@@ -62,6 +70,18 @@ run: ## Build and serve the wiki
 install-tools: ## Install the pinned linter and templ generator into GOBIN
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION)
+
+# ----------------------------------------------------------------- e2e ----
+
+# The end-to-end smoke test, behind a build tag and out of `check` on purpose.
+#
+# `e2e/smoke_e2e_test.go` is `//go:build e2e`, so `go test ./...` does not see it
+# and neither does `make check`. A test that blocks every pull request is a test that
+# gets ignored within a fortnight; this one builds the binary and boots it, so it is a
+# decision rather than a tax.
+.PHONY: e2e
+e2e: ## Run the end-to-end smoke test, behind the e2e build tag
+	go test -tags e2e -count=1 -timeout 5m ./e2e/...
 
 # ----------------------------------------------------------------- test ----
 

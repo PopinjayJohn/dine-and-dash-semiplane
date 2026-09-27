@@ -1,4 +1,46 @@
+# Changelog
+
+All notable changes to this project, following [Keep a Changelog] and
+[Semantic Versioning]. The **unreleased** section is everything since the last
+tag; a released section is never edited again, so a version of this file is what
+it said on the day it shipped.
+
+[Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
+[Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+
 ## [Unreleased]
+
+### Fixed
+
+- **`wiki import obsidian` left the campaign's database open for the rest of the
+  process.** It opened a store to check the campaign existed and wrote
+  `if _, _, openErr := ...`, which discards the store and drops the only handle that
+  closes it. On Linux and macOS that is invisible — unlinking an open file is legal,
+  so every local run and two of the three CI legs were green — and on Windows it makes
+  the data directory **impossible to move or delete**, because a held file cannot be
+  renamed. Windows CI found it as `TempDir RemoveAll cleanup: unlinkat
+  campaigns.db: The process cannot access the file`, which is in the runner's own
+  cleanup and near no assertion at all.
+- **A test for that class, on the two platforms that can see it.**
+  `TestACommandDoesNotLeaveTheDatabaseOpen` asks whether any of this process's
+  descriptors point into a data directory after a command: `/proc/self/fd` on Linux,
+  and a reversible rename on Windows, which is the same mechanism the failure used.
+  It skips on macOS, where neither works, and says so rather than passing quietly.
+  It has `import` in its list because **the first version did not, and that version
+  passed while the leak was still there** — a leak test that omits the command that
+  leaked is a leak test about a different command.
+- **The certificate's `0600` is no longer asserted on Windows**, where
+  `os.WriteFile`'s mode is a request and `FileMode.Perm()` reports `0666` for
+  anything writable. The rest of that test — that the file is written at all, and that
+  the certificate it holds is the same one next time — is the property, and it is
+  still asserted everywhere. The check is a `runtime.GOOS` rather than a skipped test
+  for that reason.
+
+## [0.1.0] - 2026-09-27
+
+_First release. Milestones M0 through M13: from `internal/domain` to the
+plugin framework and the release machinery. `docs/spec.md` section 16 has the
+breakdown and `docs/adr/` has the decisions._
 
 ### Added
 
@@ -369,6 +411,244 @@
   becoming a word, a statline keeping the DM's own rows, fifteen fields served by one
   renderer — is the plugin, which is the shape §1's "core is system-agnostic" was
   reaching for.
+- **`wiki migrate` was claim-able by a plugin, and a comment named a test that did
+  not exist.** M11 added a reserved list of core command names so a plugin could not
+  take one, and the list reserved `init`, `mint` and `versions` — commands that have
+  never existed — while omitting `version` and `migrate`, which are. `wiki migrate` is
+  how a database's schema is applied. The comment above the list said
+  "`TestTheCoreCommandListIsTheDispatchersOwn` holds them together" and there was no
+  such test, which is the exact failure `docs/security.md` opens on: *a security
+  property nobody tests is a comment*. `TestTheCoreCommandListIsTheDispatchersOwn`
+  exists now, checks both directions, and is the first thing M13 did.
+- **A `crypto/rand` failure produced a response with no `Content-Security-Policy` at
+  all.** The header was set only when a nonce had been produced, so the one time the
+  nonce could not be made was the one time the policy was missing — which is the
+  exact opposite of what `internal/http/headers.go` argues for three functions below
+  ("a constant with a placeholder in it is a string that can be served without one —
+  which is a page with a policy that does not authorise anything, i.e. a page that
+  does not work, rather than a page that is open"). The header is now unconditional
+  and an empty nonce yields `script-src 'none'`: the DM loses live updates and
+  search-as-you-type for the duration, a log line says why, and nothing an attacker
+  injected runs. The nonce source is `http.Config.Nonce` so the path is testable,
+  because a `crypto/rand` call inside a middleware is a failure path with no test.
+- **`--log-format` and `DDSP_LOG_FORMAT`: `text` or `json`, refused otherwise.** The
+  application has logged through `log/slog` with named fields since M0 — `method`,
+  `path`, `status`, `request_id`, `principal` — so "structured logs" as an M13 item
+  turned out to be a *format switch* and nothing else. What was missing was that
+  `wiki serve` hardcoded `slog.NewTextHandler`, so a DM whose system log wanted JSON
+  had two bad options: post-process the text, or scrape it.
+- **An unknown log format stops the command, and the error names the two that
+  work.** A default here is the worst of the three answers: a refusal is thirty
+  seconds of reading, a default is an afternoon of wondering why a log shipper has
+  nothing to parse, and a panic is a support question. `DDSP_LOG_FORMAT` is validated
+  in `Resolve` rather than in `New`, so a command refuses before it opens a database
+  rather than after.
+- **The redaction survives every format, and that is the constraint on adding one.**
+  `internal/auth`'s redacting handler wraps whatever it is given and has no unwrapped
+  constructor to reach past — a M6 decision — so a format is a new *encoder* and it is
+  either wrapped in the same handler or it is not used.
+  `TestTheRedactionSurvivesTheFormat` is the test that would fail first if anybody ever
+  added a raw one.
+- **The share-link rate limit was tested and never called.** `auth.Limiter` and
+  `auth.ClientIP` have existed since M6 with `TestRateLimitedRedemption` on them, and
+  `docs/security.md` has listed that test as *the control* against "the network,
+  guessing share links" ever since. Nothing called either. A test on a component
+  nothing invokes is a test of that component, not a control on the route, and the
+  route is where the attack is. It is now asked before a token is even read, so a
+  script pays the limit whether or not its guesses are well-formed.
+- **A rate limit is a 429 with a `Retry-After`, not a 404.** A script cannot tell a
+  limit from a wrong token, which is the point; a *person* can, and a player who has
+  typed their own link five times deserves to be told to wait rather than told their
+  link is broken. `auth`'s window is read back from the limiter rather than restated,
+  because a `Retry-After` and the limit it describes are two things that must not
+  disagree.
+- **`auth.ClientIPFromRequest` is new**, because every framework hands a router a
+  `RemoteAddr` *string* and `ClientIP` takes a `net.Addr`. Inventing the conversion
+  per caller is how one of them ends up counting the port as part of the address,
+  which is a different limit key per connection and therefore no limit. It uses
+  `netip.ParseAddrPort` rather than `net.LookupPort`, which is a service-name lookup
+  and can consult the system resolver — a network call on the path of every
+  redemption.
+- **`config.yaml` is read, and `DDSP_LISTEN` / `DDSP_BASE_URL` /
+  `DDSP_TRUSTED_PROXIES` exist.** `internal/datadir` declined to read a config file
+  for six milestones on the grounds that "a half-implemented config loader that
+  silently ignored a config.yaml a DM had written would be worse than one that does
+  not exist." This one is complete, and it keeps that promise three ways: a missing
+  file is not an error, a **broken file is** and names itself, and a **misspelled key
+  is** and names the key. A `config.yaml` that parses and applies nothing is a DM
+  with a setting they changed and no way to find out why.
+- **Precedence is environment over file, with the flag above both**, and it is written
+  once per *rule* rather than once per setting: `config.firstNonEmpty` for
+  environment-over-file-over-default, and `cmd/wiki.firstNonEmpty` for
+  flag-over-resolved. A variable set from an unset one is spaces rather than nothing,
+  and a listen address of spaces is a bind that fails with an error about a string
+  nobody recognises, so values are trimmed before the emptiness test.
+- **A `trusted_proxies` entry is an address or a CIDR, and a hostname is refused.**
+  A name in that list would have to be resolved on every request and can resolve
+  somewhere else tomorrow, so the answer would not be the one the DM wrote down. The
+  list is parsed once at construction rather than per request, because a CIDR entry is
+  an expensive thing to rebuild on the path of every redemption. The default trusts
+  **nothing**, which is the safe direction: a limit applied per proxy is unfair to
+  nobody in a campaign of five, and a limit a stranger removes by sending a header is
+  not a limit.
+- **`wiki users new` / `revoke` / `list`.** M9 shipped "New player link" and
+  "Revoke" as buttons in the DM's own browser, which is the right way to do it and
+  the only way it *could* be done: the plaintext token exists once, in the page that
+  mints it. These are for the three cases the buttons cannot reach — a scripted
+  onboarding, a headless box, and a link that has to travel out of band. The warning
+  goes to **stderr** so `wiki users new … > link.txt` writes the link and nothing
+  else, and the token appears in no listing.
+- **Revocation ends the sessions first and the link second.** Doing only the link
+  would leave a revoked player reading for as long as their cookie lasts, which is
+  the failure a DM revoking somebody at the table is actually trying to avoid.
+- **`users new` refuses rather than guessing an origin.** There is no default base
+  URL: a link built with none is a path a player cannot open, and a command that
+  printed one anyway would look like it worked. It is also why the command reads
+  `config.yaml` — the `base_url` setting is what a deployment sets once, and a
+  command that could not read it would be a command with a flag where a setting
+  belongs.
+- **A command against a campaign that does not exist changes nothing.** `wiki sync`
+  creates a row for a folder that is not in the database, because a vault is a thing
+  a DM makes by creating a folder. `wiki users revoke` has the opposite relationship
+  with a missing row: the principal being revoked is in a campaign that exists, and a
+  missing one is a typo. So its lookup refuses rather than creating, and a mistyped
+  slug revokes nobody.
+- **`parseFlagsAllowing` is [parseFlags] with a positional count**, because a
+  command whose whole input is one word cannot be written with a parser that rejects
+  positionals — and "parse then check `NArg`" is two rules in two functions, which is
+  how a command ends up accepting two arguments when it takes one.
+- **`wiki backup [--prune]`, and `TestBackupsRestoreIdenticalIndex`.** The test is
+  required by `docs/spec.md` §14, by `docs/security.md` and by [ADR 0012], and it has
+  not existed because there was no backup to take. The archive is a gzipped tar of
+  the data directory with no manifest and no index of ours, because ADR 0011's sentence
+  is that a restore on a different machine is a file copy — a DM whose wiki will not
+  start does not have to find this binary to get their campaign back.
+- **The database is copied with `VACUUM INTO`, not `cp`, and not the Online Backup
+  API.** A `cp` of a WAL database gives you a main file consistent with *some*
+  instant and no `-wal` beside it: a database that opens and then quietly disagrees
+  with the vault, which is the one failure a backup must not have. The Online Backup
+  API is the right primitive and `modernc.org/sqlite` does not expose it through
+  `database/sql`, so `VACUUM INTO` is the equivalent — the same read transaction, a
+  *fresher* file, and a busy timeout the API would have had anyway. It also fails
+  fast without one, and `SQLITE_BUSY` sends a DM to a SQLite manual at the moment
+  their campaign is in it, so the error says "is a server running against this data
+  directory?".
+- **A backup does not take the serve lock, and the first draft that did was wrong.**
+  A backup that waits for the server to exit is a backup a DM cannot take *while
+  playing*, which is the only time they think about taking one. The collision the
+  lock would have prevented is prevented at the only place it can be: `O_EXCL` makes
+  the name reservation atomic and the caller retries, which is a *stronger* guarantee
+  because it holds between two backups, which the lock never did.
+- **The lock file is not archived.** `locks/serve.lock` is a fact about the process
+  that held it; restoring one is restoring a two-minute stale wait.
+- **`--prune` keeps the seven most recent by filename, not by modification time.**
+  The name *is* the timestamp, and two sources of truth for "which is newest" is a
+  sort that disagrees with its own directory listing. It also does not touch a file
+  that is not an archive, and the test asserts that — a DM's own notes beside
+  `backups/` are not the tool's business.
+- [ADR 0012](docs/adr/0012-migration-runner-in-repo.md) is the third document that
+  names the backup test, and it names it as one of the tools for the question
+  "`wiki reindex --full` and `TestBackupsRestoreIdenticalIndex` are this project's
+  tools for that".
+- **`wiki serve --lan`, which ADR 0011 calls "a first-class path" and
+  `docs/security.md` has listed a control for without the flag existing.**
+  `docs/security.md`'s row is "The network, on a LAN | Sees plaintext HTTP if
+  `--lan` without TLS | Self-signed TLS offered by `wiki serve --lan`" — a control
+  for a path that was not there. `--lan` now turns TLS **on** and does not offer to
+  leave it off, because a campaign's secrets crossing a cafe wifi in plaintext is not
+  a poor security story, it is the thing this application exists for not doing. It
+  also implies `--production`, so the session cookie gets `Secure` (ADR 0003).
+- **The LAN certificate is generated per data directory and kept, and the fingerprint
+  is printed before the server is announced.** A certificate regenerated on every start
+  is a browser warning on every visit, and a warning a DM learns to dismiss without
+  reading has stopped protecting anything. The fingerprint is in
+  `openssl x509 -fingerprint -sha256` form so the thing they read in the dialog and
+  the thing they can type into a shell are the same string. Shipping one certificate
+  was the alternative and it means every DM in the world shares a private key.
+- **`TestOfflineBoot` exists.** `docs/security.md` lists "The app boots and serves
+  with no network" as a control and `docs/spec.md` §14 lists it in the test table, and
+  neither had a test. It is worth one because every way it breaks is an *addition* — a
+  CDN link in a template, a font the browser fetches, a release check that phones home
+  — and none of those is a bug when it lands. The test also checks that the page shell
+  references nothing external, because a server that answers 200 with a
+  `<script src="https://…">` in it is a server that does not work offline and nothing
+  in the Go code would say so.
+- **`wiki export --zip` and `wiki import obsidian <dir>`, and
+  [ADR 0024](docs/adr/0024-an-export-is-a-vault.md) for what they move.** §6 names
+  both commands in one line and nowhere else in the spec says what either contains,
+  where its output goes, what it does with a collision or what it refuses, so the ADR
+  is mostly *choosing the questions*.
+- **An export is a vault, not a data directory.** A zip a DM emails to a player must
+  not be a file of session ids and share-link hashes; `wiki backup` is the command for
+  a data directory, and the two commands are different because the two artifacts have
+  different recipients. The archive is also **deterministic** — sorted entries,
+  timestamps at the epoch, no directory entries — so two exports of an unchanged vault
+  are byte-identical and `git diff` after an export is a diff of content.
+- **An import refuses a campaign that does not exist, and writes nothing until it has
+  shown you what it would do.** `wiki sync` *creates* a campaign for a folder that is
+  not in the database, because a vault is something a DM makes by creating a folder;
+  an import is a different verb — somebody else's directory arriving in a data
+  directory — and a mistyped `--campaign` must not leave an empty campaign behind.
+- **A collision is a list of paths, not an overwrite, and not a failure.** The rest of
+  the import is still what the DM asked for: a vault where one page has been rewritten
+  in Obsidian and forty are new should bring the forty in. The first version refused
+  the whole command over the one, which is a command a DM runs twice and cannot get
+  past. **`--force` does not exist in v1**, and its absence is a compatibility
+  promise: a flag that means "do it anyway" is a flag a DM uses before reading the
+  list.
+- **The interesting output of an import is the list of what it will *not* copy.** A DM
+  whose vault has a canvas file in it deserves to be told the canvas file was not
+  copied, rather than finding out next week when a note they expected is missing. A
+  file whose path `vault.CheckPagePath` would refuse is skipped **and named**,
+  because a file that would sit in the vault forever, invisible, is a file the DM
+  would think the import lost.
+- **Two bugs the tests found in the first draft of the import.** A collision was
+  detected and then overwritten anyway, because the copy read and wrote the same
+  path and reported ten copies having moved nothing. And the first version of the
+  overwrite test asserted that a file was not overwritten when the file had never
+  been created — a test that could not fail, found by the premise rather than the
+  code.
+- **A `Dockerfile`, on `scratch`.** ADR 0004's pure-Go SQLite is what makes a
+  scratch image possible, and a scratch image is the only way to say "this contains
+  one binary and a certificate bundle" rather than "this contains a Debian base image
+  and one binary in it". Two comments are load-bearing: the `DDSP_LISTEN` default is
+  `0.0.0.0` **inside** the container while `CMD` is loopback-plus-operator, because a
+  container that published a port by default would be a wiki on a network with TLS
+  nobody chose; and there is no `USER`, because scratch has no `/etc/passwd` and a
+  hard-coded uid is a line that looks like it does something.
+- **The health check is the weakest thing in the Dockerfile and says so.** Probing
+  `/_/healthz` needs an HTTP client, and scratch has no curl, no wget and no shell to
+  pipe one with, so `HEALTHCHECK` runs `wiki version` — which proves the binary
+  starts and finds its data directory, and those are the two ways this image fails at
+  boot. An operator who wants the HTTP line points their load balancer at it.
+- **A tag now builds something.** `ci.yml` triggered on a push to `main`, a pull
+  request and a merge group, and **no job built an artifact or published anything** —
+  so `v0.1.0` would have been a string somebody typed and a wiki somebody had to
+  `go install` by hand. `.github/workflows/release.yml` runs `make dist`, checks that
+  the version stamp agrees with the tag (a release whose binary says `dev` is one a
+  DM cannot report a bug against, and `docs/security.md` tells people to include
+  `wiki version`), checks every archive holds a *binary* rather than a script, and
+  attaches them to a release.
+- **`make dist` cross-compiles five platforms, and the logic is a script rather than
+  a recipe.** The shell-inside-a-Makefile version produced `wiki_6f13943-dirty__` with
+  a doubled underscore, because `$(DIST_DIR)` next to `$${target}` made the second one
+  empty. That is not a Makefile bug, it is Makefile doing what Makefile does, and the
+  answer is to stop asking it to be a shell. The target still exists, so CI's rule
+  that a job runs a make target holds.
+- **The release archives carry `README.md` and `docs/security.md`.** The second
+  because the first question about a self-hosted wiki holding a campaign is what it
+  is protected by, and the answer being *in the download* rather than on a website is
+  the point of "one binary, one data directory".
+- **An e2e smoke test behind a build tag, and it is not Playwright.** §14's row says
+  "Playwright smoke, behind a `//go:build e2e` tag so it never blocks CI"; the tag
+  survived into the M13 row and **the Playwright half did not, because it needs Node
+  and a browser download and ADR 0004 is "pure Go, no CGO"**. Adding a Node
+  toolchain to a project whose whole claim is one static binary would trade a property
+  this project has for one it does not. What is there instead builds the binary,
+  boots it, mints a link, reads a page and takes a backup — the journey a DM takes,
+  needing nothing but the thing under test. It is not in `make check` or CI, on
+  purpose: a test that blocks every pull request is a test that gets ignored within a
+  fortnight.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a
@@ -2129,9 +2409,5 @@
   meant to prevent it. `fmt-check` depends on it, so any formatting check catches
   it.
 
-## [0.1.0] - TBD
-
-_First release. Will cover milestones M0 through M12; see `docs/spec.md`
-§ Milestones for the breakdown._
-
 [Unreleased]: https://github.com/popinjayjohn/dine-and-dash-semiplane/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/popinjayjohn/dine-and-dash-semiplane/releases/tag/v0.1.0

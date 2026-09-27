@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -347,11 +349,48 @@ func (a *app) campaign(next http.Handler) http.Handler {
 	})
 }
 
-// nonce is the per-response Content-Security-Policy nonce.
+// nonce is the per-response Content-Security-Policy nonce, or the empty string when
+// one could not be produced.
+//
+// **The empty string is a policy that authorises nothing, and that is the point.**
+// It used to mean *no `Content-Security-Policy` header at all*, which is the exact
+// opposite of what the header file argues for: "a constant with a placeholder in it is
+// a string that can be served without one — which is a page with a policy that does
+// not authorise anything, i.e. a page that does not work, rather than a page that is
+// open." A `crypto/rand` failure is rare enough that nobody would ever see it and
+// catastrophic enough that a page without a policy is the wrong way to spend the
+// occasion. The reader is a DM whose page loses its live updates; nothing is served
+// that the DM did not write.
 func (a *app) nonce() string {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
+	produced, err := a.cfg.Nonce()
+	if err != nil || produced == "" {
+		a.log.LogAttrs(context.TODO(), slog.LevelError, "generating a CSP nonce",
+			slog.String("error", errString(err)),
+		)
 		return ""
 	}
-	return base64.RawURLEncoding.EncodeToString(raw[:])
+	return produced
+}
+
+// randomNonce is the default source: 16 bytes from `crypto/rand`, base64rawurl.
+//
+// Sixteen bytes is 128 bits, which is the size the CSP specification's own examples
+// use and which is far more than a nonce needs — the requirement is that it be
+// unguessable *and unique per response*, and 128 random bits is unique for as long as
+// this server is running.
+func randomNonce() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("reading random bytes for a CSP nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+// errString is an error's text, or a placeholder for a nil one, so a log call for a
+// failure whose error is nil still says something.
+func errString(err error) string {
+	if err == nil {
+		return "the source returned no nonce and no error"
+	}
+	return err.Error()
 }

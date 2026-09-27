@@ -1,0 +1,101 @@
+# Builds the release archives and attaches them to a GitHub release.
+#
+# # Why a tag triggers this and a push to main does not
+#
+# Before this file, a tag ran CI and nothing else: the workflow's triggers were
+# `push` to main, `pull_request` and `merge_group`, and no job built an artifact
+# or published anything. So `v0.1.0` was a string somebody typed and a wiki
+# somebody had to `go install` by hand. This is the job that makes a tag mean
+# "here is a binary for the platform you are on".
+#
+# # Every job runs a make target
+#
+# The same rule as ci.yml, and the same reason: what CI proves and what a
+# developer runs locally are the same thing. `make dist` is the target; the
+# script behind it is `scripts/dist.sh`; a change to either is visible in the
+# same place as a change to the code.
+#
+# # Actions are pinned to commit SHAs
+#
+# For the reason ci.yml's header gives, and it matters *more* here: this job
+# has `contents: write` and is triggered by a tag, which is the most privileged
+# position in the repository. A floating tag on an action used to build a
+# release is an unreviewed remote code execution with permission to publish.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the release archives
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The changelog check and the version stamp both read history: the first
+          # needs the merge base and the second needs the tag that triggered this.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0bca9eb5 # v5.0.2
+        with:
+          go-version-file: go.mod
+
+      - name: the version must be the tag
+        run: |
+          # A release whose binary says `dev` while the tag says `v0.1.0` is a
+          # release a DM cannot report a bug against, and `docs/security.md` tells
+          # people to include `wiki version` in a report. So the stamp and the tag
+          # are checked to agree, here, where somebody can fix it.
+          version="$(make -s print-version)"
+          expected="${GITHUB_REF_NAME}"
+          echo "tag:    $expected"
+          echo "stamp:  $version"
+          if [ "$version" != "$expected" ]; then
+            echo "::error::the version stamp does not match the tag"
+            exit 1
+          fi
+
+      - name: build the archives
+        run: make dist
+
+      - name: the archives are binaries, not scripts
+        run: |
+          # ADR 0004 claims a single static binary, and `ci.yml` checks it for the
+          # local build. A release archive is the one artifact that leaves the
+          # repository, so the claim is checked *there*.
+          for archive in dist/*.tar.gz; do
+            binary="$(tar -tzf "$archive" | grep -E 'wiki(\.exe)?$' | head -1)"
+            if [ -z "$binary" ]; then
+              echo "::error::$archive holds no wiki binary"
+              exit 1
+            fi
+            tar -xzf "$archive" -C /tmp
+            file "/tmp/$binary" | grep -qE "ELF|Mach-O|PE32"
+            rm -f "/tmp/$binary"
+          done
+          echo "every archive holds a binary"
+
+      - name: publish
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.2
+        with:
+          files: dist/*.tar.gz
+          # The release body is GitHub's own summary of what changed, and
+          # `CHANGELOG.md`'s `## [0.1.0]` section is the record of what the version
+          # *was* -- `docs/spec.md` §15 says released sections are never retro-edited,
+          # which makes the changelog the thing to read and the auto-notes the
+          # summary of it. A hand-written body file would be a third document to keep
+          # in step, and the first release is the one where three documents about
+          # the same thing disagree.
+          generate_release_notes: true

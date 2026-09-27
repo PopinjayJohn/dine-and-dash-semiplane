@@ -133,6 +133,46 @@ type Config struct {
 	// they are running and internal/version is where that is assembled.
 	Version version.Info
 
+	// Nonce is the source of the per-response Content-Security-Policy nonce, and
+	// the error is the interesting half: a source that cannot produce one must
+	// still produce a response, and that response must carry a policy.
+	//
+	// It is here because the alternative is a `crypto/rand` call inside a
+	// middleware, which is a failure path with no test — and this failure path is
+	// the difference between a page that is open and a page whose script does not
+	// run. See [app.nonce] and `TestARequestWhoseNonceCannotBeGeneratedStillGetsAPolicy`.
+	//
+	// Nil means [crypto/rand].
+	Nonce func() (string, error)
+
+	// TrustedProxies is the list of proxy addresses whose `X-Forwarded-For` is
+	// believed, and the **default trusts nothing**.
+	//
+	// The consequence of the default is that behind a reverse proxy the redemption
+	// rate limit is applied per proxy rather than per player, which is unfair to
+	// nobody in a campaign of five and is the safe answer. The consequence of
+	// getting it wrong is a stranger removing the limit by sending a header, which is
+	// the whole reason [auth.ClientIP] takes the answer as an argument rather than
+	// deciding it.
+	//
+	// A deployment sets it in `config.yaml` or `DDSP_TRUSTED_PROXIES`. An entry may
+	// be a bare address (`10.0.0.1`) or a CIDR (`10.0.0.0/8`); the latter is what a
+	// reverse proxy on a home network actually needs, because its source address
+	// moves.
+	TrustedProxies []string
+
+	// RedemptionLimit and RedemptionWindow are the share-link rate limit: how
+	// many attempts one address may make, and over what period. Zero means
+	// `auth`'s own defaults.
+	//
+	// They are here so a deployment can loosen a limit for a house behind a NAT
+	// without editing the binary, and they are **two knobs on a security control
+	// rather than one**: the window is what makes the limit mean ten-per-minute, and
+	// a limit of ten per hour is a limit that locks out a player who mistypes their
+	// own link at a table.
+	RedemptionLimit  int
+	RedemptionWindow time.Duration
+
 	// Now is the clock. Nil means the system clock, which is the right default
 	// for a program running on a DM's own machine and the wrong one for a test
 	// that wants a CSRF token to expire.
@@ -315,6 +355,18 @@ type app struct {
 	// uptime is computed here rather than from a global.
 	startedAt time.Time
 
+	// limiter is the share-link rate limit.
+	//
+	// It is built by [New] and is not a [Config] field, and that is the point: a
+	// limiter a caller has to pass in is a limiter somebody's deployment does not
+	// pass, and this one is `docs/security.md`'s named control against an attacker
+	// guessing share links. It was a component in `internal/auth` with a test on it
+	// and no caller for six milestones.
+	limiter *auth.Limiter
+
+	// proxies is `Config.TrustedProxies`, parsed once at construction.
+	proxies trustlist
+
 	// editors is one writer per campaign, built on first use, for the same reason
 	// `renderers` is one renderer per campaign.
 	editorsMu sync.Mutex
@@ -378,6 +430,10 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Nonce == nil {
+		cfg.Nonce = randomNonce
+	}
+
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -391,6 +447,16 @@ func New(cfg Config) (http.Handler, error) {
 		renderers: map[domain.Slug]*render.Renderer{},
 		editors:   map[domain.Slug]*edit.Editor{},
 		startedAt: cfg.Now(),
+		// `auth.NewLimiter` already treats a zero limit and a zero window as its own
+		// defaults, so the two config knobs go straight through. A second block of
+		// defaulting here would be a second answer to the same question, and the fifth
+		// knob somebody added would be the one with a different rule.
+		limiter: auth.NewLimiter(cfg.RedemptionLimit, cfg.RedemptionWindow, cfg.Now),
+		// The trustlist is parsed once here rather than per request, and a config
+		// entry that is neither an address nor a CIDR is a deployment that asked for
+		// something and got a different answer — so it is logged here, once, where a
+		// DM reading their startup output will see it.
+		proxies: parseTrustlist(cfg.TrustedProxies),
 	}
 	a.initSecret()
 

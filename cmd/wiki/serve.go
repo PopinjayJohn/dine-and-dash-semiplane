@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/config"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/datadir"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/logfmt"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
@@ -32,12 +34,67 @@ import (
 // serveOptions is what `wiki serve` takes.
 type serveOptions struct {
 	dataDir  string
-	addr     string
-	baseURL  string
 	streams  int
 	prod     bool
 	noWatch  bool
 	debounce time.Duration
+
+	// addr, baseURL and trustedProxies are the three settings config.yaml holds, and
+	// they are resolved in [runServe] rather than defaulted here, because a flag
+	// default is a *precedence decision*: an empty default is "I did not choose",
+	// which is what lets the environment and the file have a say.
+	addr           string
+	baseURL        string
+	trustedProxies string
+
+	// lan, certFile and keyFile are the LAN path, and `--lan` is a **first-class
+	// deployment** rather than a debugging flag: ADR 0011 says so, and
+	// `docs/security.md` lists self-signed TLS as the control for "the network, on a
+	// LAN". A DM playing at a table on somebody else's wifi is the case this
+	// application exists for, and it is not the case that works least well by
+	// default.
+	lan      bool
+	certFile string
+	keyFile  string
+
+	// logFormat is the encoding the log is written in: `text` or `json`, and the
+	// empty string is the environment's decision or the default's.
+	//
+	// It is a field rather than a `--log-format` on the shared parse because
+	// `logfmt.Resolve` is where the precedence lives and a command that resolved it
+	// itself would be a third place with its own idea of the order.
+	logFormat string
+}
+
+// firstNonEmpty is the flag-over-settings precedence, in one place.
+//
+// It is the same three-rule shape as `internal/config.firstNonEmpty` and it is a
+// separate function because the *sources* differ: this one is the flag against a
+// resolved setting, and that one is the environment against a file against a default.
+// Two rules, one each, rather than one rule with four sources and a caller that has
+// to know which order to pass them in.
+func firstNonEmpty(flag, setting string) string {
+	if flag != "" {
+		return flag
+	}
+	return setting
+}
+
+// splitProxies is the `--trusted-proxies` flag's value as a list.
+//
+// The flag is comma-separated and the file is a YAML list, for the reason
+// `internal/config.resolveProxies` gives: each is the shape a person writes that form
+// in. An empty item between two commas is dropped rather than becoming an empty
+// trusted address, which would match nothing and read as a mistake in the log.
+func splitProxies(flag string) []string {
+	items := strings.Split(flag, ",")
+	proxies := make([]string, 0, len(items))
+	for _, one := range items {
+		if trimmed := strings.TrimSpace(one); trimmed != "" {
+			proxies = append(proxies, trimmed)
+		}
+	}
+	return proxies
 }
 
 // defaultAddr is loopback and not `0.0.0.0`, deliberately.
@@ -75,15 +132,26 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	opts := &serveOptions{}
 	flags.StringVar(&opts.dataDir, "data-dir", "", "the data directory ("+datadir.EnvVar+" overrides the default)")
-	flags.StringVar(&opts.addr, "addr", defaultAddr, "the address to listen on")
+	flags.StringVar(&opts.addr, "addr", "",
+		"the address to listen on ("+config.EnvListen+" and config.yaml override the default)")
 	flags.StringVar(&opts.baseURL, "base-url", "",
-		"the origin share links are built against, as scheme and host; defaults to the address served on")
+		"the origin share links are built against, as scheme and host ("+config.EnvBaseURL+
+			" and config.yaml override it); defaults to the address served on")
+	flags.BoolVar(&opts.lan, "lan", false,
+		"serve on every interface, for playing at a table; implies --production and self-signed TLS")
+	flags.StringVar(&opts.certFile, "tls-cert", "", "a certificate file for --lan, instead of a generated one")
+	flags.StringVar(&opts.keyFile, "tls-key", "", "a key file for --lan, beside --tls-cert")
+	flags.StringVar(&opts.trustedProxies, "trusted-proxies", "",
+		"comma-separated proxy addresses whose X-Forwarded-For is believed ("+
+			config.EnvTrustedProxies+" and config.yaml override it)")
 	flags.IntVar(&opts.streams, "streams", wiki.DefaultStreams, "how many live page streams to hold open")
 	flags.BoolVar(&opts.prod, "production", false,
 		"mark the deployment as production: the session cookie gets Secure, which needs HTTPS")
 	flags.BoolVar(&opts.noWatch, "no-watch", false,
 		"do not watch the vaults for changes; `wiki sync` is the only way the index moves")
 	flags.DurationVar(&opts.debounce, "debounce", defaultDebounce, "how long to wait for a vault to stop changing")
+	flags.StringVar(&opts.logFormat, "log-format", "",
+		"the log encoding, text or json ("+logfmt.EnvVar+" overrides the default)")
 
 	if err := parseFlags(flags, args, "wiki serve"); err != nil {
 		return err
@@ -92,11 +160,47 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return errors.New("wiki serve: --streams must be at least 1")
 	}
 
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	format, err := logfmt.Resolve(opts.logFormat)
+	if err != nil {
+		return fmt.Errorf("wiki serve: %w", err)
+	}
+	encoding, err := logfmt.New(stderr, format, slog.LevelInfo)
+	if err != nil {
+		return fmt.Errorf("wiki serve: %w", err)
+	}
+	logger := slog.New(encoding)
 
 	dir, err := datadir.Resolve(opts.dataDir)
 	if err != nil {
 		return fmt.Errorf("finding the data directory: %w", err)
+	}
+
+	// The three settings, with ADR 0011's precedence applied: the flag wins because a
+	// DM who typed it meant it, the environment beats the file because a deployment
+	// that sets it once should not set it on every subcommand, and the file beats
+	// the default because it is the only one of the three a DM edits on purpose.
+	settings, err := config.Load(dir)
+	if err != nil {
+		return err
+	}
+	// `--lan` is the one flag that implies another, and it implies the one that
+	// matters: a session cookie without `Secure` on a network is a cookie every other
+	// machine on the wifi can read. ADR 0003's attribute is not "on localhost".
+	if opts.lan {
+		opts.prod = true
+	}
+
+	addr := firstNonEmpty(opts.addr, settings.Listen)
+	if opts.lan && !strings.Contains(addr, ":") || (opts.lan && isLoopbackAddr(addr)) {
+		// A DM who typed `--lan` and left the default has asked for the LAN and got
+		// loopback, which is the failure that looks like the feature not working. The
+		// message says which of the two it was.
+		addr = defaultLANAddr
+	}
+	baseURL := firstNonEmpty(opts.baseURL, settings.BaseURL)
+	trustedProxies := settings.TrustedProxies
+	if opts.trustedProxies != "" {
+		trustedProxies = splitProxies(opts.trustedProxies)
 	}
 
 	s, err := openCampaignStore(ctx, dir)
@@ -119,11 +223,20 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// seconds.
 	// The listen config rather than `net.Listen` so that a Ctrl-C during the bind
 	// is a Ctrl-C, not a socket that outlives the process that was asked to stop.
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", opts.addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listening on %s: %w", opts.addr, err)
+		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
 	defer func() { _ = listener.Close() }()
+
+	// The certificate, before the handler is built, because the origin share links are
+	// built from it and a link with an `http` origin is a link a player's browser
+	// will refuse before it ever reaches the redemption.
+	lanConfig, err := lanTLS(ctx, opts, dir, stdout)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 
 	hub := sse.NewHub(opts.streams)
 	defer hub.Close()
@@ -153,14 +266,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	handler, err := wiki.New(wiki.Config{
-		Store:    s,
-		Hooks:    registry.RenderHooks(),
-		Policies: registry.Policies(),
-		Routes:   registry.Routes(),
-		Events:   registry.Events(),
+		Store:          s,
+		Hooks:          registry.RenderHooks(),
+		TrustedProxies: trustedProxies,
+		Policies:       registry.Policies(),
+		Routes:         registry.Routes(),
+		Events:         registry.Events(),
 		Redeemer: auth.Redeemer{
 			Backend: s,
-			Config:  authConfigFor(baseURLOf(opts, listener)),
+			Config:  authConfigFor(baseURLOf(baseURL, listener, opts.prod)),
 		},
 		// The writers this server already has open. `openCampaigns` holds a vault
 		// per campaign for the life of the process, and an editor is a vault plus a
@@ -195,7 +309,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Version:       version.Get(),
 		Now:           time.Now,
 		Production:    opts.prod,
-		AllowedOrigin: baseURLOf(opts, listener),
+		AllowedOrigin: baseURLOf(baseURL, listener, opts.prod),
 	})
 	if err != nil {
 		return err
@@ -215,6 +329,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
+		// Non-nil only for `--lan`, and the difference is the whole of that flag: a
+		// nil TLSConfig serves plaintext, which is right on loopback and wrong on a
+		// network. `docs/security.md` lists this as the control for "the network, on
+		// a LAN", and a control that is a nil field is not one.
+		TLSConfig: lanConfig,
 	}
 
 	// The signals, before anything is served. A Ctrl-C has to be a graceful
@@ -236,9 +355,42 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.Serve(listener) }()
+	go func() {
+		// `ServeTLS` rather than `Serve` plus a wrapped listener, because
+		// `ServeTLS` is the one that loads the certificate onto the server's own
+		// `TLSConfig` and answers `https://` on the same listener, so a `--lan`
+		// server and a loopback server are one code path rather than two.
+		//
+		// The certificate is already in `server.TLSConfig`, so the second argument
+		// is empty -- and passing the files here as well would be the older way of
+		// saying the same thing with a second chance to get it wrong.
+		if lanConfig != nil {
+			serveErr <- server.ServeTLS(listener, "", "")
+			return
+		}
+		serveErr <- server.Serve(listener)
+	}()
 
-	fmt.Fprintf(stdout, "wiki: serving %s on http://%s\n", dir, listener.Addr())
+	// The URL, and the scheme it is actually served on. Printing `http://` for a
+	// `--lan` server would be a link that does not work, and the DM would find that
+	// out from a player at the table rather than from this line.
+	scheme := "http"
+	if lanConfig != nil {
+		scheme = "https"
+	}
+	fmt.Fprintf(stdout, "wiki: serving %s on %s://%s\n", dir, scheme, listener.Addr())
+
+	if opts.lan {
+		// **The warning, before the server is announced.** `docs/security.md` is
+		// honest that "click through the warning is a poor security story", and the
+		// thing a DM needs at that moment is which warning, and what it should say to
+		// the three people about to open it.
+		fmt.Fprintf(stdout, `wiki: --lan is serving every interface with a self-signed certificate.
+wiki:   players will see a browser warning. That is expected, and the certificate
+wiki:   above is the one to check. The alternative is plaintext over the network,
+wiki:   which is not a trade worth making with a campaign on it.
+`)
+	}
 	fmt.Fprintf(stdout, "wiki: %d campaign(s); share links start at http://%s/c/<campaign>/?k=<token>\n",
 		len(served), listener.Addr())
 	if !opts.prod {
@@ -415,9 +567,9 @@ func watchVault(ctx context.Context, c openCampaign, opts *serveOptions, hub *ss
 // baseURLOf is the origin share links are built against, which is configuration
 // and never a request header: the whole question is "the host I would have written
 // a link into", and a `Host` the caller chose answers nothing.
-func baseURLOf(opts *serveOptions, listener net.Listener) string {
-	if opts.baseURL != "" {
-		return strings.TrimSuffix(opts.baseURL, "/")
+func baseURLOf(baseURL string, listener net.Listener, production bool) string {
+	if baseURL != "" {
+		return strings.TrimSuffix(baseURL, "/")
 	}
 
 	address := listener.Addr().String()
@@ -432,7 +584,7 @@ func baseURLOf(opts *serveOptions, listener net.Listener) string {
 	}
 
 	scheme := "http"
-	if opts.prod {
+	if production {
 		// Behind a TLS-terminating proxy the scheme is the proxy's, and the flag
 		// that says so is the same flag that says the cookie is Secure.
 		scheme = "https"

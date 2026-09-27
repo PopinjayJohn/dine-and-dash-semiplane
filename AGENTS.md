@@ -336,12 +336,73 @@ re-litigate one without a new ADR that supersedes it.
   which *denies* on failure, and the asymmetry is ADR 0022's: a field is
   decoration on a page a DM has to be able to read.
 
-Next milestone: **M13 — DX and release.** The spec's row for it is the
-largest in the plan: the full CLI, `import obsidian`, `export --zip`,
-`users new`/`revoke`, a Dockerfile, backup and restore, CSP and structured
-logs, full docs, and `v0.1.0`. It is the milestone where the application stops
-being a thing its author can run and becomes a thing a stranger can install,
-and it is the first milestone whose *tests* are mostly not Go tests.
+- **M13 — DX and release is on `m13-dx-release`, and `v0.1.0` is cut.** Nine items:
+  full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, a
+  `Dockerfile`, backup and restore, CSP and structured logs, full docs, and the
+  release itself. `docs/adr/0024-an-export-is-a-vault.md` is the decision for
+  import and export.
+- **The share-link rate limit was tested and never called.** `auth.Limiter` and
+  `auth.ClientIP` have existed since M6, `TestRateLimitedRedemption` has
+  tested them since, and `docs/security.md` has listed that test as *the
+  control* against "the network, guessing share links" ever since. Nothing
+  invoked either. A test on a component nothing calls is a test of that
+  component, not a control on the route — and the route is where the attack
+  is. It is asked before a token is even read, and a rate limit is a **429
+  with a `Retry-After`**, not the default 404: a script cannot tell a limit
+  from a wrong token, and a *person* can.
+- **`DDSP_TRUSTED_PROXIES` and `config.yaml` are read, and the environment
+  beats the file.** A missing file is not an error, a **broken file is** and
+  names itself, and a **misspelled key is** and names the key. A file that
+  parses and applies nothing is a DM who changed a setting and has no way to
+  find out why. `trusted_proxies` is a list of addresses or CIDRs and a
+  hostname is **refused** — a name would have to be resolved per request and
+  can resolve somewhere else tomorrow.
+- **CSP was already shipped; M13's item was the hole in it.** A failed
+  `crypto/rand` produced a response with **no `Content-Security-Policy` at
+  all**, because the header was set only when a nonce had been produced —
+  the exact opposite of what `headers.go` argues for three functions below
+  the code doing it. The header is now unconditional and an empty nonce
+  yields `script-src 'none'`. The nonce source is `http.Config.Nonce` so the
+  path is testable, because a `crypto/rand` call inside a middleware is a
+  failure path with no test, which is how it stayed wrong for nine
+  milestones.
+- **Structured logs were already structured.** Everything goes through
+  `log/slog` with named fields, so the item was a *format switch*:
+  `--log-format` / `DDSP_LOG_FORMAT`, `text` or `json`, **refused
+  otherwise**. The constraint on adding a format is that `internal/auth`'s
+  redaction has to survive it, and it does because that handler wraps
+  whatever it is given and has no unwrapped constructor.
+- **`wiki backup [--prune]`, and the database is copied with `VACUUM INTO`.**
+  A `cp` of a WAL database gives you a main file consistent with *some*
+  instant and no `-wal` beside it: a database that opens and then quietly
+  disagrees with the vault, which is the one failure a backup must not have.
+  A backup does **not** take the serve lock — a backup that waits for the
+  server to exit is a backup a DM cannot take *while playing* — so the name
+  collision is prevented with `O_EXCL` instead, which is stronger.
+- **`wiki export --zip` is a vault and not a data directory** ([ADR 0024]),
+  and it is **deterministic**: sorted entries, epoch timestamps, no directory
+  entries, so two exports of an unchanged vault are byte-identical and a DM
+  can `git diff` one. **`wiki import obsidian` refuses a campaign that does
+  not exist and writes nothing until it has shown you what it would do**,
+  and `--force` does not exist in v1.
+- **`--lan` turns TLS on and does not offer to leave it off.** ADR 0011 calls
+  it "a first-class path" and `docs/security.md` listed self-signed TLS as
+  the control for a flag that did not exist. It implies `--production` so the
+  session cookie gets `Secure`, and it prints the certificate's SHA-256 in
+  `openssl` form so the browser warning can be *checked*.
+- **A tag now builds something.** `ci.yml` had no `tags:` trigger and no job
+  built an artifact, so `v0.1.0` would have been a string somebody typed.
+  `release.yml` runs `make dist`, checks the version stamp against the tag and
+  every archive for a *binary* rather than a script.
+- **The e2e test is behind a build tag and is not Playwright.** It needs Node
+  and a browser download and ADR 0004 is "pure Go, no CGO"; adding a Node
+  toolchain to a project whose whole claim is one static binary would trade a
+  property this project has for one it does not. `make e2e` builds the
+  binary, boots it, mints a link, reads a page and takes a backup.
+
+Next milestone: **none planned.** M13 closed v0.1.0, and the spec's table
+ends there. The next work is whatever the first user of this software reports,
+and `docs/spec.md` §16 is the place to write it down.
 
 **M10's optimistic fragments are the one piece of its list that is not finished.**
 `web/static/wiki.js` has the toast region and the patch handler, and the editor's
