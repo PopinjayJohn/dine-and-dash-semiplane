@@ -1,0 +1,482 @@
+/* The wiki's stylesheet.
+ *
+ * One file, no build step, no framework, and no web font: ADR 0006 requires the
+ * application to work on a machine with no network at all, and a stylesheet that
+ * pulls a font off a CDN is a page that renders wrong at a table for reasons
+ * nobody can debug. The system font stack is the right font for a tool a DM
+ * opens on their own laptop.
+ *
+ * The class names this file matches are the renderer's, not invented here:
+ * `wiki-link`, `unresolved` and `embed` from internal/render/wikilink.go, and
+ * `callout`, `callout-<type>`, `revealed` and `stripped` from
+ * internal/render/callout_render.go. Renaming one of those is a change to two
+ * files, which is why they are named constants in the renderer.
+ *
+ * There is deliberately no rule that hides a secret. A `[!SECRET]` block a
+ * principal may not read is removed from the tree before anything writes HTML
+ * (ADR 0007), and the only thing left in the response is the "A secret is hidden
+ * here." marker the renderer emits instead. `display: none` on a secret would be
+ * a second, worse mechanism for the same job.
+ */
+
+:root {
+  --ink: #1c1b19;
+  --ink-soft: #5d5a54;
+  --paper: #fbfaf7;
+  --paper-sunk: #f1eee7;
+  --rule: #ddd8cc;
+  --link: #7a4b12;
+  --link-hover: #4a2d08;
+  --accent: #2f5d50;
+  --warn: #8a5a00;
+  --danger: #8a1c1c;
+  --sidebar: #f3f1ea;
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Menlo", "Consolas", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --measure: 42rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6e2da;
+    --ink-soft: #a8a29a;
+    --paper: #191817;
+    --paper-sunk: #221f1d;
+    --rule: #3a3633;
+    --link: #e0b070;
+    --link-hover: #f5d5a8;
+    --accent: #7fc0ac;
+    --warn: #e0b060;
+    --danger: #e08c8c;
+    --sidebar: #201d1c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ shell -- */
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) 1fr;
+  min-height: 100vh;
+}
+
+/* One breakpoint rather than a set of them. A phone is the case that matters --
+ * a player reads the wiki on one -- and a sidebar that takes a third of a phone
+ * is a sidebar nobody can read a page beside. */
+@media (max-width: 48rem) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--rule);
+  padding: 1.25rem 1rem 2rem;
+  overflow-wrap: anywhere;
+}
+
+.main {
+  padding: 1.5rem 1.5rem 4rem;
+  min-width: 0;
+}
+
+/* ----------------------------------------------------------------- brand --- */
+
+.brand {
+  display: block;
+  font-weight: 650;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 1.05rem;
+  margin-bottom: 0.25rem;
+}
+
+.brand-sub {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.sidebar h2 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 1.25rem 0 0.4rem;
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------- page tree -- */
+
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--rule);
+}
+
+.tree li {
+  margin: 0.1rem 0;
+}
+
+.tree a {
+  display: block;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.tree a:hover {
+  background: var(--paper-sunk);
+}
+
+/* The page being read, marked in the one way a reader can rely on: the browser's
+ * own current-page indication, which works for keyboard and screen reader too. */
+.tree a[aria-current="page"] {
+  background: var(--paper-sunk);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tree .tree-empty {
+  color: var(--ink-soft);
+  font-style: italic;
+  padding: 0.1rem 0.35rem;
+}
+
+/* ---------------------------------------------------------------- article -- */
+
+.page {
+  max-width: var(--measure);
+}
+
+.page-title {
+  font-size: 1.9rem;
+  line-height: 1.2;
+  margin: 0 0 0.35rem;
+}
+
+.page-meta {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  margin: 0 0 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.page-meta .badge {
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  background: var(--paper-sunk);
+}
+
+.page-body > :first-child {
+  margin-top: 0;
+}
+
+.page-body h1,
+.page-body h2,
+.page-body h3,
+.page-body h4 {
+  line-height: 1.25;
+  margin: 1.8rem 0 0.5rem;
+  scroll-margin-top: 1rem;
+}
+
+.page-body h1 {
+  font-size: 1.5rem;
+}
+
+.page-body h2 {
+  font-size: 1.25rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.page-body h3 {
+  font-size: 1.08rem;
+}
+
+.page-body p,
+.page-body ul,
+.page-body ol,
+.page-body blockquote {
+  margin: 0.85rem 0;
+}
+
+.page-body li > ul,
+.page-body li > ol {
+  margin: 0.25rem 0;
+}
+
+.page-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.page-body hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+
+.page-body code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--paper-sunk);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+
+.page-body pre {
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+}
+
+.page-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.page-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.94rem;
+}
+
+.page-body th,
+.page-body td {
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.page-body thead th {
+  background: var(--paper-sunk);
+}
+
+/* ------------------------------------------------------------------ links -- */
+
+a {
+  color: var(--link);
+}
+
+a:hover {
+  color: var(--link-hover);
+}
+
+/* A link the index could not resolve. It is styled rather than hidden because a
+ * DM writes links to pages they intend to write, and a link that vanished would
+ * be worse than one that says where it was going. */
+.wiki-link.unresolved {
+  color: var(--ink-soft);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* ----------------------------------------------------------------- toc ---- */
+
+.toc {
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+}
+
+.toc h2 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 0 0 0.3rem;
+}
+
+.toc ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.toc li {
+  margin: 0.1rem 0;
+}
+
+.toc a {
+  text-decoration: none;
+}
+
+.toc a:hover {
+  text-decoration: underline;
+}
+
+/* -------------------------------------------------------------- callouts --- */
+
+.callout {
+  border: 1px solid var(--rule);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--paper-sunk);
+  padding: 0.6rem 0.9rem;
+  margin: 1rem 0;
+}
+
+.callout > :first-child {
+  margin-top: 0;
+}
+
+.callout > :last-child {
+  margin-bottom: 0;
+}
+
+.callout-title {
+  font-weight: 650;
+  margin: 0 0 0.35rem;
+}
+
+.callout-note,
+.callout-info {
+  border-left-color: var(--accent);
+}
+
+.callout-warning,
+.callout-caution,
+.callout-attention {
+  border-left-color: var(--warn);
+}
+
+.callout-danger,
+.callout-error,
+.callout-failure {
+  border-left-color: var(--danger);
+}
+
+/* A `[!SECRET]` a reader may not see. What is in this box is the renderer's
+ * marker text and nothing else -- the block itself left the parse tree before
+ * any HTML was written. */
+.callout-secret {
+  border-left-color: var(--ink-soft);
+  border-style: dashed;
+}
+
+.callout-secret .callout-title {
+  color: var(--ink-soft);
+}
+
+/* A revealed secret: still a secret, now everyone entitled to read the page can
+ * read it. */
+.callout.revealed {
+  border-left-color: var(--accent);
+  border-style: solid;
+}
+
+.callout-stripped {
+  color: var(--ink-soft);
+  font-style: italic;
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- errors --- */
+
+.notice {
+  max-width: var(--measure);
+  padding: 1.25rem 1.5rem;
+}
+
+.notice h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.5rem;
+}
+
+.notice p {
+  color: var(--ink-soft);
+}
+
+.notice-error {
+  border-top: 4px solid var(--danger);
+}
+
+.notice-plain {
+  border-top: 4px solid var(--rule);
+}
+
+/* ---------------------------------------------------------------- footer --- */
+
+.footer {
+  max-width: var(--measure);
+  margin-top: 3rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.footer a {
+  color: inherit;
+}
+
+/* --------------------------------------------------------------- utility --- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 10;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+}

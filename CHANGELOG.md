@@ -1,6 +1,292 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The CI smoke test asserted a string the page cannot contain**, and the reason
+  is worth more than the fix. It grepped the campaign root for a page's
+  `title:`, and the root lists *path segments* — and the campaign's own name is
+  its slug. It also fetched the root with no session and expected to find a page in
+  it, and a request that has not redeemed a link identifies nobody, so the read
+  predicate admits nothing for nobody. Both assertions could never have passed, and
+  `set -e` turned a working wiki into a red build. The step now asserts what is
+  reachable without a link — a 200, the campaign, the "nothing here yet" notice —
+  and adds the one assertion that can actually fail: a page with no session is a
+  404.
+
 ### Added
+
+- **`make generate` and `make generate-check`, and `generate-check` is in
+  `make check` and in CI.** The templ output is committed, so a `.templ` edited
+  without regenerating it is a template and a `_templ.go` that disagree, and the
+  disagreement is invisible until the page renders the old thing. The check
+  compares the bytes on disk before and after regenerating rather than asking git
+  whether the tree is clean, because a contributor who has already run
+  `make generate` and staged the result has a *correct* generated file.
+- **The CI smoke test boots the wiki and asks it for `/_/healthz`**, which is what
+  the M0 comment said M8 would replace. It then fetches a campaign root and asks
+  the process to stop, because a server that does not shut down cleanly leaves a
+  lock file behind and the next start waits out the stale window.
+- **`wiki serve`: the HTTP server, the index watchers, and the lock that keeps two
+  of either off one data directory.** The listener comes up *before* the index is
+  read, so the port a DM is told about is a port that is already accepting
+  connections — binding late is how a server prints an address and then refuses
+  connections for two seconds.
+- **The default address is `127.0.0.1:8080`, not `0.0.0.0`.** This is a wiki on a
+  DM's own machine, and the Go default of every interface is the right default for
+  a service and the wrong one for a thing holding a campaign's secrets behind a
+  share link and nothing else. A DM who wants it on their LAN types
+  `--addr 0.0.0.0:8080`, which is a decision they make rather than one they
+  inherit.
+- **`WriteTimeout` is deliberately not set.** A stream is a response that never
+  ends, and a write timeout would cut every live page in the campaign at exactly
+  the timeout. `ReadHeaderTimeout` and `IdleTimeout` are set, because a phone that
+  went to sleep mid-request is a real thing at a table.
+- **The shutdown is the reverse of the startup, and the hub is closed first.** That
+  is the step that matters: closing it ends every open stream, so `Shutdown` has
+  nothing long-running left to wait for. A `Ctrl-C` is a graceful shutdown and not
+  a kill, because a kill leaves a lock file behind and the next start waits out the
+  stale window before it can run.
+- **A campaign's write lock is released on the way out, and `openCampaigns`
+  returns the function that does it** so that a caller who drops it is a caller
+  who has leaked a lock — the kind of leak that only shows up as a confusing error
+  two minutes later.
+- **Every campaign is synced once at startup**, so a vault that has never been
+  synced is servable without a second command, and a campaign that cannot be
+  opened is a warning rather than a refusal: a DM with two campaigns and one
+  unreadable directory still gets to play the other one.
+- **One watcher goroutine per campaign, and a watcher that fails logs and
+  returns.** A wiki whose live updates stopped is still a wiki that can be read,
+  and that is the right thing to be left with.
+- **A sync that changed nothing sends nobody a fresh copy of themselves.** The
+  watcher fires on every filesystem event, and Obsidian's save is several writes;
+  pushing a frame per event would be a render per reader per keystroke.
+
+- **A live page.** `?stream=1` on a page URL is a stream of that page's changes,
+  and each frame patches the `#page` article and nothing else — so a reader who is
+  halfway down the page keeps their scroll position and their place in the sidebar,
+  which is the difference between a live page and a page that reloads itself under
+  you.
+- **The hub carries a *notice*, not content, and that is the security property.**
+  The obvious design — the watcher renders the changed page once and hands the same
+  component to everyone watching it — has no correct version: a DM and a player are
+  watching the same page, the watcher can only pick one decision, and so either the
+  DM's page is full of secrets in a player's stream or the player's is missing them.
+  So each subscriber re-reads and re-renders under its own principal and its own
+  decision, through the same `renderPage` the page route uses. One rendering path,
+  one decision per reader, and the bytes on a player's stream are produced by code
+  holding that player's decision.
+- **A stream for a page its reader may not see is a 404, before the upgrade.** A
+  stream that never sends anything is a connection a client reconnects to for ever.
+- **A stream is bounded, and a full hub is a 500 with a `Retry-After`,** because a
+  reader who is told "come back in a moment" gets a page that updates in a moment.
+- **The keep-alive is a comment frame written by hand in the handler,** because
+  `internal/sse` has four functions and none of them is a comment, and inventing a
+  fifth is a change to ADR 0006 rather than a detail. The handler is the one place
+  in the application that knows the framing's spelling, and the comment says so.
+- **`PageChanged` is a function taking the hub, not a method on the application,**
+  because the hub is the caller's — the same rule that says the caller closes the
+  store it opened — and the only other thing it needs is the rule for a topic's
+  name, which is a rule about how this package spells a page.
+- **`Config.Hub` is required rather than optional,** for the same reason: a hub the
+  application built for itself is one nobody can close.
+- **`internal/http`: the web shell.** The chi router, the middleware, the
+  handlers and the templates. A handler is handed everything the middleware
+  decided and takes no principal as an argument, because a handler that takes a
+  principal as an argument is a handler whose caller decides who the caller is.
+- **The middleware order is the argument, and it is written down where the
+  package is read:** request id → logging → recovery → security headers → session
+  → campaign → redeem. Read from the inside out it says what each layer is for,
+  and campaign is inside redeem because redemption has to be able to say "that link
+  belongs to a different campaign".
+- **`/_/healthz`,** JSON because the thing reading it is a script. It is under
+  `/_/` because every campaign's URLs are under `/c/`, and it never needs a
+  session: a health check that did would report a wiki as down every time a
+  player's link was revoked.
+- **The CSP is `default-src 'none'` with a per-response nonce** for the script and
+  `'self'` for the stylesheet, plus `base-uri 'none'` and `frame-ancestors 'none'`.
+  A nonce that repeats is a nonce that authorises a script an attacker injected
+  into an earlier response, and `TestTheCSPNonceIsNotTheSameOnEveryRequest` is the
+  test that says so.
+- **`Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex` and `Cache-Control:
+  no-store` on every campaign response,** per ADR 0003, and
+  `X-Content-Type-Options: nosniff` on every response, which is what makes the
+  asset handler's content-type table a correctness question rather than a nicety.
+- **The query string is not logged.** `?k=<token>` is the share-link credential
+  and `r.URL.String()` would put it in every log line, in every proxy in front of
+  the server, and in whatever a DM pastes into a bug report. The log line is built
+  from the method and the path and nothing else.
+- **The CSRF token is an HMAC of the principal's id,** so a player cannot compute
+  one, one principal's is not another's, and a token minted for one campaign is
+  useless in another — the tenancy check happening in a form field. It is tied to
+  the principal and not to the session, because a session rotation is a security
+  event and a token that died with it would make a player reload at the worst
+  moment.
+- **A deployment with no CSRF secret generates one at startup** rather than
+  falling back to something everybody knows.
+- **`?raw=1` is a page's markdown,** under the same decision the HTML is made
+  under, and the body that goes out is `render.PublicText` — the same function
+  the public search index is built from, so a page found by a search and a page
+  fetched raw contain the same characters by construction rather than by
+  agreement.
+- **`?raw=1` and `?stream=1` are query parameters and not path segments,** because
+  a path segment would be a first-segment name the vault could not also use, and
+  the vault is the source of truth.
+- **The logout form is a POST and carries the token,** because a GET that ends a
+  session is a session anybody can end, and a forged POST is refused with a 403.
+- **`index.NewResolver` takes a `Lookups` interface instead of a
+  `*store.Store`,** because `internal/http` needs a narrower view of the index
+  than the sync engine does and a caller that has to assert its way back to the
+  concrete type to build a link resolver is a caller whose interface is a lie.
+- **The cookie name follows the deployment.** `__Host-wiki_session` in production,
+  `wiki_session` over plain HTTP — because a browser refuses a `__Host-` cookie
+  without `Secure`, *silently*, so a local deployment that kept the prefix would
+  be a wiki where every redemption works and no page is ever readable. This is
+  the one thing in the cookie attributes that is not ADR 0003's, and the reason is
+  written on the constant.
+- **`make cover` measures hand-written code.** Generated templ output is filtered
+  out of the profile first, for the same reason `.golangci.yml` excludes it from
+  linting: measuring it says something about the templates' element-by-element
+  branches rather than about whether the application is tested. The filter is a
+  filename and nothing else, and the raw profile is still written so a reviewer can
+  diff the generated part separately. Hand-written coverage is 88.7%.
+
+### Fixed
+
+- **A share link is a reusable bearer credential, not a one-time code** — a
+  finding, not a decision, and the first test to ask the question found that ADR
+  0003's five steps do not rotate the token. The case it serves is a player who
+  clears their cookies or wants the wiki on a second device, and the alternative
+  is a DM issuing a fresh link every time a browser forgets somebody. The threat
+  model's answer is revocation and expiry rather than rotation, and
+  `TestALinkIsRedeemableAgainUntilItIsRevoked` asserts that revocation stops it.
+- **The 500 page asks the store for nothing.** The store is the thing that has
+  just failed, and an error page that lists a page tree is an error page that
+  queries the database again — which is a second failure, and a panic inside the
+  recovery handler is a panic that takes the process down with every other
+  player's session on it. Found by a test that made the store *panic* rather than
+  fail.
+- **The uptime was a package variable reading `time.Now()`** while everything else
+  used the injected clock, so a test with a fixed clock got minus five thousand
+  hours. It passed as a duration string, which is what makes it the kind of wrong
+  that survives review: it is a duration, it is a string, and it is nonsense.
+- **The 404, the 500, the 403 and the 405 build their shell through one
+  function,** because three hand-written ones had already disagreed about whether
+  the CSRF token was in it and the 404 ended up with a logout form whose token was
+  the empty string: a form that could never be submitted.
+- **The read predicate now asks whose campaign the principal is.** It always
+  asked which campaign the *caller* wanted, and never whether the caller belongs
+  to it, so a `GetPage` for a page in Thornford made with a session for the
+  Blackwater was answered by the role clause alone: a player got every
+  `players` page in a campaign they have no link to, and a DM got every page in
+  it. A share link is scoped to one campaign and so is a principal — the column
+  is NOT NULL, which is why `store.AsDM` takes a campaign — and nothing between
+  the cookie and the predicate connected the two.
+- **Nothing had ever asked, because every caller so far passed the right pair of
+  arguments.** The sync engine is the only thing that called a page-returning
+  method before M8, and it passes `AsDM(campaignID)` and is therefore always of
+  the campaign it is reading. A predicate that is correct for callers who get
+  their arguments right is a predicate one handler away from a disclosure, and
+  the first caller with a real principal is the HTTP layer.
+- **The two campaign conjuncts are the same column and are not a
+  redundancy.** The first is the campaign the caller asked about, which every
+  page query needs; the second is the tenancy test. They are written out
+  separately so that the second stays visible: a conjunct left out of a
+  predicate is a predicate that is correct until somebody reads it.
+- **Tenancy is not authorisation, so it is not in `access.For`.** The rights
+  matrix is about who may read a page, and "is this person a member of this
+  campaign" is a question whose answer is always the same, not 36 cells.
+  `TestStoreReadPredicateMatchesResolver` is unaffected and must stay unaffected:
+  the principals it builds are rows in that campaign, so the conjunct is a
+  constant `true` across all 36.
+- **A dozen test fixtures were building principals that cannot exist.** Every one
+  of them was a `domain.Principal` with a role and no campaign, which the schema
+  refuses to store; the new conjunct is what made that visible rather than a
+  matter of taste. `TestStoreContract`'s "a path in two campaigns is two pages"
+  was the clearest of them: it built its DM from a *page* id.
+- The four golden search statements gained the conjunct, and the placeholder
+  count is written out as a sentence rather than computed, so the next conjunct
+  has to be added to the sentence too.
+
+### Added
+
+- **`web/`: the static half of the front end, embedded.** The stylesheet and the
+  pinned Datastar client, with `go:embed` and nothing fetched at runtime. ADR
+  0006 requires the offline property and ADR 0011 explains why it matters — a
+  table is a room with more than one device on it and no reason to have a working
+  internet connection — and a CDN is also a third party in the path of a
+  campaign's secrets, because a `datastar.js` fetched at runtime is a script the
+  application did not write running with the session cookie.
+- **`datastar.js` v1.0.4 vendored verbatim**, as ADR 0008 pins, and a test reads
+  the version out of the embedded bytes so an upgrade that forgets the constant
+  fails instead of passing quietly. The source map it names at the end is not
+  vendored: it is a developer convenience, and a browser that cannot find it says
+  so in a console and otherwise reads the file the application actually serves.
+- **Assets are served by a handler rather than a raw `http.FileServer`**, for two
+  reasons that are correctness and not polish. The content type is explicit,
+  because the HTTP layer sends `X-Content-Type-Options: nosniff` and a `.js`
+  served as `text/plain` is a script the browser refuses to run. And the ETag is
+  computed from the bytes, because embedded files have a zero modification time,
+  so `If-Modified-Since` never matches and a DM who replaces the binary would be
+  left with last month's stylesheet in a browser cache that never asks again.
+- **The stylesheet has no web font and no framework.** The system font stack is
+  the right font for a tool a DM opens on their own laptop, and one file with no
+  build step is one fewer thing to go wrong on a machine nobody has a shell open
+  on.
+- **The stylesheet matches the renderer's class names rather than inventing
+  them** — `wiki-link`, `unresolved`, `embed`, `callout`, `callout-<type>`,
+  `revealed`, `stripped` — and says so at the top, so renaming one is a change to
+  two files and both say why.
+- **There is no rule that hides a secret.** A `[!SECRET]` block a principal may
+  not read has already left the parse tree before any HTML is written, and the
+  only thing left is the marker the renderer emits instead.
+
+- **`internal/sse`: ADR 0006's four functions, and the hub behind them.** A
+  handler takes a `templ.Component` and never touches `text/event-stream`
+  headers, `data:` prefixes or event ids. The implementation is the standard
+  library one from the spike, and the spike stays a separate module run by
+  `make spike`, so the record that datastar-go produces the same bytes cannot rot
+  without CI noticing.
+- **The type is `Sender`, not `Stream`.** ADR 0006 writes
+  `func Stream(w, r) *Stream`, and Go has no room for a function and a type of
+  the same name in one package, so one of them had to give. The constructor gave,
+  because that is the name a handler writes.
+- **`Hub` fans one change out to every stream watching it**, per topic rather
+  than through one global channel: a handler for one page filtering out every
+  other page's updates is a correctness question wearing a performance
+  question's clothes.
+- **The hub is bounded and refuses rather than evicts.** A stream is a goroutine
+  and a socket, and a share link pasted somewhere reachable is a stream nobody is
+  counting. An eviction silently closes somebody's stream; a refusal is an error
+  the handler can turn into a `503`.
+- **A slow reader loses a frame, and that is safe here and would not be
+  elsewhere.** An update is a *whole element*, so the next one carries the page
+  as it is then and a skipped frame is one the reader would have replaced
+  anyway. A hub carrying deltas cannot drop, and the drops are counted rather
+  than swallowed so a test — or a curious DM — can see them.
+- **Closing the hub drains every stream** by closing its channels rather than
+  setting a flag, so a handler ranging over one ends without checking anything.
+  That is the shutdown property ADR 0006 asks for.
+- **A resolved link carries the campaign it is in.** `/c/locations/rivergate`
+  became `/c/blackwater/locations/rivergate`, and the campaign is now a field of
+  `render.Page` rather than a thing the link path assumed. A data directory holds
+  several campaigns (ADR 0011), so a campaign-relative path was never a URL: the
+  link pointed at whichever campaign the reader happened to be in, which for a DM
+  with two campaigns is the wrong campaign's town.
+- **`render.PageURL` is exported, because four things link to a page.** A
+  rendered wiki link, the page tree, a backlink and a search result are four
+  callers of one rule, and the second implementation of "where does a page live"
+  is the second thing to get wrong in production.
+- **The campaign is in the render cache key.** Two campaigns can each hold
+  `locations/rivergate` with byte-identical content — two DMs who both started
+  from the same template — and a shared cache entry would have served one
+  campaign's URLs inside the other's HTML. Same class of mistake as the decision
+  not being in the key, and found by writing down the test that asks it.
+- **A page rendered with no campaign resolves nothing.** A caller that has not
+  said which campaign it is rendering for gets visibly unresolved links rather
+  than links to a plausible wrong place: the same fail-closed answer this project
+  gives everywhere else, and the thing that makes a handler forgetting the field
+  a visible bug rather than a subtle one.
+- `RendererVersion` is 2, because the output changed for the same input.
 
 - **`internal/auth`, and the minting half of it.** 32 bytes from `crypto/rand`,
   hex-encoded, shown once and never stored. What is kept is the SHA-256 and four

@@ -81,11 +81,15 @@ func searchCorpus() []corpusPage {
 	}
 }
 
-// searchableCampaign builds a campaign with the corpus in it, indexed.
-// searchableDM is a DM principal for the tests that need one and no player, so
-// that they do not have to throw one away.
-var searchableDM = domain.Principal{ID: "principal-dm", Role: domain.RoleDM}
-
+// searchableCampaign builds a campaign with the corpus in it, indexed, and hands
+// back a DM and a player of *that* campaign.
+//
+// The principals are values rather than rows because a scope only reads their id,
+// role and campaign, and they are built here rather than declared at package
+// level because a package-level principal cannot have a campaign: the id is only
+// knowable once the campaign row exists. A principal with no campaign is not a
+// principal this schema can hold, and the read scope now says so in SQL rather
+// than trusting every caller to pass a matching pair.
 func searchableCampaign(t *testing.T) (*store.Store, domain.Campaign, domain.Principal, domain.Principal) {
 	t.Helper()
 
@@ -130,7 +134,10 @@ func searchableCampaign(t *testing.T) (*store.Store, domain.Campaign, domain.Pri
 		}
 	}
 
-	return s, campaign, searchableDM, domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
+	dm := domain.Principal{ID: "principal-dm", CampaignID: campaign.ID, Role: domain.RoleDM}
+	player := domain.Principal{ID: "principal-player", CampaignID: campaign.ID, Role: domain.RolePlayer}
+
+	return s, campaign, dm, player
 }
 
 // mustQuery parses a query or fails the test. Every search test writes its query
@@ -306,7 +313,7 @@ func TestSearchPublicAppliesTheAudienceScope(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s, campaign, _, player := searchableCampaign(t)
+	s, campaign, dm, player := searchableCampaign(t)
 
 	tests := map[string]string{
 		"by title":                          "The Dragon Heist",
@@ -330,7 +337,7 @@ func TestSearchPublicAppliesTheAudienceScope(t *testing.T) {
 
 	// And the DM can, which is what makes the rows above a filter rather than a
 	// broken search.
-	hits, err := s.SearchPublic(ctx, campaign.ID, searchableDM, mustQuery(t, "is:dm-only"), search.MaxLimit)
+	hits, err := s.SearchPublic(ctx, campaign.ID, dm, mustQuery(t, "is:dm-only"), search.MaxLimit)
 	if err != nil {
 		t.Fatalf("SearchPublic as a DM: %v", err)
 	}

@@ -152,8 +152,12 @@ func TestReadScopeAdmits(t *testing.T) {
 
 	s, campaign := audienceFixture(t)
 
-	dm := domain.Principal{ID: "dm-1", Role: domain.RoleDM}
-	player := domain.Principal{ID: "player-1", Role: domain.RolePlayer}
+	// Both principals are *of this campaign*, which is now part of the answer
+	// rather than an assumption: the read scope asks whether the caller is a
+	// principal of the campaign it was asked about, so a fixture principal with
+	// no campaign is a principal that reads nothing.
+	dm := domain.Principal{ID: "dm-1", CampaignID: campaign.ID, Role: domain.RoleDM}
+	player := domain.Principal{ID: "player-1", CampaignID: campaign.ID, Role: domain.RolePlayer}
 	// A principal the application has never heard of: no role, no id. The zero
 	// value has to be the safe one, because a caller that forgot to look a
 	// principal up gets this rather than a panic.
@@ -205,8 +209,12 @@ func TestReadScopeWithSecretsAdmits(t *testing.T) {
 
 	s, campaign := audienceFixture(t)
 
-	dm := domain.Principal{ID: "dm-1", Role: domain.RoleDM}
-	player := domain.Principal{ID: "player-1", Role: domain.RolePlayer}
+	// Both principals are *of this campaign*, which is now part of the answer
+	// rather than an assumption: the read scope asks whether the caller is a
+	// principal of the campaign it was asked about, so a fixture principal with
+	// no campaign is a principal that reads nothing.
+	dm := domain.Principal{ID: "dm-1", CampaignID: campaign.ID, Role: domain.RoleDM}
+	player := domain.Principal{ID: "player-1", CampaignID: campaign.ID, Role: domain.RolePlayer}
 	unknown := domain.Principal{}
 
 	tests := map[string]struct {
@@ -397,7 +405,7 @@ func TestABoundPrincipalReadsTheirOwnCharacterPage(t *testing.T) {
 	}
 
 	// A DM can, because a DM reads everything.
-	dm := domain.Principal{ID: "principal-dm-in-the-acl-fixture", Role: domain.RoleDM}
+	dm := domain.Principal{ID: "principal-dm-in-the-acl-fixture", CampaignID: campaign.ID, Role: domain.RoleDM}
 	if visible := scopePaths(t, s, readable(campaign.ID, dm)); !slices.Contains(visible, "characters/aria") {
 		t.Errorf("the DM cannot read a dm-and-owner page: %v", visible)
 	}

@@ -89,6 +89,10 @@ var commands = map[string]command{
 		summary: "rebuild the index from the files, discarding what is there",
 		run:     runReindex,
 	},
+	"serve": {
+		summary: "serve the wiki over HTTP, and watch the vaults for changes",
+		run:     runServe,
+	},
 }
 
 func init() {

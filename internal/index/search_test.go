@@ -43,9 +43,9 @@ A fortified town at the confluence of the [[Blackwater]].
 		t.Fatalf("Sync: %v", err)
 	}
 
-	dm := domain.Principal{ID: "principal-dm", Role: domain.RoleDM}
-	player := domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
 	campaign := syncer.Campaign().ID
+	dm := domain.Principal{ID: "principal-dm", CampaignID: campaign, Role: domain.RoleDM}
+	player := domain.Principal{ID: "principal-player", CampaignID: campaign, Role: domain.RolePlayer}
 
 	tests := map[string]struct {
 		input string
@@ -143,7 +143,7 @@ func TestArchivedPagesAreNotSearchable(t *testing.T) {
 		t.Fatalf("the first Sync: %v", err)
 	}
 
-	player := domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
+	player := domain.Principal{ID: "principal-player", CampaignID: syncer.Campaign().ID, Role: domain.RolePlayer}
 	if hits, err := search.Run(ctx, syncer.Store(), syncer.Campaign().ID, player,
 		`"Old Rivergate"`, search.DefaultLimit); err != nil {
 		t.Fatalf("searching before the archive: %v", err)
@@ -222,7 +222,7 @@ func TestSyncSettlesOnTheSearchRows(t *testing.T) {
 		t.Error("a sync over a vault whose search rows were deleted wrote nothing: the index rots in place")
 	}
 
-	player := domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
+	player := domain.Principal{ID: "principal-player", CampaignID: syncer.Campaign().ID, Role: domain.RolePlayer}
 	hits, err := search.Run(ctx, syncer.Store(), syncer.Campaign().ID, player, "rivergate", search.DefaultLimit)
 	if err != nil {
 		t.Fatalf("searching: %v", err)
@@ -263,8 +263,8 @@ known by another name entirely.
 		t.Fatalf("Sync: %v", err)
 	}
 
-	player := domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
-	dm := domain.Principal{ID: "principal-dm", Role: domain.RoleDM}
+	player := domain.Principal{ID: "principal-player", CampaignID: syncer.Campaign().ID, Role: domain.RolePlayer}
+	dm := domain.Principal{ID: "principal-dm", CampaignID: syncer.Campaign().ID, Role: domain.RoleDM}
 
 	// A player may read the page, so it comes back — and its prose is searchable.
 	hits, err := search.Run(ctx, syncer.Store(), syncer.Campaign().ID, player, "confluence", search.DefaultLimit)

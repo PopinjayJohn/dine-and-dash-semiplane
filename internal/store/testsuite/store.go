@@ -285,8 +285,12 @@ func pathsArePerCampaign(t *testing.T, factory Factory) {
 		t.Fatalf("the same path in two campaigns produced one row, id %q", one.ID)
 	}
 
-	// Each campaign sees only its own page, even at the same path.
-	pages, err := s.ListPages(ctx, first.ID, asDM(one.ID))
+	// Each campaign sees only its own page, even at the same path. The DM is
+	// built from the *campaign* and not from the page, which is the only version
+	// of this call that is a principal the schema could hold: the read scope
+	// asks whether the caller is of the campaign it was asked about, so a DM
+	// built from anything else reads nothing at all.
+	pages, err := s.ListPages(ctx, first.ID, asDM(first.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}

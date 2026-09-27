@@ -8,8 +8,8 @@ import (
 // The render cache is the one place in this package where a mistake hands a
 // secret to somebody who may not read one, so its key is the thing to look at.
 //
-// A key is (content hash, renderer version, decision, path). Drop any of them
-// and something breaks that does not look like a security problem:
+// A key is (content hash, renderer version, decision, campaign, path). Drop any
+// of them and something breaks that does not look like a security problem:
 //
 //   - without the content hash, a saved page serves the previous version;
 //   - without the renderer version, a renderer upgrade keeps serving the old
@@ -17,7 +17,11 @@ import (
 //     constant exists to prevent;
 //   - without the decision, **a render made for a DM is served to a player**.
 //     That is the one. It is why the decision is in the key and why a cache
-//     miss is always safe and a cache *hit* has to be earned.
+//     miss is always safe and a cache *hit* has to be earned;
+//   - without the campaign, one campaign's links are served inside another's
+//     HTML. The two pages have to be genuinely identical for that to happen --
+//     the same path and the same body in two campaigns -- and two DMs who both
+//     start from the same template is not a rare thing.
 //
 // The decision is an `access.Decision` and the key carries **the one field of it
 // that changes the bytes**, `CanSeeSecrets`. That is a deliberate narrowing rather
@@ -46,6 +50,10 @@ type CacheKey struct {
 
 	// CanSeeSecrets is the decision the entry was made under.
 	CanSeeSecrets bool
+
+	// Campaign is the slug the entry was made in, because every URL in the
+	// HTML is campaign-scoped and two campaigns can hold byte-identical pages.
+	Campaign string
 
 	// Path is the page the entry belongs to.
 	Path string

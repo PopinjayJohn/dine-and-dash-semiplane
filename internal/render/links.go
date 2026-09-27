@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
@@ -49,17 +50,30 @@ type Link struct {
 	Title string
 }
 
-// hrefFor is the URL a resolved link points at.
-func (l Link) hrefFor() string {
-	return pageURL + l.Path
+// PageURL is the URL a page is served at, and it is exported because everything
+// that links to a page goes through it: a rendered wiki link, the page tree in
+// the sidebar, a backlink and a search result are four callers of one rule, and a
+// second implementation of "where does a page live" is a second thing to get
+// wrong in production.
+//
+// It returns the empty string when there is no campaign to name, which is the
+// same fail-closed answer the renderer gives a link it cannot place: no URL
+// rather than a plausible wrong one. Callers in the front end use that as "not a
+// link", exactly as the link renderer does.
+func PageURL(campaign, path string) string {
+	if campaign == "" {
+		return ""
+	}
+	return campaignURL + url.PathEscape(campaign) + "/" + path
 }
 
-// pageURL is the prefix every page link carries, so one change moves every link
-// in the application. It is a constant rather than configuration because a link
-// in a rendered page has to be the same link the DM would get from the
-// application, and a configurable prefix is one more thing to get wrong in
-// production.
-const pageURL = "/c/"
+// campaignURL is the prefix every campaign's pages live under, so one change
+// moves every link in the application. It is a constant rather than
+// configuration because a link in a rendered page has to be the same link the DM
+// would get from the application, and a configurable prefix is one more thing to
+// get wrong in production. It is also ADR 0003's, since the redirect a
+// redemption ends at is `/c/<slug>/`.
+const campaignURL = "/c/"
 
 // resolveLinks walks the tree and rewrites every wiki link the resolver knows,
 // and marks the ones it does not.
@@ -67,8 +81,12 @@ const pageURL = "/c/"
 // It is a walk rather than a parse-time lookup because a link may be to a page
 // that the index has not seen yet -- M4 is building the index from these very
 // files -- and because a markdown link to a page is resolved the same way.
-func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
-	if links == nil {
+//
+// campaign is the slug the page is being rendered in, and it is what every
+// resolved href is built from. A nil resolver resolves nothing; so does an empty
+// campaign, for the reason on render.Page.
+func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver, campaign string) error {
+	if links == nil || campaign == "" {
 		return nil
 	}
 
@@ -83,14 +101,14 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 			if err != nil {
 				return ast.WalkStop, err
 			}
-			applyResolution(typed, resolved, ok)
+			applyResolution(typed, resolved, ok, campaign)
 		case *ast.Link:
 			// A markdown link whose destination is a page path is a wiki link
 			// as far as this application is concerned, because a DM writes
 			// both and the index knows about both. A link to a URL is not, and
 			// asking the resolver about one is how a campaign page called
 			// "https" would come to be.
-			target, ok, err := rewritePageLink(ctx, links, typed.Destination)
+			target, ok, err := rewritePageLink(ctx, links, typed.Destination, campaign)
 			if err != nil {
 				return ast.WalkStop, err
 			}
@@ -98,7 +116,7 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 				typed.Destination = []byte(target)
 			}
 		case *ast.Image:
-			target, ok, err := rewritePageLink(ctx, links, typed.Destination)
+			target, ok, err := rewritePageLink(ctx, links, typed.Destination, campaign)
 			if err != nil {
 				return ast.WalkStop, err
 			}
@@ -113,7 +131,7 @@ func resolveLinks(ctx context.Context, doc ast.Node, links LinkResolver) error {
 
 // rewritePageLink resolves a markdown link or image whose destination names a
 // page in this vault, and reports the destination it should have.
-func rewritePageLink(ctx context.Context, links LinkResolver, current []byte) (string, bool, error) {
+func rewritePageLink(ctx context.Context, links LinkResolver, current []byte, campaign string) (string, bool, error) {
 	path, heading, isPagePath := pageDestination(current)
 	if !isPagePath {
 		return "", false, nil
@@ -123,7 +141,12 @@ func rewritePageLink(ctx context.Context, links LinkResolver, current []byte) (s
 	if err != nil || !ok {
 		return "", false, err
 	}
-	return resolved.hrefFor(), true, nil
+
+	href := PageURL(campaign, resolved.Path)
+	if href == "" {
+		return "", false, nil
+	}
+	return href, true, nil
 }
 
 // destination is a target and its heading, which is what the resolver takes.
@@ -163,13 +186,18 @@ func lookup(ctx context.Context, links LinkResolver, target destination) (Link, 
 // The target attribute is deliberately *not* rewritten. It is what the DM wrote,
 // it is what the link's text is, and a link that changed its own label the
 // moment the index learned something new is a link a DM cannot search for.
-func applyResolution(node *WikiLink, resolved Link, ok bool) {
+func applyResolution(node *WikiLink, resolved Link, ok bool, campaign string) {
 	if !ok {
 		return
 	}
 
+	href := PageURL(campaign, resolved.Path)
+	if href == "" {
+		return
+	}
+
 	node.SetAttributeString("class", wikiLinkClasses(isEmbed(node), true))
-	node.SetAttributeString("href", resolved.hrefFor())
+	node.SetAttributeString("href", href)
 }
 
 // linkTarget reads the target and heading a wiki link carries, which is what the

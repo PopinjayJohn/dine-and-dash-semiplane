@@ -135,7 +135,7 @@ func BenchmarkSearch(b *testing.B) {
 		}
 	}
 
-	dm := searchableDM
+	dm := domain.Principal{ID: "principal-dm", CampaignID: campaign.ID, Role: domain.RoleDM}
 
 	queries := map[string]string{
 		"one word":           "toll",

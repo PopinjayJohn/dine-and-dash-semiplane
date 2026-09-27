@@ -66,7 +66,7 @@ install-tools: ## Install the pinned linter and templ generator into GOBIN
 # ----------------------------------------------------------------- test ----
 
 .PHONY: check
-check: fmt-check vet lint test ## Everything CI runs. Do this before pushing.
+check: fmt-check generate-check vet lint test ## Everything CI runs. Do this before pushing.
 
 .PHONY: test
 test: ## Run the tests with the race detector
@@ -80,9 +80,17 @@ cover: ## Report coverage and fail below $(COVERAGE_MIN)%
 	@# flag each package is measured by its own binary, a test helper reports
 	@# 0%, and the gate fails on code the tests exercise on every run.
 	go test $(TEST_FLAGS) -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out | tail -1
-	@total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub("%","",$$NF); print $$NF}'); \
-	awk -v total="$$total" -v min="$(COVERAGE_MIN)" -v file=coverage.out 'BEGIN { \
+	@# Generated templ output is excluded from the profile before it is read, for
+	@# the same reason `.golangci.yml` excludes it from linting: it is not code
+	@# anybody wrote, it is what the template compiler produced from the
+	@# `.templ` files, and measuring it says something about the templates'
+	@# element-by-element branches rather than about whether the application is
+	@# tested. The filter is a filename and nothing else, and the raw profile is
+	@# still written so a reviewer can diff the generated part separately.
+	@grep -v '_templ\.go:' coverage.out > coverage-handwritten.out || true
+	@go tool cover -func=coverage-handwritten.out | tail -1
+	@total=$$(go tool cover -func=coverage-handwritten.out | tail -1 | awk '{gsub("%","",$$NF); print $$NF}'); \
+	awk -v total="$$total" -v min="$(COVERAGE_MIN)" 'BEGIN { \
 		if (total + 0 < min + 0) { \
 			printf "coverage %.1f%% is below the %.0f%% gate\n", total, min; \
 			exit 1; \
@@ -159,6 +167,41 @@ fmt-check: check-go-version ## Fail if any file is not gofmt clean. Needs no ins
 	unformatted=$$("$$gofmt" -s -l . | grep -v '^\.kilo/' || true); \
 	if [ -n "$$unformatted" ]; then \
 		echo "not gofmt clean:"; echo "$$unformatted"; exit 1; \
+	fi
+
+# -------------------------------------------------------------- generate ---
+
+# `templ generate` turns every `templates.templ` into the `templates_templ.go` that
+# is committed beside it. The generated file is committed rather than built, so
+# that `go test` needs no toolchain beyond Go -- and so that a reviewer reads the
+# `.templ` and the diff in the generated file, rather than having to run a compiler
+# to see what changed.
+#
+# The generated files are excluded from `.golangci.yml` and from the coverage
+# profile for the same reason: they are not code anybody wrote, and measuring them
+# says something about the templates' element branches rather than about whether
+# the application is tested.
+.PHONY: generate
+generate: ## Regenerate the templ templates from their .templ sources
+	templ generate
+
+# The check is that running it changes nothing, which is the property that makes a
+# committed generated file safe: a contributor who edits a `.templ` and forgets to
+# regenerate gets told, rather than shipping a template and code that disagree.
+.PHONY: generate-check
+generate-check: ## Fail if the templ output is out of date
+	@# The comparison is between the bytes on disk before and after regenerating,
+	@# not between git and the working tree: a contributor who has already run
+	@# `make generate` and staged the result has a *correct* generated file, and a
+	@# check that asks git whether the tree is clean fails them for having done
+	@# the right thing. `git hash-object` hashes any file, so this works on a file
+	@# that is not tracked either.
+	@before=$$(git hash-object $$(git ls-files '*_templ.go')); \
+	templ generate; \
+	after=$$(git hash-object $$(git ls-files '*_templ.go')); \
+	if [ "$$before" != "$$after" ]; then \
+		echo "the generated templates are out of date; run 'make generate' and commit the result"; \
+		exit 1; \
 	fi
 
 # --------------------------------------------------------------- version ---

@@ -35,6 +35,11 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
+// The store is this package's only reader, and the assertion is here rather than
+// in the store because the store cannot import this package back. It is what
+// says a `*store.Store` still satisfies the interface above after the signature
+// stops naming it.
+
 // Resolver answers what a wiki link points at, against the index.
 //
 // It is the renderer's LinkResolver and it is also what the sync engine uses to
@@ -51,17 +56,34 @@ import (
 // (ADR 0011: one campaign per request path), so one resolver per campaign and
 // no campaign parameter on the interface.
 type Resolver struct {
-	store      *store.Store
+	store      Lookups
 	campaignID string
+}
+
+// Lookups is what a resolver needs from the index, and it is declared here
+// because this package is the consumer.
+//
+// It is the three methods of the resolution order and nothing else. Declaring it
+// is what lets `internal/http` hand its own store interface to `NewResolver`
+// without a type assertion: the HTTP layer needs a *narrower* view of the store
+// than the sync engine does, and a caller that has to assert its way back to
+// `*store.Store` to build a link resolver is a caller whose interface is a lie.
+type Lookups interface {
+	// GetPage returns the page at an exact path.
+	GetPage(ctx context.Context, campaignID, path string, as domain.Principal) (domain.Page, error)
+
+	// FindPageByAlias returns the page a `[[alias]]` names.
+	FindPageByAlias(ctx context.Context, campaignID, alias string, as domain.Principal) (domain.Page, bool, error)
+
+	// FindPageByName returns the page whose file name matches, ignoring case.
+	FindPageByName(ctx context.Context, campaignID, name string, as domain.Principal) (domain.Page, bool, error)
 }
 
 // NewResolver returns a resolver for one campaign.
 //
-// The store it is given is the whole store, not a per-campaign handle, because
-// the store is not campaign-scoped in its API and pretending otherwise would
-// need a second type per campaign. The campaign is in the resolver, which is
-// the thing that actually needs it.
-func NewResolver(s *store.Store, campaignID string) *Resolver {
+// The store it is given is whatever the caller reads pages through, and the
+// campaign is in the resolver, which is the thing that actually needs it.
+func NewResolver(s Lookups, campaignID string) *Resolver {
 	return &Resolver{store: s, campaignID: campaignID}
 }
 
@@ -149,3 +171,6 @@ func linkFor(page domain.Page) render.Link {
 
 // compile-time assertion: the resolver is what the renderer asked for in M3.
 var _ render.LinkResolver = (*Resolver)(nil)
+
+// And the store is what `Lookups` is a view of.
+var _ Lookups = (*store.Store)(nil)

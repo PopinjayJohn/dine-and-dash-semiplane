@@ -723,7 +723,7 @@ Each milestone is one branch, one PR, one changelog section.
 | **M5** | Search | FTS5 schema, query builder, BM25, **two indexes plus RRF**, ACL in SQL | relevance, FTS-injection corpus, "the secret never appears", benchmarks |
 | **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding**, a redacting logger | every hardening item in §10 as a named test |
 | **M7** | Access control | `access` package, the read predicate corrected to the spec's form, **`body_public` redaction**, the owner column, edit enforcement, a principal on every page-returning store method | the §14 access table, `TestStoreReadPredicateMatchesResolver` |
-| **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/healthz` | httptest render tests, route coverage, HTML smoke assertions |
+| **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/_/healthz`, **the cookie attributes ADR 0003 held back, the login route, and a live page** | httptest render tests, route coverage, HTML smoke assertions, `TestSecretStrippedFromAllSurfaces` |
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages** | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
 | **M11** | Plugin framework | `internal/plugin` and capabilities, `house-rules`, `spoilerbox`, `wordcount`, authoring guide | contract suite, ordering, panic isolation, duplicate rejection |
@@ -957,6 +957,70 @@ look like working features rather than like bugs: a sanitiser applied to
 by content hash alone is a channel from a DM's render to a player. Both are
 written down in [ADR 0014](adr/0014-secrets-leave-the-tree.md), which also
 corrects §11's two-field cache key.
+
+### M8 commit sequence
+
+```
+fix(store): the predicate asks whose campaign the principal is of
+feat(render): the campaign is in the link, because two campaigns share a server
+feat(sse): the four functions ADR 0006 promised, and a hub to drive them
+feat(web): the assets, embedded, and nothing fetched at runtime
+feat(http): the web shell, the cookie ADR 0003 held back, and the login
+feat(sse): a page that updates itself, and the hub's first consumer
+feat(cli): wiki serve, and the lock that keeps two servers off one directory
+docs(adr): record what M8 decided, and what it deliberately did not
+docs: record where the project actually is
+```
+
+The first is the one that matters and it is a `fix` on M7's work rather than on
+M8's: the read predicate asked which campaign the *caller* wanted and never
+whether the caller belongs to it, so a `GetPage` for a page in Thornford made with
+a session for the Blackwater was answered by the role clause alone. Nothing had
+ever asked, because every caller so far was the sync engine, which passes
+`AsDM(campaignID)` and is therefore always of the campaign it is reading. **A
+predicate that is correct for callers who get their arguments right is a predicate
+one handler away from a disclosure**, and M8 is the first caller with a real
+principal. Twelve test fixtures turned out to be building principals that cannot
+exist — a role and no campaign, which the schema refuses to store — and the new
+conjunct is what made that visible rather than a matter of taste.
+
+The second is the same idea one layer up. A resolved link said
+`/c/locations/rivergate`, and a data directory holds several campaigns, so a link
+pointed at whichever campaign the reader was already in. §9's "a link into a page
+of another campaign" is this.
+
+The fourth is ADR 0006's offline requirement and ADR 0011's reason for it
+disagreeing, resolved the way both wanted: a `datastar.js` fetched at runtime is a
+script the application did not write, running with a player's session cookie, and
+it is also a request that fails on a table's wifi.
+
+The fifth is the milestone, and its five findings are the reason the sequence has
+a `fix` at the front of it and a `docs(adr)` at the end of it:
+
+- The **500 page asked the store for a page tree**, which is the thing that has
+  just failed. A store that *panicked* rather than errored took the process down
+  from inside the recovery handler, with every other player's session on it.
+- The **uptime was a package variable reading `time.Now()`** while everything else
+  used the injected clock, so a fixed-clock test got minus five thousand hours. It
+  was a duration and it was a string, which is how that kind of wrong survives
+  review.
+- The **404, the 500, the 403 and the 405 each built their shell by hand**, and
+  three of them had already disagreed about whether the CSRF token was in it. The
+  404 carried a logout form whose token was the empty string: a form that could
+  never be submitted.
+- **ADR 0003's five steps do not rotate the token**, so a share link is a reusable
+  bearer credential. The test that asked found it, and the answer is that this is
+  right and is now written down in [ADR 0018](adr/0018-the-campaign-is-in-every-url.md).
+- The **cookie's name could not be ADR 0003's on a laptop**, because a browser
+  refuses a `__Host-` cookie without `Secure` and says nothing when it does. A DM
+  on plain HTTP got a wiki that forgot them after every link.
+
+The sixth changes what the SSE hub carries, and it is the security decision of the
+milestone: the hub carries a *notice* and each subscriber re-renders under its own
+decision, so a DM's render cannot reach a player's stream. The obvious design —
+render once, hand the same component to everyone — has no correct version, because
+a DM and a player can be watching the same page and the publisher can only pick
+one decision.
 
 ### Definition of Done
 

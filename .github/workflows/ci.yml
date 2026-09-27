@@ -48,6 +48,13 @@ jobs:
         id: pinned
         run: echo "version=$(make --no-print-directory print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
 
+      # The generated templ output is committed, so a `.templ` edited without a
+      # regeneration would otherwise be a template and a `_templ.go` that
+      # disagree, and the disagreement is invisible until the page renders the old
+      # thing.
+      - name: Generated code is up to date
+        run: make generate-check
+
       - name: Lint
         uses: golangci/golangci-lint-action@v9.3.0 # ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
@@ -118,14 +125,75 @@ jobs:
       - name: Build
         run: make build
 
-      # A binary that compiles is not a binary that runs. M8 replaces this
-      # with a real /healthz request against a booted server.
+      # A binary that compiles is not a binary that runs, and the thing this
+      # milestone shipped is the part that runs.
+      #
+      # The wiki is booted against a data directory with one campaign in it, the
+      # health line is asked for over HTTP, and the process is then asked to stop
+      # and has to actually stop -- a server that does not shut down cleanly leaves
+      # a lock file behind, and that is a bug the tests found once and will find
+      # again.
       - name: Smoke test
         run: |
           ./bin/wiki version
           ./bin/wiki help
           # A single static binary, or ADR 0004's claim is quietly false.
           file bin/wiki
+
+          data=$(mktemp -d)
+          mkdir -p "$data/vault/blackwater"
+          printf -- '---\ntitle: The Blackwater\n---\n\nA campaign.\n' \
+            > "$data/vault/blackwater/campaign.md"
+
+          ./bin/wiki serve --data-dir "$data" --addr 127.0.0.1:8123 --no-watch &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8123/_/healthz > healthz.json; then
+              break
+            fi
+            sleep 0.2
+          done
+
+          cat healthz.json
+          grep -q '"status": "ok"' healthz.json \
+            || { echo "the health line is not ok"; exit 1; }
+
+          # And a campaign root, which is the first thing anybody sees and the
+          # first thing that has to not be a stack trace.
+          #
+          # **It is fetched with no session, and it is empty, and that is the
+          # design rather than a gap.** Every page in a campaign is behind a link
+          # (§10: a link is "equivalent to a leaked account for that player,
+          # scoped to one campaign"), so a request that has not redeemed one
+          # identifies nobody and the read predicate admits nothing for nobody. The
+          # first version of this step fetched the root and grepped for a page
+          # title, which is a string the page cannot contain for two reasons: a
+          # tree shows path segments rather than titles, and the campaign's own
+          # name is its slug.
+          #
+          # What this asserts is the behaviour that is actually reachable without
+          # a link: a 200, the campaign, and the notice. A page *render* is not
+          # asserted here because it cannot be reached without minting a link, and
+          # there is no command that mints one yet — `internal/http`'s own tests
+          # drive the handler through a real session and cover that, and this step
+          # is about whether the binary boots.
+          curl -fsS http://127.0.0.1:8123/c/blackwater/ > root.html
+          grep -q '<h1 class="page-title">blackwater</h1>' root.html \
+            || { echo "the campaign root did not render the campaign"; sed -n 1,40p root.html; exit 1; }
+          grep -q 'Nothing here yet' root.html \
+            || { echo "an unreadable campaign did not say so"; exit 1; }
+
+          # And a page with no session is a 404, not a page. This is the assertion
+          # that matters: it is a test that can *fail* if the read predicate ever
+          # starts admitting an unidentified request.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8123/c/blackwater/campaign)
+          [ "$code" = 404 ] \
+            || { echo "a page with no session is $code, want 404"; exit 1; }
+
+          kill -TERM "$server"
+          wait "$server"
 
   changelog:
     name: changelog

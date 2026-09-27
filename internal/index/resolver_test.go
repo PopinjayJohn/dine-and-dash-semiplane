@@ -171,6 +171,7 @@ func TestTheResolverIsWhatTheRendererAsksFor(t *testing.T) {
 	}
 
 	result, err := render.NewWithLinks(index.NewResolver(s, campaign.ID)).Render(ctx, render.Page{
+		Campaign:    campaign.Slug.String(),
 		Path:        "npcs/garros-ironbar",
 		Body:        "Ask [[the toll town]] about the coin.\n",
 		ContentHash: "hash-of-the-page",
@@ -181,7 +182,7 @@ func TestTheResolverIsWhatTheRendererAsksFor(t *testing.T) {
 
 	// The link resolved, so the HTML has an href to the page's own path and not
 	// the alias the DM wrote.
-	if want := `href="/c/locations/rivergate"`; !contains(result.HTML, want) {
+	if want := `href="/c/blackwater/locations/rivergate"`; !contains(result.HTML, want) {
 		t.Errorf("the rendered HTML does not contain %q:\n%s", want, result.HTML)
 	}
 	if contains(result.HTML, "unresolved") {
@@ -219,6 +220,7 @@ func TestAnUnusableResolverResolvesNothing(t *testing.T) {
 			t.Parallel()
 
 			result, err := render.NewWithLinks(resolver).Render(ctx, render.Page{
+				Campaign:    campaign.Slug.String(),
 				Path:        "npcs/garros-ironbar",
 				Body:        "See [[locations/rivergate]].\n",
 				ContentHash: "hash-of-the-page",
