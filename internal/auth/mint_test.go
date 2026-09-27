@@ -30,8 +30,10 @@ func newMinter(t *testing.T) (*auth.Minter, *store.Store, domain.Campaign) {
 
 	return &auth.Minter{
 		Backend: s,
-		Now:     func() time.Time { return testNow },
-		BaseURL: "https://wiki.example",
+		Config: auth.Config{
+			Now:     func() time.Time { return testNow },
+			BaseURL: "https://wiki.example",
+		},
 	}, s, campaign
 }
 
@@ -278,7 +280,7 @@ func TestIssueRefuses(t *testing.T) {
 		want     error
 	}{
 		"no base URL": {
-			minter: func(m *auth.Minter) { m.BaseURL = "" },
+			minter: func(m *auth.Minter) { m.Config.BaseURL = "" },
 			campaign: domain.Campaign{
 				ID: "campaign-1", Slug: "blackwater",
 			},
@@ -349,7 +351,7 @@ func TestLinkExpiry(t *testing.T) {
 		t.Parallel()
 
 		m, _, campaign := newMinter(t)
-		m.LinkExpiry = 30 * 24 * time.Hour
+		m.Config.LinkExpiry = 30 * 24 * time.Hour
 
 		issued, err := m.Issue(ctx, campaign, domain.RolePlayer, "Alice (Ranger)")
 		if err != nil {

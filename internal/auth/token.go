@@ -176,6 +176,31 @@ func (t Token) Format(state fmt.State, verb rune) {
 	_, _ = fmt.Fprintf(state, spec.String(), redacted)
 }
 
+// ParseToken is the inverse of Hex: the token as it came out of a URL, and the
+// Token it stands for.
+//
+// It exists because the two halves of this package have to agree about what a
+// token *is*, and the version of that agreement where each side hashes whatever
+// it happens to be holding is a bug that no unit test finds and every player
+// does: the minting side hashes the 32 raw bytes and the redemption side would
+// hash the 64 characters of hex, and every link in every campaign fails to work
+// with "that share link is not valid".
+//
+// A string that is not 64 hex characters is refused here, before the store is
+// touched, which also means a redemption with a two-character token does no
+// database work at all.
+func ParseToken(hexToken string) (Token, error) {
+	if len(hexToken) != 2*TokenBytes {
+		return Token{}, fmt.Errorf("auth: a share-link token is %d hex characters, this one is %d",
+			2*TokenBytes, len(hexToken))
+	}
+	raw, err := hex.DecodeString(hexToken)
+	if err != nil {
+		return Token{}, fmt.Errorf("auth: a share-link token is hex, this one is not")
+	}
+	return Token{bytes: raw}, nil
+}
+
 // Redacted is whether a string might be a token, for the logger.
 //
 // It is a *guard*, not a filter: the logger redacts anything that looks like a

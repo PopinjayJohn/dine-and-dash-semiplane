@@ -21,6 +21,38 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
+- **Redemption, and the token leaving the URL.** A token is parsed, hashed, and
+  looked up by its hash in a UNIQUE column; then the campaign, the revocation and
+  the expiry are checked; then the session is created, the last use stamped and
+  the redemption recorded — and only then is a redirect handed back, built from
+  the campaign's slug rather than from the request. The redirect is the one
+  response in the program whose entire job is to send a browser somewhere, so a
+  target that came from the incoming URL would be a target an attacker chose.
+- **A token either matches its hash or it is not the link.** Nothing compares a
+  presented token to a stored value, so there is **no constant-time comparison
+  here and none is needed** — the lookup is a b-tree search on an index, not a
+  scan, and there is no comparison whose duration could depend on where the first
+  differing character is. The property that *is* asserted is that a truncated,
+  prefixed, doubled or one-character-different token is refused. The §10 hardening
+  item and this reasoning are recorded in ADR 0016.
+- **A wrong token and a wrong campaign are different errors**, and revocation and
+  expiry are separate from both. A DM who pastes a link into the wrong campaign is
+  told so, because that is a mistake they can fix. A player whose link was revoked
+  is told *that*, because it is not a secret — it is the answer to why their
+  browser stopped working, and "not valid" would send them to the DM to ask. A
+  caller who could tell the three apart could use the difference to learn which
+  campaigns a DM has links for, so the two token failures are one error.
+- **A lapsed session is deleted, not merely refused.** A row that is found and
+  rejected on every request for the rest of its life is a row nobody will ever
+  prune, and revocation is a delete; expiry is the same idea for the clock's
+  version of it.
+- **A refused redemption records nothing.** A log that said "this link was used"
+  for a token that was not would be worse than no log, because it sends a DM
+  looking at the wrong player.
+- `Config` holds the two windows in one place, because a link's expiry and a
+  session's lifetime are *one* policy and not two — and two structs with a field
+  each is a way to set them out of step.
+
 - **A link has no expiry by default**, which is the default most DMs want: a link
   that quietly expired would arrive as "my player's link stopped working" with no
   cause, and revocation is the thing a DM thinks of doing.

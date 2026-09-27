@@ -16,7 +16,9 @@ import (
 // that makes this worth having.
 type Backend interface {
 	CreatePrincipal(ctx context.Context, p domain.Principal) (domain.Principal, error)
+	GetCampaign(ctx context.Context, id string) (domain.Campaign, error)
 	PrincipalByTokenHash(ctx context.Context, tokenHash string) (domain.Principal, bool, error)
+	PrincipalByID(ctx context.Context, id string) (domain.Principal, bool, error)
 	RevokePrincipal(ctx context.Context, id string) error
 	CreateSession(ctx context.Context, sess domain.Session) (domain.Session, error)
 	SessionByID(ctx context.Context, id string) (domain.Session, bool, error)
