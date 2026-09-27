@@ -566,6 +566,47 @@
   overwrite test asserted that a file was not overwritten when the file had never
   been created — a test that could not fail, found by the premise rather than the
   code.
+- **A `Dockerfile`, on `scratch`.** ADR 0004's pure-Go SQLite is what makes a
+  scratch image possible, and a scratch image is the only way to say "this contains
+  one binary and a certificate bundle" rather than "this contains a Debian base image
+  and one binary in it". Two comments are load-bearing: the `DDSP_LISTEN` default is
+  `0.0.0.0` **inside** the container while `CMD` is loopback-plus-operator, because a
+  container that published a port by default would be a wiki on a network with TLS
+  nobody chose; and there is no `USER`, because scratch has no `/etc/passwd` and a
+  hard-coded uid is a line that looks like it does something.
+- **The health check is the weakest thing in the Dockerfile and says so.** Probing
+  `/_/healthz` needs an HTTP client, and scratch has no curl, no wget and no shell to
+  pipe one with, so `HEALTHCHECK` runs `wiki version` — which proves the binary
+  starts and finds its data directory, and those are the two ways this image fails at
+  boot. An operator who wants the HTTP line points their load balancer at it.
+- **A tag now builds something.** `ci.yml` triggered on a push to `main`, a pull
+  request and a merge group, and **no job built an artifact or published anything** —
+  so `v0.1.0` would have been a string somebody typed and a wiki somebody had to
+  `go install` by hand. `.github/workflows/release.yml` runs `make dist`, checks that
+  the version stamp agrees with the tag (a release whose binary says `dev` is one a
+  DM cannot report a bug against, and `docs/security.md` tells people to include
+  `wiki version`), checks every archive holds a *binary* rather than a script, and
+  attaches them to a release.
+- **`make dist` cross-compiles five platforms, and the logic is a script rather than
+  a recipe.** The shell-inside-a-Makefile version produced `wiki_6f13943-dirty__` with
+  a doubled underscore, because `$(DIST_DIR)` next to `$${target}` made the second one
+  empty. That is not a Makefile bug, it is Makefile doing what Makefile does, and the
+  answer is to stop asking it to be a shell. The target still exists, so CI's rule
+  that a job runs a make target holds.
+- **The release archives carry `README.md` and `docs/security.md`.** The second
+  because the first question about a self-hosted wiki holding a campaign is what it
+  is protected by, and the answer being *in the download* rather than on a website is
+  the point of "one binary, one data directory".
+- **An e2e smoke test behind a build tag, and it is not Playwright.** §14's row says
+  "Playwright smoke, behind a `//go:build e2e` tag so it never blocks CI"; the tag
+  survived into the M13 row and **the Playwright half did not, because it needs Node
+  and a browser download and ADR 0004 is "pure Go, no CGO"**. Adding a Node
+  toolchain to a project whose whole claim is one static binary would trade a property
+  this project has for one it does not. What is there instead builds the binary,
+  boots it, mints a link, reads a page and takes a backup — the journey a DM takes,
+  needing nothing but the thing under test. It is not in `make check` or CI, on
+  purpose: a test that blocks every pull request is a test that gets ignored within a
+  fortnight.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a
