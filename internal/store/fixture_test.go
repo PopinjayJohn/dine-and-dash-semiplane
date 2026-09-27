@@ -102,7 +102,7 @@ func mustCreateCampaign(t *testing.T, s *store.Store) domain.Campaign {
 func mustCreatePage(t *testing.T, s *store.Store, campaignID string) domain.Page {
 	t.Helper()
 
-	p, err := s.UpsertPage(context.Background(), page(campaignID))
+	p, err := s.UpsertPage(context.Background(), page(campaignID), store.AsDM(campaignID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}

@@ -44,9 +44,9 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE pages_fts MATCH ? AND (p.is_deleted = 0
 		AND p.campaign_id = ?
-		AND (p.visibility = 'players'
+		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) )))
+				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) )))
 		ORDER BY bm25(pages_fts, 10.0, 3.0, 4.0, 1.0, 2.0), p.path
 		LIMIT ?`,
 		},
@@ -57,9 +57,9 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
 		AND p.campaign_id = ?
-		AND (p.visibility = 'players'
+		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) )))
+				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) )))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -70,10 +70,10 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE pages_secrets_fts MATCH ? AND (p.is_deleted = 0
 		AND p.campaign_id = ?
-		AND (p.visibility = 'players'
+		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
-		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
+				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) ))
+		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) ))
 		ORDER BY bm25(pages_secrets_fts), p.path
 		LIMIT ?`,
 		},
@@ -84,10 +84,10 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
 		AND p.campaign_id = ?
-		AND (p.visibility = 'players'
+		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
-				OR ( p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
-		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.id) ))
+				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) ))
+		AND ( ? = 'dm' OR EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) ))
 		ORDER BY p.path
 		LIMIT ?`,
 		},
@@ -201,11 +201,12 @@ func TestFilteredSearchStatements(t *testing.T) {
 	if got := len(public.filterArgs()) + 1 /* the match */ + len(public.sc.args); got != placeholders {
 		t.Errorf("the statement has %d placeholders and %d arguments", placeholders, got)
 	}
-	// The match, the campaign, the role, the principal, the tags, the type, the
-	// audience and the limit: eight, in that order. The principal is the one the
-	// ownership clause added, and it is the one a missing argument would turn into
-	// a driver error on a player's request rather than a failed test here.
-	if got, want := strings.Count(public.statement(true), "?"), 8; got != want {
+	// The match, the campaign, then the audience test's five -- the role three
+	// times and the principal -- then the tags, the type, the audience filter and
+	// the limit: ten, in that order. The count is the test: a scope whose
+	// arguments and placeholders disagree is a driver error on a player's
+	// request rather than a failed test here.
+	if got, want := strings.Count(public.statement(true), "?"), 10; got != want {
 		t.Errorf("a fully filtered statement has %d placeholders, want %d", got, want)
 	}
 }

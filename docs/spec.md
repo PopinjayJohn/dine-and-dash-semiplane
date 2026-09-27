@@ -358,21 +358,34 @@ func For(p Principal, page PageMeta) Decision
 
 ```sql
 -- internal/store/acl.go
-CREATE VIEW page_acl_read AS
-SELECT p.* FROM pages p
-WHERE p.is_deleted = 0
+--
+-- A *parameterised* fragment, not a view: SQLite has no view taking a campaign,
+-- a role and a principal, and the three all differ per request. The fragment
+-- lives in Go so that a query which forgot it does not compile.
+
+p.is_deleted = 0
   AND p.campaign_id = :campaign
-  AND ( p.visibility = 'players'
+  AND ( ( :role = 'player' AND p.visibility = 'players' )
      OR :role = 'dm'
-     OR ( p.visibility = 'dm-and-owner'
+     OR ( :role = 'player' AND p.visibility = 'dm-and-owner'
           AND EXISTS (SELECT 1 FROM principal_characters pc
                       WHERE pc.character_page_id = p.owner_character_page_id
-                        AND pc.principal_id = :principal) ) );
+                        AND pc.principal_id = :principal) ) )
 ```
 
+**The role is a conjunct of the first and third clauses, and that is not
+decoration.** The specification originally wrote the first clause as
+`p.visibility = 'players'` on its own, which admits a `players` page to *anybody* —
+and "anybody" includes a request that identified nobody, because a session that
+could not be found produces a principal with an empty role, and the `OR` does not
+look at the role before it answers true. That is what
+`TestStoreReadPredicateMatchesResolver` found, on its first run, and it is a
+correction to this document as much as to the code.
+
 Search, listings, the page tree, backlinks and tag clouds all filter through
-this view or a byte-identical predicate. A test asserts the view and `For`
-agree for every cell of the matrix, because a disagreement is a leak.
+this predicate. A test asserts the predicate and `For` agree for every cell of
+the matrix, because a disagreement is a leak in one direction and a missing
+feature in the other.
 
 ## 9. Secrets
 
@@ -709,7 +722,7 @@ Each milestone is one branch, one PR, one changelog section.
 | **M4** | Sync engine | incremental and full reindex, ownership resolution, drift detection, `fsnotify`, `sync --check` | idempotency over N runs, drift injection, external-edit detection |
 | **M5** | Search | FTS5 schema, query builder, BM25, **two indexes plus RRF**, ACL in SQL | relevance, FTS-injection corpus, "the secret never appears", benchmarks |
 | **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding**, a redacting logger | every hardening item in §10 as a named test |
-| **M7** | Access control | `access` package, `page_acl_read` over the existing predicate, `body_public` redaction, reveal page and block actions, Secrets panel, edit enforcement, a principal on every page-returning store method | the §14 access table, and the predicate matching the resolver |
+| **M7** | Access control | `access` package, the read predicate corrected to the spec's form, **`body_public` redaction**, the owner column, edit enforcement, a principal on every page-returning store method | the §14 access table, `TestStoreReadPredicateMatchesResolver` |
 | **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/healthz` | httptest render tests, route coverage, HTML smoke assertions |
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages** | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
@@ -884,6 +897,47 @@ predicate's ownership test stops being `1 = 0` and becomes the `EXISTS` over
 `principal_characters`, and a player can for the first time find their own
 character page's secrets — which is the rule ADR 0007 has described since M0 and
 which nothing could reach until a principal owned a page.
+
+### M7 commit sequence
+
+```
+feat(domain): an owner on a page — the column, and the sync resolving it
+feat(access): the resolver, and all 36 cells of the rights matrix
+feat(access): the predicate reads the owner, and the two agree for every cell
+feat(store): a principal on every page-returning method
+feat(index): fill body_public, so a page is findable by its prose
+feat(access): refuse an edit the principal may not make
+feat(render): the real decision reaches the stripper
+docs(adr): record what M7 decided, and what it deliberately did not
+docs: record where the project actually is
+```
+
+The first is a two-milestone debt discharged: M4 resolved a page's owner on every
+sync, validated it, reported the problems, and threw it away. It also found an M4
+bug on the way — a `character:` key resolved to a page at `<slug>` rather than at
+`characters/<slug>`, which was only a spurious report while the answer was used
+for nothing and became a character nobody owned once it was used for an id.
+
+The second **caught a disclosure in the resolver two minutes after it was
+written**: the ownership shortcut ran before the `dm-only` check, so a player bound
+to a character page the DM had marked `dm-only` could read it, edit it and see its
+secrets. §8 says `dm-only` is *absolute*, and writing all the cells out by hand is
+the only reason anybody noticed.
+
+The third is `TestStoreReadPredicateMatchesResolver`, the named test this project
+has been deferring since M5, and it **found a second disclosure on its first
+run**: the predicate's first clause admitted a `players` page to a request that
+identified nobody. The spec wrote the same clause, so the correction is to the
+document as well as to the code.
+
+The fifth is the last piece of "a missing feature, in the safe direction", and it
+became safe to fill only because the public search's rows are filtered by the read
+predicate — every principal who can reach a hit may read the page, so the index
+holds exactly what a reader of that page may read.
+
+The sixth moves the gate for writes into the store, where a handler cannot leave
+it out, and checks *ownership* rather than *position* — which is a partial check,
+deliberately, and ADR 0017 is mostly about the residual.
 
 ### M3 commit sequence
 

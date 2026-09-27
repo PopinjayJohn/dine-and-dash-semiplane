@@ -18,7 +18,7 @@ func TestUpsertPageStoresEveryField(t *testing.T) {
 	s := newStoreWithClock(t, clock.NewFixed(testTime, 0))
 	c := mustCreateCampaign(t, s)
 
-	stored, err := s.UpsertPage(ctx, page(c.ID))
+	stored, err := s.UpsertPage(ctx, page(c.ID), store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestUpsertPageStoresEveryField(t *testing.T) {
 		t.Error("a page that was never archived reads back as deleted")
 	}
 
-	read, err := s.GetPage(ctx, c.ID, "locations/rivergate")
+	read, err := s.GetPage(ctx, c.ID, "locations/rivergate", store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestUpsertPageRefusesWhatDomainRefuses(t *testing.T) {
 			p := page(c.ID)
 			tt.mutate(&p)
 
-			_, err := s.UpsertPage(ctx, p)
+			_, err := s.UpsertPage(ctx, p, store.AsDM(c.ID))
 			if tt.wantErr != "" {
 				assertErrorContains(t, err, tt.wantErr)
 				return
@@ -149,7 +149,7 @@ func TestUpsertPageReplacesTheRowAtTheSamePath(t *testing.T) {
 	// write, which is what a reindex does: it has a file, not a moment.
 	edited.UpdatedAt = time.Time{}
 
-	second, err := s.UpsertPage(ctx, edited)
+	second, err := s.UpsertPage(ctx, edited, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestUpsertPageReplacesTheRowAtTheSamePath(t *testing.T) {
 
 	// One row, not two: a reindex that inserted a second row for the same
 	// path would make the page tree depend on which row came back first.
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -213,14 +213,14 @@ func TestDeletePageArchivesRatherThanRemoves(t *testing.T) {
 		t.Fatalf("DeletePage: %v", err)
 	}
 
-	if _, err := s.GetPage(ctx, c.ID, p.Path); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.GetPage(ctx, c.ID, p.Path, store.AsDM(c.ID)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetPage after archiving returned %v, want an error matching ErrNotFound", err)
 	}
-	if _, err := s.GetPageByID(ctx, p.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.GetPageByID(ctx, p.ID, store.AsDM(c.ID)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetPageByID after archiving returned %v, want an error matching ErrNotFound", err)
 	}
 
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestDeletePageArchivesRatherThanRemoves(t *testing.T) {
 
 	// The row is still there, which is what makes an archive recoverable: the
 	// same path written again keeps the original creation time and id.
-	restored, err := s.UpsertPage(ctx, page(c.ID))
+	restored, err := s.UpsertPage(ctx, page(c.ID), store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage after archiving: %v", err)
 	}
@@ -274,12 +274,12 @@ func TestListPagesIsOrderedByPath(t *testing.T) {
 	for _, path := range []string{"sessions/2026-02-14-dragon-heist", "characters/aria", "locations/rivergate"} {
 		p := page(c.ID)
 		p.Path = path
-		if _, err := s.UpsertPage(ctx, p); err != nil {
+		if _, err := s.UpsertPage(ctx, p, store.AsDM(c.ID)); err != nil {
 			t.Fatalf("UpsertPage(%q): %v", path, err)
 		}
 	}
 
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestPagesOfOneCampaignDoNotLeakIntoAnother(t *testing.T) {
 	mustCreatePage(t, s, one.ID)
 	mustCreatePage(t, s, two.ID)
 
-	onePages, err := s.ListPages(ctx, one.ID)
+	onePages, err := s.ListPages(ctx, one.ID, store.AsDM(one.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}

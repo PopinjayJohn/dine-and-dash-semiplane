@@ -21,13 +21,164 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
-- **The read predicate's ownership test is no longer `1 = 0`.** It is an `EXISTS`
-  over `principal_characters`, correlated on `pc.character_page_id = p.id` — the
-  correlation is the whole of it, and the version without it is shorter and admits
-  every player to every `dm-and-owner` page in their campaign. The test that used to
-  assert the placeholder was still `1 = 0` — the only way to catch somebody tidying
-  away a fail-closed branch — is now a test of the behaviour: a bound player reads
-  their own `dm-and-owner` page and an unbound one does not.
+- **`pages.owner_character_page_id`, and the sync resolving to it.** M4 worked out a
+  page's owner on every sync, validated it, reported the problems and then threw
+  the answer away, because there was nowhere to put it. It is a *page id* and not a
+  slug, and that is the design: the read predicate asks a question about a page
+  and answers it by joining, and a slug would put a second rule — how a slug
+  becomes a page — inside the one place that must have exactly one.
+- **The whole subtree has the character's own page as its owner, not itself**, and
+  the read predicate now correlates on that owner rather than on the page. This is
+  the difference between "Alice may read her character's backstory" and "Alice may
+  read exactly the one file she happens to be bound to", and it is the spec's form
+  of the ownership test; M6 had to correlate on the page itself because the column
+  did not exist yet.
+- **A principal on every page-returning store method** — the other half of
+  invariant 3, and the one that has been outstanding since M4: `GetPage`,
+  `GetPageByID`, `ListPages`, `FindPageByAlias`, `FindPageByName` and `Backlinks`
+  all take one now. A signature that can be called without naming a principal is a
+  method whose ACL is somebody's decision per call site, and a method that *can* be
+  filtered and does not is worse than one that cannot.
+- **A page that exists and may not be read is `not found`, not "forbidden."** The
+  distinction tells a player which paths a DM has written, and a path is enough to
+  ask about.
+- **`Backlinks` filters on the *source*.** A backlink says "some page mentions this
+  one", and if the some page is a `dm-only` session log then the backlink is a
+  disclosure: it hands a player a path, and a path is a thing they can then try to
+  read and be told 404 about.
+- **`GetPageByID` and `Backlinks` scope by the principal's campaign**, because they
+  have no campaign argument of their own — so a principal from another campaign
+  gets not-found rather than somebody else's page. That is also why `store.AsDM()`
+  **takes a campaign**: the first version did not, and every page in every campaign
+  became invisible to the thing that indexes it. A principal without a campaign
+  cannot exist — the column is NOT NULL — and a DM of no particular campaign is not
+  a principal at all.
+- The alias and name lookups filter, so a `[[link]]` into a page a player may not
+  read resolves to nothing rather than to a page.
+
+- **`internal/access` is the one place that answers "what may this principal do
+  with this page"**, and it is pure: no store, no clock, no mocks. That is not
+  minimalism, it is the property the rights matrix needs — 36 cells can only be
+  written down and run in a millisecond if deciding one is a function call.
+- **`TestStoreReadPredicateMatchesResolver`, deferred since M5.** The SQL
+  predicate and the Go resolver answer the same question about the same matrix,
+  and the two are two implementations for a reason: the predicate has to be SQL
+  and the resolver has to be a function. So the answer to "which one is right" is
+  that both are required to say the same thing, and this test is what makes it
+  true. Thirty-six cells, §8's two principals plus the row the matrix does not
+  have, compared through both the read scope and the stricter secret scope.
+- **The M6 placeholder `render.Decision` is now an alias for `access.Decision`.**
+  M3 promised this in a comment, and a comment is not a thing.
+
+- **`body_public` is no longer empty, so a page is findable by its prose.** It is
+  filled from `render.PublicText`: the page's own text with its unrevealed secrets
+  removed, as **plain text rather than markdown**, because the column is read by
+  the tokenizer and by nothing else — a markdown version would need the byte range
+  of every secret callout, and the tree does not carry one, so it would mean a
+  second parser for the same grammar. This is the case that has been "a missing
+  feature, in the safe direction" since M5, and it became safe to fill because
+  **the public search's rows are filtered by the read predicate**: every
+  principal who can reach a hit in this text may read the page, so the index holds
+  exactly what a reader of that page may read.
+- **A revealed secret stays in the public half.** §9 says a `[!SECRET]{.revealed}`
+  block is visible to everyone who can read the page, and every principal the
+  predicate admits for that page may read it — so stripping it would be removing
+  text the reader is entitled to. A *callout's title* is in neither half, because
+  a title is an attribute on the node rather than text in it.
+- A forbidden-substring test from a file on disk to a search result: the secret's
+  word is findable by nobody through the public path, and findable by the DM
+  through the private one — the second half being what makes the first mean
+  something, since an index with no secret text in it would also pass it.
+- **One parser, one lock, one path into it.** goldmark's `Parser` is shared by
+  every render, every link resolution and every secret extraction, and whether
+  that is safe is a fact about goldmark's internals that this project concluded by
+  reading them: goldmark documents nothing, and the field I suspected of being
+  per-parse state turns out to be written once inside a `sync.Once`. **So this is
+  defensive and the commit says so** — I could not provoke a failure with the lock
+  removed and eight goroutines at it, and claiming a data race I cannot show
+  would be exactly the kind of thing this changelog exists to prevent. What *is* a
+  real defect: the first version of the fix had two mutexes guarding one parser,
+  because the package-level pipeline **is** a `*Renderer`. There is now one lock
+  and one way in. The tests beside it pin the behaviour that is actually ours —
+  a secret is never in the public text and a render is never wrong about one,
+  however many goroutines are doing it.
+
+- **`render.Decision` is now `access.Decision`**, aliased rather than replaced with
+  a struct of our own. M3 shipped a placeholder with one field and a comment
+  promising this; a promise in a comment is not a thing. A one-field type of our
+  own would be a *second* answer to "may this principal see the secrets on this
+  page", and the whole of the renderer's safety is that there is one place that
+  answers it.
+- A test that puts a **decision straight from the resolver into a render** and
+  checks the bytes: a DM sees a `dm-only` page's secrets, a player sees none of
+  them *even when they own the page*, an owner sees their character page's
+  secrets, and nobody sees a `players` page's. Forbidden-substring over the raw
+  HTML, never a DOM.
+- **The cache key carries the one field of the decision that changes the bytes**
+  (`CanSeeSecrets`), and there is now a test for that narrowing rather than a
+  sentence in a comment: two decisions differing only in the read, edit and reveal
+  fields must render identically, and a field added later that *does* change what
+  is stripped is a field the key has to grow. A cache key missing that field is a
+  render made for a DM served to a player, and it is silent.
+
+- **The write side of the rights matrix: `UpsertPage` takes a principal.** A
+  read-only predicate with an open write path is a building with a locked front
+  door and an unlocked back one — a player who cannot read a page can still write
+  it, and the next sync indexes what they wrote and it appears in somebody else's
+  list. The check is in the store rather than in each handler, because the other
+  shape makes "the check that must not be forgotten" a line of code in a file
+  whose other job is turning a request into HTML.
+- **A refusal is `ErrNotAllowed` and deliberately not `ErrNotFound`.** A read must
+  not confirm that a page exists; a write is a request about a page the caller
+  already holds, and telling a player their link is dead sends them to the DM with
+  a different question. The asymmetry is the point.
+- **It checks ownership, not position, and says so.** A page whose
+  `owner_character_page_id` is empty is refused to a player, and one whose owner is
+  a character they are not bound to is refused. It does *not* check that the path
+  lies inside that character, because that is `internal/index`'s `OwnerOf` and
+  duplicating it here would be a second implementation of the same rule. The
+  residual is named in the file: a caller that supplied its own character as the
+  owner of a page elsewhere would be caught by the path check and not by this one.
+  No caller can do that today — the only writer is the sync, which reads as the DM,
+  and the player-facing one arrives with the editor.
+- **Reveal is a level change and only ever loosens one.** The owner may open their
+  own page's audience; a player may not *tighten* one, because a method that could
+  close a page is a method a player could use to make their own notes vanish from
+  the DM's page tree. `SetPageVisibility` reads the page as the DM and gates on the
+  write rule, so a principal who cannot read a page gets "you may not" rather than
+  "there is nothing here".
+- A gate that does not consult the resolver would be a third implementation of the
+  matrix, so the store's ownership question is the same one the predicate asks, and a
+  test checks that the gate and `access.For` agree on the same page.
+
+- **`internal/access`, the one place that answers "what may this principal do with
+  this page".** `For(p, page) Decision` is pure — no store, no clock — because the
+  rights matrix has 36 cells and the only way to be sure all 36 behave as
+  documented is to be able to write down all 36 and run them in a millisecond. Its
+  two arguments are the two facts the matrix uses, which is why they are not
+  `domain.Principal` and `domain.Page`: a resolver holding a campaign id has a
+  temptation to check it, and that check is a rule the store already applies to
+  every query.
+- **`TestForDecisionMatrix` writes every cell out by hand** — 24 of them: §8's two
+  principals, three audiences, two ownership states, two archived states.
+  Generated would have been a matrix and a generator, and when they disagree the
+  generator reads as authoritative, which is how a table of tests becomes a
+  restatement of the code. It **caught a disclosure in the resolver two minutes
+  after it was written**: the ownership shortcut was applied before the `dm-only`
+  check, so a player bound to a character page the DM had marked `dm-only` could
+  read it, edit it and see its secrets. §8 says `dm-only` is *absolute*, and the
+  only reason that is written down rather than implied is that somebody eventually
+  writes the matrix.
+- **`TestStoreReadPredicateMatchesResolver`, the named test this project has been
+  deferring since M5.** The SQL predicate and the Go resolver answer the same
+  question about the same matrix, and the two disagreeing is a leak in one
+  direction and a missing feature in the other, so the answer to "which one is
+  right" is that both are required to say the same thing. Thirty-six cells, §8's two
+  principals plus the row the matrix does not have, compared through both the read
+  scope and the stricter secret scope. It is worth more than the code it checks,
+  because it is the only place the matrix, the column default, `ON DELETE SET
+  NULL`, the archived rule and SQL's own NULL handling are compared against the
+  thing the documentation says.
 - **A player can now find their own character's secrets.** The private index was
   readable by the DM and by nobody else, so before this milestone a player's own
   character page's secrets were findable by nobody at all. A binding is what makes
@@ -393,6 +544,26 @@
   quoted on the way out as well, so `tag: :00` survives a round trip.
 
 ### Fixed
+- **An unauthenticated request could read the whole campaign.** The read
+  predicate's first clause was `p.visibility = 'players'` with no mention of the
+  principal, so a request that identified nobody — a session that could not be
+  found, a cookie that was never sent — passed it. An empty role is not `dm`, so
+  the rest of the clause never ran and every `players` page came back. The fix is
+  one conjunct: `? = 'player' AND p.visibility = 'players'`.
+  **`TestStoreReadPredicateMatchesResolver` found it**, in the first two of its 36
+  cells, on its first run — the SQL said yes and `access.For` said no. **The
+  specification writes the same clause**, so this is a correction to the spec as
+  well as to the code, and it is pinned in its own test
+  (`TestAnUnidentifiedRequestReadsNothing`) so that simplifying the audience test
+  back to a bare visibility check fails in one place.
+- **A `character:` key resolved to a page at `<slug>`** rather than at
+  `characters/<slug>` — an M4 bug, which M7 surfaced by using the answer as a page
+  id. Nothing could go wrong from it before: a wrong path only ever produced a "not
+  a page in this campaign" report for a page whose owner was perfectly fine, which
+  is noise. As a page id it is a character that is never owned, which is fail-closed
+  but still a bug — a player's spell sheet would be nobody's, and the report would
+  blame a page that does not exist. The spec is explicit that a character is a page
+  at `characters/<slug>` and both ways of naming one resolve to the same thing.
 
 - **A test fixture's table keys were long enough to make two Go versions
   disagree about the file.** `gofmt` aligns the values in a run of

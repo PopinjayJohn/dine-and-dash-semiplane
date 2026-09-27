@@ -92,6 +92,24 @@ type Page struct {
 	// the next milestone; recording it is this one. See ADR 0015.
 	Visibility Visibility
 
+	// OwnerCharacterPageID is the page id of the character this page belongs to,
+	// or empty for a page that belongs to nobody.
+	//
+	// It is a *page id* and not a slug, and that is the whole design. The read
+	// predicate asks a question about a page and answers it by joining, and a slug
+	// would put a second rule -- how a slug becomes a page -- inside the one place
+	// that must have exactly one.
+	//
+	// Every page under `characters/<slug>/` has the *character's own page* here,
+	// not itself. That is what makes ownership a property of a character rather
+	// than of a note somebody wrote about one, and it is the difference between
+	// "Alice may read her character's backstory" and "Alice may read exactly the
+	// one file she happens to be bound to".
+	//
+	// Empty means nobody owns it, which is the fail-closed reading: a
+	// `dm-and-owner` page with no owner is readable by DMs and by nobody else.
+	OwnerCharacterPageID string
+
 	// Frontmatter is the canonical YAML block with the fences removed and
 	// unknown keys preserved verbatim. It is text here on purpose: parsing it
 	// is the vault's job, and a serialisation round trip that drops a key the

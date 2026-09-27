@@ -119,15 +119,16 @@ func (s *Store) PageTargets(ctx context.Context, pageID string) (map[string][]st
 // exist -- two pages declaring the same alias -- is real and lives in the
 // vault; the tie is broken by path, so the same link always resolves to the
 // same page.
-func (s *Store) FindPageByAlias(ctx context.Context, campaignID, alias string) (domain.Page, bool, error) {
+func (s *Store) FindPageByAlias(ctx context.Context, campaignID, alias string, as domain.Principal) (domain.Page, bool, error) {
 	if strings.TrimSpace(alias) == "" {
 		return domain.Page{}, false, nil
 	}
 
-	query := targetLookupQuery()
+	sc := readable(campaignID, as)
+	query := targetLookupQuery(sc)
 
-	page, found, err := scanPageOptional(
-		s.read.QueryRowContext(ctx, query, campaignID, targetAlias, strings.TrimSpace(alias)))
+	page, found, err := scanPageOptional(s.read.QueryRowContext(ctx, query,
+		sc.argsAfter(campaignID, targetAlias, strings.TrimSpace(alias))...))
 	if err != nil {
 		return domain.Page{}, false, fmt.Errorf("looking up the alias %q in campaign %s: %w", alias, campaignID, err)
 	}
@@ -141,7 +142,7 @@ func (s *Store) FindPageByAlias(ctx context.Context, campaignID, alias string) (
 // is Obsidian's ambiguity — a vault with two `notes.md` resolves the same way
 // there — and ordering by path is here so the answer is at least the *same*
 // answer every time.
-func (s *Store) FindPageByName(ctx context.Context, campaignID, name string) (domain.Page, bool, error) {
+func (s *Store) FindPageByName(ctx context.Context, campaignID, name string, as domain.Principal) (domain.Page, bool, error) {
 	stem := nameStem(name)
 	if stem == "" {
 		return domain.Page{}, false, nil
@@ -150,10 +151,11 @@ func (s *Store) FindPageByName(ctx context.Context, campaignID, name string) (do
 	// The folding happens here, in Go, because strings.ToLower gets non-ASCII
 	// letters right and SQLite's LOWER() only folds ASCII -- so `Ölbach` would
 	// be indexed one way and searched for another.
-	query := targetLookupQuery()
+	sc := readable(campaignID, as)
+	query := targetLookupQuery(sc)
 
-	page, found, err := scanPageOptional(
-		s.read.QueryRowContext(ctx, query, campaignID, targetName, strings.ToLower(stem)))
+	page, found, err := scanPageOptional(s.read.QueryRowContext(ctx, query,
+		sc.argsAfter(campaignID, targetName, strings.ToLower(stem))...))
 	if err != nil {
 		return domain.Page{}, false, fmt.Errorf("looking up the file name %q in campaign %s: %w", name, campaignID, err)
 	}
@@ -203,12 +205,16 @@ func contains(haystack []string, needle string) bool {
 //
 // It is a function and not a constant because the column list is computed, and
 // the two lookups differ only in the kind and the target they pass.
-func targetLookupQuery() string {
-	return `SELECT ` + pageColumnsQualified("pages") + `
-		FROM pages JOIN page_targets ON page_targets.page_id = pages.id
+//
+// The pages table is aliased `p` because the read predicate is written against
+// that alias, and the alias is not cosmetic: it is what stops this query from
+// being the one page query in the package that filters nothing.
+func targetLookupQuery(sc scope) string {
+	return `SELECT ` + pageColumnsQualified() + `
+		FROM pages p JOIN page_targets ON page_targets.page_id = p.id
 		WHERE page_targets.campaign_id = ? AND page_targets.kind = ? AND page_targets.target = ?
-		  AND pages.is_deleted = 0
-		ORDER BY pages.path
+		  AND (` + sc.where + `)
+		ORDER BY p.path
 		LIMIT 1`
 }
 
@@ -238,10 +244,18 @@ func (s *Store) replaceNameTarget(ctx context.Context, tx *sql.Tx, campaignID, p
 // `campaign_id`, so an unqualified column list is an error SQLite reports at run
 // time: "ambiguous column name". Qualifying is only needed where the two are
 // joined, which is why the plain column list still exists.
-func pageColumnsQualified(table string) string {
+// pageColumnsQualified is the page column list, qualified.
+//
+// The alias is `p` and not a parameter, because the read predicate is written
+// against `p` and a query that joined pages under some other name would be the
+// one page query in this package that could not be filtered. That is the whole
+// reason this function stopped taking a table name: the constraint that the
+// alias is `p` is a property of every statement in the package, and a parameter
+// would let the next caller quietly break it.
+func pageColumnsQualified() string {
 	columns := strings.Split(pageColumns, ",")
 	for i, column := range columns {
-		columns[i] = table + "." + strings.TrimSpace(column)
+		columns[i] = "p." + strings.TrimSpace(column)
 	}
 	return strings.Join(columns, ", ")
 }

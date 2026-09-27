@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/text"
 )
 
 // The link graph and the rendered links must agree, and the only way to be sure
@@ -46,9 +45,7 @@ var pipeline = New()
 // page in this vault, and a row in the link graph pointing at it would point at
 // nothing.
 func LinksOf(body string) ([]LinkRef, error) {
-	source := []byte(body)
-
-	doc := pipeline.md.Parser().Parse(text.NewReader(source))
+	doc := parseWithPipeline(body)
 
 	return linksFromTree(doc)
 }

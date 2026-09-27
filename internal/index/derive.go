@@ -157,7 +157,16 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 
 	if owner, owned := OwnerOf(pagePath, doc); owned {
 		p.owner, p.owned = owner, true
-		p.ownerProblem = y.checkOwner(ctx, pagePath, doc, owner)
+		// The character's page *id*, which is what the read predicate joins on, and
+		// empty when the owner does not hold up.
+		//
+		// Empty is the fail-closed answer and it is worth being explicit that it is
+		// one: a `dm-and-owner` page whose character page could not be found has
+		// no owner, so the DM reads it and nobody else does, while the sync report
+		// says why. The alternative -- carrying the slug anyway and letting the
+		// predicate fail to join -- is the same answer by a longer route, and a
+		// slug in a column that is documented as a page id is a lie.
+		p.page.OwnerCharacterPageID, p.ownerProblem = y.checkOwner(ctx, pagePath, p.page.ID, doc, owner)
 	}
 	p.links = y.linksFor(ctx, p.page.ID, doc)
 	p.index = indexEntryFor(doc, p.page)
@@ -175,7 +184,7 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 // plan for a page the index has never seen has no id yet, and the write mints
 // one.
 func (y *Syncer) pageID(ctx context.Context, pagePath string) string {
-	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath)
+	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return ""
 	}
@@ -234,7 +243,7 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 		return false, nil
 	}
 
-	indexed, err := y.store.GetPageByID(ctx, p.page.ID)
+	indexed, err := y.store.GetPageByID(ctx, p.page.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return false, nil //nolint:nilerr // a failed read means "write it"
 	}
@@ -246,6 +255,7 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 		indexed.Title != p.page.Title ||
 		indexed.Type != p.page.Type ||
 		indexed.Visibility != p.page.Visibility ||
+		indexed.OwnerCharacterPageID != p.page.OwnerCharacterPageID ||
 		indexed.Frontmatter != p.page.Frontmatter ||
 		indexed.Body != p.page.Body ||
 		indexed.RendererVersion != p.page.RendererVersion {
@@ -288,22 +298,16 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 	return matched, nil
 }
 
-// indexEntryFor is what a search should find for a document.
-//
-// **BodyPublic is empty, and that is the state of the project rather than an
-// oversight.** The public index is fed from the body with its secrets replaced by
-// a marker, and working that out needs to know who may read the page, which is
-// the access-control milestone's question and not this one's. Until it can be
-// answered, the only safe value is the empty string: a body that reached the
-// public index with a secret in it is a disclosure, and a body that did not is a
-// missing feature. A page is findable by its title, its aliases, its tags and its
-// type today, and over its prose once the redaction lands. See ADR 0015.
-//
-// SecretText is filled in, because which text is secret is a *parsing* question
-// and the parser already answers it. So a DM can find their own secrets by
-// content from this milestone on, which is the feature ADR 0009 exists for.
 func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 	secretText, _ := render.SecretText(page.Body)
+
+	// The public half, which is empty until M7 and is no longer empty now.
+	//
+	// It is `render.PublicText`, not the body with the secrets removed as
+	// markdown, and the difference matters less than it looks: `body_public` is
+	// read by the tokenizer and by nothing else, so plain text loses nothing and
+	// saves a second parser for the same grammar.
+	public, _ := render.PublicText(page.Body)
 
 	return store.IndexEntry{
 		PageID:     page.ID,
@@ -311,7 +315,7 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 		Aliases:    doc.Aliases(),
 		Tags:       doc.Tags(),
 		Kind:       page.Type.String(),
-		BodyPublic: "",
+		BodyPublic: public,
 		SecretText: secretText,
 	}
 }
@@ -320,7 +324,11 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 // row, and it is called only with a plan that `isSettled` said was not already
 // there.
 func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
-	stored, err := y.store.UpsertPage(ctx, p.page)
+	// As the DM, which is what the sync *is*: it indexes the DM's own vault and
+	// has to write every page in it, including the `dm-only` ones. The store's
+	// write gate is for the other writers, and M9's editor is the one that will
+	// be refused.
+	stored, err := y.store.UpsertPage(ctx, p.page, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return outcome{}, fmt.Errorf("indexing %s: %w", p.path, err)
 	}
@@ -363,7 +371,7 @@ func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
 
 // archive archives one page's row, for a file that is no longer there.
 func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) {
-	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath)
+	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
 			// Nothing indexed and no file: a path that was never a page, which
@@ -407,7 +415,7 @@ func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
 
 // archiveMissing archives every indexed page whose file is gone.
 func (y *Syncer) archiveMissing(ctx context.Context, present map[string]bool) ([]string, error) {
-	pages, err := y.store.ListPages(ctx, y.campaign.ID)
+	pages, err := y.store.ListPages(ctx, y.campaign.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return nil, fmt.Errorf("listing the indexed pages of %s: %w", y.campaign.Slug, err)
 	}

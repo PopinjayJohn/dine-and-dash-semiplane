@@ -31,7 +31,7 @@ func TestResolverUsesObsidiansOrder(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash-town",
-	})
+	}, store.AsDM(campaign.ID))
 	if upsertErr != nil {
 		t.Fatalf("UpsertPage: %v", upsertErr)
 	}
@@ -45,7 +45,7 @@ func TestResolverUsesObsidiansOrder(t *testing.T) {
 		Title:       "Rivergate, the lower one",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash-nested",
-	}); err != nil {
+	}, store.AsDM(campaign.ID)); err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestAResolverIsForOneCampaign(t *testing.T) {
 			Title:       "Rivergate of " + campaign.Slug.String(),
 			Type:        domain.PageTypeLocation,
 			ContentHash: "hash-" + campaign.Slug.String(),
-		}); upsertErr != nil {
+		}, store.AsDM(campaign.ID)); upsertErr != nil {
 			t.Fatalf("UpsertPage: %v", upsertErr)
 		}
 	}
@@ -162,7 +162,7 @@ func TestTheResolverIsWhatTheRendererAsksFor(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestAnUnusableResolverResolvesNothing(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash",
-	}); err != nil {
+	}, store.AsDM(campaign.ID)); err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 

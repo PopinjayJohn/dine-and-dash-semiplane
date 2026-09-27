@@ -19,6 +19,17 @@ import (
 //     That is the one. It is why the decision is in the key and why a cache
 //     miss is always safe and a cache *hit* has to be earned.
 //
+// The decision is an `access.Decision` and the key carries **the one field of it
+// that changes the bytes**, `CanSeeSecrets`. That is a deliberate narrowing rather
+// than a simplification: the other three fields change what a *caller* may offer
+// -- a button, a reveal link, an edit box -- and none of them changes a byte of
+// this render, so keying on them would double the cache for no safety.
+//
+// It is also the place a new secret rule has to be looked at. If a future
+// `access.Decision` field could change what is stripped, the key needs it, and
+// the test that says so is `TestTheCacheKeyCarriesEveryFieldThatChangesTheBytes`
+// rather than a comment here.
+//
 // The path is in the key too, so that two pages with identical bodies -- two
 // stub pages a DM created from the same template -- get their own entries and
 // their links resolve against the right place. It costs a few bytes and it

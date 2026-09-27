@@ -80,7 +80,7 @@ func BenchmarkSearchIndex(b *testing.B) {
 	// The page rows are written once, outside the loop: what is measured is the
 	// index, not the row.
 	for _, entry := range entries {
-		if _, err := s.UpsertPage(ctx, benchPage(campaign.ID, entry)); err != nil {
+		if _, err := s.UpsertPage(ctx, benchPage(campaign.ID, entry), store.AsDM(campaign.ID)); err != nil {
 			b.Fatalf("UpsertPage: %v", err)
 		}
 	}
@@ -125,7 +125,7 @@ func BenchmarkSearch(b *testing.B) {
 
 	entries := benchEntries()
 	for _, entry := range entries {
-		stored, err := s.UpsertPage(ctx, benchPage(campaign.ID, entry))
+		stored, err := s.UpsertPage(ctx, benchPage(campaign.ID, entry), store.AsDM(campaign.ID))
 		if err != nil {
 			b.Fatalf("UpsertPage: %v", err)
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // The watcher's tests wait for the filesystem rather than for a duration, because
@@ -61,7 +62,7 @@ func TestWatchPicksUpAnEditMadeElsewhere(t *testing.T) {
 	go func() { done <- watcher.Run(watchCtx, func(r index.Report) { reports <- r }, nil) }()
 
 	waitFor(t, "the index to hold the edited page", func() bool {
-		page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate")
+		page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate", store.AsDM(syncer.Campaign().ID))
 		return err == nil && strings.Contains(page.Body, "half under water")
 	})
 
@@ -105,7 +106,7 @@ func TestWatchPicksUpANewPageAndANewDirectory(t *testing.T) {
 	writeVaultFile(t, vaultDir, page+".md", "---\ntitle: The Toll Keepers\n---\n\nA faction.\n")
 
 	waitFor(t, "a page in a new directory to be indexed", func() bool {
-		_, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, page)
+		_, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, page, store.AsDM(syncer.Campaign().ID))
 		return err == nil
 	})
 }
@@ -150,7 +151,7 @@ func TestWatchIgnoresWhatIsNotAPage(t *testing.T) {
 	writeVaultFile(t, vaultDir, "locations/thornford.md", "---\ntitle: Thornford\n---\n\nThe other town.\n")
 
 	waitFor(t, "the page to be indexed", func() bool {
-		_, getErr := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/thornford")
+		_, getErr := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/thornford", store.AsDM(syncer.Campaign().ID))
 		return getErr == nil
 	})
 
@@ -170,7 +171,7 @@ func TestWatchIgnoresWhatIsNotAPage(t *testing.T) {
 	}
 
 	// And nothing that is not a page ended up in the index at all.
-	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID)
+	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestWatchDoesNotTouchTheVault(t *testing.T) {
 	writeVaultFile(t, vaultDir, "locations/thornford.md", "---\ntitle: Thornford\n---\n\nThe other town.\n")
 
 	waitFor(t, "the index to hold the new page", func() bool {
-		_, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/thornford")
+		_, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/thornford", store.AsDM(syncer.Campaign().ID))
 		return err == nil
 	})
 

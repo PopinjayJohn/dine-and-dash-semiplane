@@ -111,7 +111,7 @@ func searchableCampaign(t *testing.T) (*store.Store, domain.Campaign, domain.Pri
 			Frontmatter: "title: " + fixture.title + "\n",
 			Body:        fixture.bodyPublic,
 			ContentHash: "hash-of-" + fixture.path,
-		})
+		}, store.AsDM(campaign.ID))
 		if upsertErr != nil {
 			t.Fatalf("UpsertPage(%q): %v", fixture.path, upsertErr)
 		}

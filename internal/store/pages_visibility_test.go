@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // A page's audience is a column now, and a column is a promise. These are the
@@ -38,7 +39,7 @@ func TestUpsertPageRecordsTheAudience(t *testing.T) {
 			given := page(c.ID)
 			given.Visibility = tt.given
 
-			stored, err := s.UpsertPage(ctx, given)
+			stored, err := s.UpsertPage(ctx, given, store.AsDM(c.ID))
 			if err != nil {
 				t.Fatalf("UpsertPage: %v", err)
 			}
@@ -53,7 +54,7 @@ func TestUpsertPageRecordsTheAudience(t *testing.T) {
 			// And the same answer comes back by path, by id, and in a list,
 			// because a column that is only right on one read path is a column
 			// somebody will use the other way round.
-			byPath, err := s.GetPage(ctx, c.ID, stored.Path)
+			byPath, err := s.GetPage(ctx, c.ID, stored.Path, store.AsDM(c.ID))
 			if err != nil {
 				t.Fatalf("GetPage: %v", err)
 			}
@@ -61,7 +62,7 @@ func TestUpsertPageRecordsTheAudience(t *testing.T) {
 				t.Errorf("GetPage returned the audience %q, want %q", byPath.Visibility, tt.want)
 			}
 
-			byID, err := s.GetPageByID(ctx, stored.ID)
+			byID, err := s.GetPageByID(ctx, stored.ID, store.AsDM(c.ID))
 			if err != nil {
 				t.Fatalf("GetPageByID: %v", err)
 			}
@@ -69,7 +70,7 @@ func TestUpsertPageRecordsTheAudience(t *testing.T) {
 				t.Errorf("GetPageByID returned the audience %q, want %q", byID.Visibility, tt.want)
 			}
 
-			pages, err := s.ListPages(ctx, c.ID)
+			pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 			if err != nil {
 				t.Fatalf("ListPages: %v", err)
 			}
@@ -98,7 +99,7 @@ func TestUpsertPageReplacesTheAudienceInPlace(t *testing.T) {
 
 	closed := page(c.ID)
 	closed.Visibility = domain.VisibilityDMOnly
-	updated, err := s.UpsertPage(ctx, closed)
+	updated, err := s.UpsertPage(ctx, closed, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}

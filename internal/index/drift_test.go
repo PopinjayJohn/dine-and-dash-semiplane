@@ -9,6 +9,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // drift is every way the index can stop describing the files, and each case here
@@ -44,7 +45,7 @@ func TestSyncRepairsInjectedDrift(t *testing.T) {
 					RendererVersion: page.RendererVersion,
 					CreatedAt:       page.CreatedAt,
 					UpdatedAt:       page.UpdatedAt,
-				}); err != nil {
+				}, store.AsDM(page.CampaignID)); err != nil {
 					t.Fatalf("damaging the row: %v", err)
 				}
 			},
@@ -88,7 +89,7 @@ func TestSyncRepairsInjectedDrift(t *testing.T) {
 					Title:       "Never existed",
 					Type:        domain.PageTypeNote,
 					ContentHash: "a-hash-for-a-file-that-is-not-there",
-				}); err != nil {
+				}, store.AsDM(syncer.Campaign().ID)); err != nil {
 					t.Fatalf("adding a phantom row: %v", err)
 				}
 			},
@@ -315,7 +316,7 @@ func TestReindexFullForgetsWhatTheFilesDoNotSay(t *testing.T) {
 		Title:       "Never existed",
 		Type:        domain.PageTypeNote,
 		ContentHash: "a-hash-for-a-file-that-is-not-there",
-	}); err != nil {
+	}, store.AsDM(syncer.Campaign().ID)); err != nil {
 		t.Fatalf("adding a phantom row: %v", err)
 	}
 
@@ -323,12 +324,12 @@ func TestReindexFullForgetsWhatTheFilesDoNotSay(t *testing.T) {
 		t.Fatalf("ReindexFull: %v", err)
 	}
 
-	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/never-existed"); err == nil {
+	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/never-existed", store.AsDM(syncer.Campaign().ID)); err == nil {
 		t.Error("a page the vault does not have survived a full reindex")
 	}
 
 	// And the rest of the campaign is still there.
-	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID)
+	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -364,7 +365,7 @@ func TestAReindexOnAFreshDatabaseIsJustASync(t *testing.T) {
 func indexedPage(t *testing.T, ctx context.Context, syncer *index.Syncer, pagePath string) domain.Page {
 	t.Helper()
 
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath)
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage(%q): %v", pagePath, err)
 	}
@@ -389,7 +390,7 @@ func corruptBody(t *testing.T, ctx context.Context, syncer *index.Syncer, page d
 		RendererVersion: page.RendererVersion,
 		CreatedAt:       page.CreatedAt,
 		UpdatedAt:       time.Time{},
-	}); err != nil {
+	}, store.AsDM(syncer.Campaign().ID)); err != nil {
 		t.Fatalf("corrupting the row: %v", err)
 	}
 }

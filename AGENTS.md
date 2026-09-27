@@ -58,27 +58,44 @@ re-litigate one without a new ADR that supersedes it.
   arguments and a store and is not testable with a server — see
   [ADR 0016](docs/adr/0016-auth-decides-and-returns-values.md). The cookie's
   attributes are ADR 0003's and are M8's.
-- **A page's audience is recorded; it is still not enforced on every read.**
-  `pages.visibility` exists, the sync writes it, and the two *search* queries
-  filter on it. **Every other page-returning store method is still
-  campaign-scoped and unfiltered** — `GetPage`, `GetPageByID`, `ListPages`,
-  `Backlinks`, the target lookups. That is correct only while nothing outside the
-  package can reach them, and M7 gives each of them a principal. See
-  [ADR 0015](docs/adr/0015-search-records-the-audience.md).
+- **M7 — Access control is on `m7-access-control`.** `internal/access` is the one
+  place that answers "what may this principal do with this page", and `For` is
+  pure — no store, no clock — because the rights matrix has 36 cells and the only
+  way to be sure all 36 behave as documented is to write down all 36 and run them
+  in a millisecond. Every page-returning store method takes a principal,
+  `UpsertPage` does too, and `render.Decision` *is* `access.Decision`.
+- **The read predicate's ownership test is real, and it correlates on the page's
+  *owner*** — `pc.character_page_id = p.owner_character_page_id`, the spec's form.
+  The version M6 shipped correlated on the page itself, because the owner column
+  did not exist yet, and it said a player may read the one file they are bound to
+  and not the twenty notes under it.
+- **The audience test requires a role.** `? = 'player' AND p.visibility =
+  'players'`, not `p.visibility = 'players'` alone. Without the conjunct a request
+  that identified nobody read the whole campaign, and
+  `TestStoreReadPredicateMatchesResolver` found it on its first run. **The spec
+  wrote the same clause**; §8 now says otherwise.
+- **The write gate is in the store and checks ownership, not position.** It is in
+  the store because a handler can forget a line and a signature cannot. It checks
+  ownership because that is a question about two tables; the *position* half of
+  §8's rule is `internal/index`'s `OwnerOf` and duplicating it would be a third
+  implementation of one rule. The residual is named in `writes.go` and belongs to
+  M9's editor. See [ADR 0017](docs/adr/0017-the-write-gate-lives-in-the-store.md).
+- **A write refusal is `ErrNotAllowed` and deliberately not `ErrNotFound`.** A read
+  must not confirm a page exists; a write is a request about a page the caller
+  already holds.
 - **The read predicate's ownership test is real.** It was `1 = 0` for two
   milestones, because no principal owned a page; it is now an `EXISTS` over
   `principal_characters`, correlated on the page. The correlation is the whole of
   it — a subquery that compared against the *campaign* would admit every player to
   every `dm-and-owner` page in it. Never widen that file without reading its
   header.
-- **`pages.body_public` is empty and stays empty until M7.** It is what the public
-  index is fed from, so a value in it is a value anybody can find. Working out
-  which text a *principal* may be shown needs access control; until that exists the
-  only safe value is the empty string. So a page is findable by title, aliases,
-  tags and type, and not by prose — a missing feature, in the safe direction.
-  **The secret index is populated**: which text is secret is a *parsing* question,
-  so a DM can find their own secrets by content, and a player bound to a character
-  page can find theirs.
+- **`pages.body_public` is filled, so a page is findable by its prose.** It is
+  `render.PublicText`: the page's text with its unrevealed secrets removed, as
+  plain text rather than markdown, because the column is read by the tokenizer and
+  by nothing else. A *revealed* secret stays — §9 says it is visible to everyone
+  who can read the page, and the public search's rows are filtered by the read
+  predicate, so every principal who can reach a hit may read it. A callout's
+  *title* is in neither half: it is an attribute on the node, not text in it.
 - **Nothing a caller typed is concatenated into SQL.** Every query clause is
   quoted with FTS5's own string quoting and the expression is a bound parameter.
   There is a corpus and a fuzzer for it, and a test that strips the literals back
@@ -121,14 +138,12 @@ re-litigate one without a new ADR that supersedes it.
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M7 — Access control**. The `access` package, `page_acl_read`
-over the predicate that now exists, **`body_public` redaction** — which is what
-makes a page findable by its prose — the reveal page and block actions, the Secrets
-panel, and **a principal on every page-returning store method**, which is the
-other half of invariant 3. Its key tests are the §14 access table and
-`TestStoreReadPredicateMatchesResolver`, which is the test that finally compares
-the SQL this project has been writing against the Go resolver it has been
-describing.
+Next milestone: **M8 — Web shell**. The chi router, the layouts, the Datastar
+components, the SSE hub, `/_/healthz`, and **the wiring for everything M6 and M7
+built** — the cookie attributes ADR 0003 has been holding, the login and redeem
+routes, and the first `TestSecretStrippedFromAllSurfaces`, which walks the
+player-reachable routes and asserts a canary is absent from each raw response
+body. It has no plugins yet; M11 brings the plugin host.
 
 ## Non-negotiable invariants
 

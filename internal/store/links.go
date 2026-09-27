@@ -69,14 +69,26 @@ func (s *Store) LinksFrom(ctx context.Context, pageID string) ([]domain.PageLink
 	return links, nil
 }
 
-// Backlinks returns the links that point at a page, ordered by source page.
+// Backlinks returns the links that point at a page, from the pages as may read,
+// ordered by source page.
+//
+// The filter is on the **source**, and that is the part worth reading twice. A
+// backlink says "some page mentions this one", and if the some page is a
+// `dm-only` session log then the backlink is a disclosure: it hands a player a
+// path, and a path is a thing they can then try to read and be told 404 about.
+//
 // They are ordered by id because the graph stores ids; the page tree and the
 // backlink list sort by title for display, which is the view's decision rather
 // than the store's.
-func (s *Store) Backlinks(ctx context.Context, pageID string) ([]domain.PageLink, error) {
-	const query = `SELECT ` + linkColumns + ` FROM page_links WHERE dst_page_id = ? ORDER BY src_page_id, dst_path`
+func (s *Store) Backlinks(ctx context.Context, pageID string, as domain.Principal) ([]domain.PageLink, error) {
+	sc := readable(as.CampaignID, as)
 
-	links, err := s.readLinks(ctx, query, "reading the backlinks of page "+pageID, pageID)
+	query := `SELECT ` + linkColumns + ` FROM page_links
+		JOIN pages p ON p.id = page_links.src_page_id
+		WHERE page_links.dst_page_id = ? AND (` + sc.where + `)
+		ORDER BY page_links.src_page_id, page_links.dst_path`
+
+	links, err := s.readLinks(ctx, query, "reading the backlinks of page "+pageID, sc.argsAfter(pageID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +108,11 @@ func (s *Store) LinksToPath(ctx context.Context, path string) ([]domain.PageLink
 	return links, nil
 }
 
-func (s *Store) readLinks(ctx context.Context, query, what string, arg any) ([]domain.PageLink, error) {
-	rows, err := s.read.QueryContext(ctx, query, arg)
+// readLinks runs a link query. The arguments are variadic because a filtered
+// query has more than the one the unfiltered ones have, and a helper that took
+// `[]any` would be a helper every caller had to build a slice for.
+func (s *Store) readLinks(ctx context.Context, query, what string, args ...any) ([]domain.PageLink, error) {
+	rows, err := s.read.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", what, err)
 	}

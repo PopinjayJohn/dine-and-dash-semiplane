@@ -3,6 +3,8 @@ package index
 import (
 	"context"
 	"fmt"
+
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // Drift is the index and the files disagreeing. It is a state, not an error:
@@ -94,7 +96,7 @@ func (y *Syncer) checkPass(ctx context.Context, report *Report, sets *reportSets
 
 	// A page the index has and the vault does not would be archived by a sync,
 	// and Check has to say so.
-	indexed, err := y.store.ListPages(ctx, y.campaign.ID)
+	indexed, err := y.store.ListPages(ctx, y.campaign.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return changed, fmt.Errorf("listing the indexed pages of %s: %w", y.campaign.Slug, err)
 	}
@@ -140,7 +142,7 @@ func (y *Syncer) ReindexFull(ctx context.Context) (Report, error) {
 	// full reindex is the moment to stop making it. The rows go with them, by
 	// cascade -- revisions, links and targets -- which is right, because they
 	// were all written for files this campaign no longer has.
-	pages, err := y.store.ListPages(ctx, y.campaign.ID)
+	pages, err := y.store.ListPages(ctx, y.campaign.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return report, fmt.Errorf("listing the indexed pages of %s: %w", y.campaign.Slug, err)
 	}

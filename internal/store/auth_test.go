@@ -603,7 +603,7 @@ func anotherPage(t *testing.T, s *store.Store, campaignID, path string) domain.P
 	p.Path = path
 	p.Title = strings.ToUpper(path[:1]) + path[1:]
 
-	created, err := s.UpsertPage(context.Background(), p)
+	created, err := s.UpsertPage(context.Background(), p, store.AsDM(campaignID))
 	if err != nil {
 		t.Fatalf("UpsertPage(%q): %v", path, err)
 	}

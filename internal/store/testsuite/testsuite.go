@@ -39,10 +39,18 @@ type API interface {
 	UpdateCampaign(ctx context.Context, c domain.Campaign) (domain.Campaign, error)
 
 	// Pages.
-	UpsertPage(ctx context.Context, p domain.Page) (domain.Page, error)
-	GetPage(ctx context.Context, campaignID, path string) (domain.Page, error)
-	GetPageByID(ctx context.Context, id string) (domain.Page, error)
-	ListPages(ctx context.Context, campaignID string) ([]domain.Page, error)
+	//
+	// **Every read takes a principal**, and that is the contract rather than a
+	// convenience: invariant 3 says no page-returning method may exist without
+	// the access predicate, and a signature that can be called without naming a
+	// principal is a method whose ACL is somebody's decision per call site. A
+	// caller that wants everything says so with `asDM()`; a caller that has
+	// not identified anybody says so with `store.Nobody()`. Between them they are
+	// the two answers, and the middle of that range is the interesting part.
+	UpsertPage(ctx context.Context, p domain.Page, as domain.Principal) (domain.Page, error)
+	GetPage(ctx context.Context, campaignID, path string, as domain.Principal) (domain.Page, error)
+	GetPageByID(ctx context.Context, id string, as domain.Principal) (domain.Page, error)
+	ListPages(ctx context.Context, campaignID string, as domain.Principal) ([]domain.Page, error)
 	DeletePage(ctx context.Context, id string) error
 
 	// Revisions.
@@ -53,7 +61,7 @@ type API interface {
 	// The link graph.
 	ReplaceLinks(ctx context.Context, srcPageID string, links []domain.PageLink) error
 	LinksFrom(ctx context.Context, pageID string) ([]domain.PageLink, error)
-	Backlinks(ctx context.Context, pageID string) ([]domain.PageLink, error)
+	Backlinks(ctx context.Context, pageID string, as domain.Principal) ([]domain.PageLink, error)
 	LinksToPath(ctx context.Context, path string) ([]domain.PageLink, error)
 
 	// The names a page answers to, which is what a wiki link resolves by after
@@ -61,8 +69,8 @@ type API interface {
 	// projection had to answer one.
 	ReplacePageAliases(ctx context.Context, pageID string, aliases []string) error
 	PageTargets(ctx context.Context, pageID string) (map[string][]string, error)
-	FindPageByAlias(ctx context.Context, campaignID, alias string) (domain.Page, bool, error)
-	FindPageByName(ctx context.Context, campaignID, name string) (domain.Page, bool, error)
+	FindPageByAlias(ctx context.Context, campaignID, alias string, as domain.Principal) (domain.Page, bool, error)
+	FindPageByName(ctx context.Context, campaignID, name string, as domain.Principal) (domain.Page, bool, error)
 
 	// The two search indexes, added in M5. Both halves of a page's text are
 	// handed over rather than derived, because working out which half a
@@ -113,6 +121,23 @@ var (
 	NotFound = store.ErrNotFound
 	Conflict = store.ErrConflict
 )
+
+// asDM is the principal a contract case reads as when it is checking something
+// that is not about access control. It takes a campaign, and that is not
+// decoration: `GetPageByID` and `Backlinks` have no campaign of their own and
+// scope by the principal's, so a campaign-less `asDM()` scopes those two reads
+// to nothing. The suite is where that was found, twice, and it is why the
+// argument is there.
+//
+// The suite is the *consumer* of the store, so it cannot import the store to ask
+// it for a principal; and a suite that could would be a suite whose expectations
+// depended on the implementation it is checking. The value is three lines long
+// and the two rules it encodes are the whole of it: a case about the store's
+// behaviour reads as the DM, and a case about access control names the role it
+// is about.
+func asDM(campaignID string) domain.Principal {
+	return domain.Principal{ID: "as-the-dm", CampaignID: campaignID, Role: domain.RoleDM}
+}
 
 // Factory builds a store for one test, already migrated and ready to use. It
 // registers its own cleanup with the *testing.T it is given, so a subtest gets
