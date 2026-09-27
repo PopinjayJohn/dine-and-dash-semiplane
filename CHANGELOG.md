@@ -10,31 +10,7 @@ it said on the day it shipped.
 
 ## [Unreleased]
 
-### Fixed
-
-- **`wiki import obsidian` left the campaign's database open for the rest of the
-  process.** It opened a store to check the campaign existed and wrote
-  `if _, _, openErr := ...`, which discards the store and drops the only handle that
-  closes it. On Linux and macOS that is invisible — unlinking an open file is legal,
-  so every local run and two of the three CI legs were green — and on Windows it makes
-  the data directory **impossible to move or delete**, because a held file cannot be
-  renamed. Windows CI found it as `TempDir RemoveAll cleanup: unlinkat
-  campaigns.db: The process cannot access the file`, which is in the runner's own
-  cleanup and near no assertion at all.
-- **A test for that class, on the two platforms that can see it.**
-  `TestACommandDoesNotLeaveTheDatabaseOpen` asks whether any of this process's
-  descriptors point into a data directory after a command: `/proc/self/fd` on Linux,
-  and a reversible rename on Windows, which is the same mechanism the failure used.
-  It skips on macOS, where neither works, and says so rather than passing quietly.
-  It has `import` in its list because **the first version did not, and that version
-  passed while the leak was still there** — a leak test that omits the command that
-  leaked is a leak test about a different command.
-- **The certificate's `0600` is no longer asserted on Windows**, where
-  `os.WriteFile`'s mode is a request and `FileMode.Perm()` reports `0666` for
-  anything writable. The rest of that test — that the file is written at all, and that
-  the certificate it holds is the same one next time — is the property, and it is
-  still asserted everywhere. The check is a `runtime.GOOS` rather than a skipped test
-  for that reason.
+_Nothing yet. See `docs/spec.md` section 16 for what comes next._
 
 ## [0.1.0] - 2026-09-27
 
@@ -2411,3 +2387,43 @@ breakdown and `docs/adr/` has the decisions._
 
 [Unreleased]: https://github.com/popinjayjohn/dine-and-dash-semiplane/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/popinjayjohn/dine-and-dash-semiplane/releases/tag/v0.1.0
+
+### Fixed
+
+- **`wiki import obsidian` left the campaign's database open for the rest of the
+  process.** It opened a store to check the campaign existed and wrote
+  `if _, _, openErr := ...`, which discards the store and drops the only handle that
+  closes it. On Linux and macOS that is invisible — unlinking an open file is legal,
+  so every local run and two of the three CI legs were green — and on Windows it makes
+  the data directory **impossible to move or delete**, because a held file cannot be
+  renamed. Windows CI found it as `TempDir RemoveAll cleanup: unlinkat
+  campaigns.db: The process cannot access the file`, which is in the runner's own
+  cleanup and near no assertion at all.
+- **A test for that class, on the two platforms that can see it.**
+  `TestACommandDoesNotLeaveTheDatabaseOpen` asks whether any of this process's
+  descriptors point into a data directory after a command: `/proc/self/fd` on Linux,
+  and a reversible rename on Windows, which is the same mechanism the failure used.
+  It skips on macOS, where neither works, and says so rather than passing quietly.
+  It has `import` in its list because **the first version did not, and that version
+  passed while the leak was still there** — a leak test that omits the command that
+  leaked is a leak test about a different command.
+- **The certificate's `0600` is no longer asserted on Windows**, where
+  `os.WriteFile`'s mode is a request and `FileMode.Perm()` reports `0666` for
+  anything writable. The rest of that test — that the file is written at all, and that
+  the certificate it holds is the same one next time — is the property, and it is
+  still asserted everywhere. The check is a `runtime.GOOS` rather than a skipped test
+  for that reason.
+- **`release.yml` named three actions that do not exist, and a `print-version` target
+  that did not.** The SHAs were written from memory — precisely what `ci.yml`'s own
+  header argues against, and worse here, because this job holds `contents: write` and
+  is triggered by a tag. `make -s print-version` is the release job's *first* step and
+  had been removed by the commit that replaced the first `dist` recipe with a script.
+  **Both were found by dry-running the job's steps locally before pushing a tag**,
+  which is the only reason either is a fix rather than a deploy that does not start:
+  `make check` can never catch either, because a workflow is not a Go file and a
+  missing make target is only visible to something that runs it.
+- **The release job uses the `gh` CLI and no third-party action at all.** The first
+  draft published through `softprops/action-gh-release`, pinned to another SHA written
+  from memory. `gh` is preinstalled on GitHub-hosted runners, so this job has **no
+  third-party code in it holding write permission** — a stronger property than any
+  pin achieves, because there is nothing to audit when there is nothing.
