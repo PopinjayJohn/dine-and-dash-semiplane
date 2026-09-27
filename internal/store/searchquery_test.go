@@ -28,7 +28,7 @@ import (
 func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 	t.Parallel()
 
-	dm := domain.Principal{ID: "p-1", Role: domain.RoleDM}
+	dm := domain.Principal{ID: "p-1", CampaignID: "campaign-1", Role: domain.RoleDM}
 	public := publicIndexQuery.withScope(readable("campaign-1", dm))
 	secret := secretIndexQuery.withScope(readableWithSecrets("campaign-1", dm))
 
@@ -44,6 +44,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE pages_fts MATCH ? AND (p.is_deleted = 0
 		AND p.campaign_id = ?
+		AND p.campaign_id = ?
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) )))
@@ -56,6 +57,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		FROM pages_fts
 		JOIN pages p ON p.id = pages_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
+		AND p.campaign_id = ?
 		AND p.campaign_id = ?
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
@@ -70,6 +72,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE pages_secrets_fts MATCH ? AND (p.is_deleted = 0
 		AND p.campaign_id = ?
+		AND p.campaign_id = ?
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
 				OR ( ? = 'player' AND p.visibility = 'dm-and-owner' AND EXISTS (SELECT 1 FROM principal_characters pc WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id) ))
@@ -83,6 +86,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 		FROM pages_secrets_fts
 		JOIN pages p ON p.id = pages_secrets_fts.page_id
 		WHERE 1 = 1 AND (p.is_deleted = 0
+		AND p.campaign_id = ?
 		AND p.campaign_id = ?
 		AND (? = 'player' AND p.visibility = 'players'
 				OR ? = 'dm'
@@ -108,7 +112,7 @@ func TestSearchStatementsAreTheFourKnownOnes(t *testing.T) {
 func TestSearchStatementsCarryTheirReadScope(t *testing.T) {
 	t.Parallel()
 
-	dm := domain.Principal{ID: "p-1", Role: domain.RoleDM}
+	dm := domain.Principal{ID: "p-1", CampaignID: "campaign-1", Role: domain.RoleDM}
 
 	public := publicIndexQuery.withScope(readable("campaign-1", dm)).statement(true)
 	secret := secretIndexQuery.withScope(readableWithSecrets("campaign-1", dm)).statement(true)
@@ -138,7 +142,7 @@ func TestSearchStatementsCarryTheirReadScope(t *testing.T) {
 func TestFilteredSearchStatements(t *testing.T) {
 	t.Parallel()
 
-	dm := domain.Principal{ID: "p-1", Role: domain.RoleDM}
+	dm := domain.Principal{ID: "p-1", CampaignID: "campaign-1", Role: domain.RoleDM}
 	parsed, err := search.Parse(`tag:hub tag:revealed type:npc is:players toll "a phrase"`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -201,12 +205,15 @@ func TestFilteredSearchStatements(t *testing.T) {
 	if got := len(public.filterArgs()) + 1 /* the match */ + len(public.sc.args); got != placeholders {
 		t.Errorf("the statement has %d placeholders and %d arguments", placeholders, got)
 	}
-	// The match, the campaign, then the audience test's five -- the role three
-	// times and the principal -- then the tags, the type, the audience filter and
-	// the limit: ten, in that order. The count is the test: a scope whose
-	// arguments and placeholders disagree is a driver error on a player's
-	// request rather than a failed test here.
-	if got, want := strings.Count(public.statement(true), "?"), 10; got != want {
+	// The match, the campaign asked about, the campaign the principal is of, then
+	// the audience test's five -- the role three times and the principal -- then
+	// the tags, the type, the audience filter and the limit: eleven, in that
+	// order. The count is the test: a scope whose arguments and placeholders
+	// disagree is a driver error on a player's request rather than a failed test
+	// here. The tenancy conjunct is why it is eleven and was ten, and the count
+	// is written out rather than computed so that the next conjunct has to be
+	// added to this sentence as well.
+	if got, want := strings.Count(public.statement(true), "?"), 11; got != want {
 		t.Errorf("a fully filtered statement has %d placeholders, want %d", got, want)
 	}
 }

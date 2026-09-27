@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The read predicate now asks whose campaign the principal is.** It always
+  asked which campaign the *caller* wanted, and never whether the caller belongs
+  to it, so a `GetPage` for a page in Thornford made with a session for the
+  Blackwater was answered by the role clause alone: a player got every
+  `players` page in a campaign they have no link to, and a DM got every page in
+  it. A share link is scoped to one campaign and so is a principal — the column
+  is NOT NULL, which is why `store.AsDM` takes a campaign — and nothing between
+  the cookie and the predicate connected the two.
+- **Nothing had ever asked, because every caller so far passed the right pair of
+  arguments.** The sync engine is the only thing that called a page-returning
+  method before M8, and it passes `AsDM(campaignID)` and is therefore always of
+  the campaign it is reading. A predicate that is correct for callers who get
+  their arguments right is a predicate one handler away from a disclosure, and
+  the first caller with a real principal is the HTTP layer.
+- **The two campaign conjuncts are the same column and are not a
+  redundancy.** The first is the campaign the caller asked about, which every
+  page query needs; the second is the tenancy test. They are written out
+  separately so that the second stays visible: a conjunct left out of a
+  predicate is a predicate that is correct until somebody reads it.
+- **Tenancy is not authorisation, so it is not in `access.For`.** The rights
+  matrix is about who may read a page, and "is this person a member of this
+  campaign" is a question whose answer is always the same, not 36 cells.
+  `TestStoreReadPredicateMatchesResolver` is unaffected and must stay unaffected:
+  the principals it builds are rows in that campaign, so the conjunct is a
+  constant `true` across all 36.
+- **A dozen test fixtures were building principals that cannot exist.** Every one
+  of them was a `domain.Principal` with a role and no campaign, which the schema
+  refuses to store; the new conjunct is what made that visible rather than a
+  matter of taste. `TestStoreContract`'s "a path in two campaigns is two pages"
+  was the clearest of them: it built its DM from a *page* id.
+- The four golden search statements gained the conjunct, and the placeholder
+  count is written out as a sentence rather than computed, so the next conjunct
+  has to be added to the sentence too.
+
 ### Added
 
 - **`web/`: the static half of the front end, embedded.** The stylesheet and the

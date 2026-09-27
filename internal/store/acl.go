@@ -108,8 +108,37 @@ const aclAudience = `? = 'player' AND p.visibility = 'players'
 const aclOwnership = `EXISTS (SELECT 1 FROM principal_characters pc` +
 	` WHERE pc.principal_id = ? AND pc.character_page_id = p.owner_character_page_id)`
 
-// The common prefix: a live page, in this campaign.
+// The common prefix: a live page, in the campaign the caller asked about, in the
+// campaign the principal belongs to.
+//
+// **The two campaign conjuncts are the same column and they are not a
+// redundancy.** The first answers "is this page in the campaign we were asked
+// about", which every page query in this package needs. The second answers "is
+// the caller of *that* campaign at all", and nothing else in the predicate asks
+// it: the role conjunct says a DM may read everything, and the `players` clause
+// says a player may read every public page, and neither of those knows which
+// campaign the principal is a principal of.
+//
+// So the shape that was here until M8 was a `GetPage(ctx, "thornford", path,
+// playerOfBlackwater)` returning a `players` page from Thornford. A share link
+// is scoped to one campaign (ADR 0003) and so is a principal -- the column is
+// NOT NULL, which is why `AsDM` takes a campaign -- and nothing between the
+// cookie and this clause connected the two. Nothing had ever asked: every caller
+// so far has been the sync engine, which passes `AsDM(campaignID)` and is
+// therefore always of the campaign it is reading. The first caller with a real
+// principal is the HTTP layer, and a predicate that is only correct for callers
+// who get their arguments right is a predicate one handler away from a
+// disclosure.
+//
+// Tenancy is not authorisation, so this is deliberately *not* in `access.For`:
+// the rights matrix is about who may read a page, and "is this person a member
+// of this campaign" is a question with an answer that is always the same -- yes
+// or no -- rather than 36 cells. `TestStoreReadPredicateMatchesResolver` is
+// unaffected by it and must stay unaffected: the principals it builds are
+// persistent rows in that campaign, so the conjunct is a constant `true` across
+// all 36 cells.
 const aclScopeBase = `p.is_deleted = 0
+		AND p.campaign_id = ?
 		AND p.campaign_id = ?`
 
 // aclScope admits the pages a principal may read.
@@ -145,33 +174,36 @@ type scope struct {
 // readable returns the scope that admits what as may read.
 //
 // The arguments are in the order the placeholders appear in the clause, which is
-// the only order that works: campaign, then the role three times, then the
-// principal. The role is repeated because `aclAudience` asks about it twice —
-// once for `players` and once for `dm-and-owner` — and a single comparison would
-// have been the version that admitted a `players` page to a request that
-// identified nobody.
+// the only order that works: the campaign asked about, then the campaign the
+// principal is of, then the role three times, then the principal. The role is
+// repeated because `aclAudience` asks about it twice — once for `players` and
+// once for `dm-and-owner` — and a single comparison would have been the version
+// that admitted a `players` page to a request that identified nobody.
 func readable(campaignID string, as domain.Principal) scope {
 	return scope{
 		where: aclScope,
-		args:  []any{campaignID, as.Role.String(), as.Role.String(), as.Role.String(), as.ID},
+		args: []any{
+			campaignID, as.CampaignID,
+			as.Role.String(), as.Role.String(), as.Role.String(), as.ID,
+		},
 	}
 }
 
 // readableWithSecrets returns the scope that admits what as may read, *and* whose
 // secrets they may see.
 //
-// Seven arguments, in the order the placeholders appear: campaign; then the role
-// three times and the principal, for the audience test; then the role and the
-// principal again, for the secret test. The repetition is the cost of composing
-// one audience test into two scopes, and it is why
-// `TestScopesHaveOneArgumentPerPlaceholder` walks both rather than trusting the
-// count — a wrong count here is a driver error on a player's request rather than
-// a failed test.
+// Eight arguments, in the order the placeholders appear: the campaign asked
+// about; the campaign the principal is of; then the role three times and the
+// principal, for the audience test; then the role and the principal again, for
+// the secret test. The repetition is the cost of composing one audience test into
+// two scopes, and it is why `TestScopesHaveOneArgumentPerPlaceholder` walks both
+// rather than trusting the count — a wrong count here is a driver error on a
+// player's request rather than a failed test.
 func readableWithSecrets(campaignID string, as domain.Principal) scope {
 	return scope{
 		where: aclSecretScope,
 		args: []any{
-			campaignID,
+			campaignID, as.CampaignID,
 			as.Role.String(), as.Role.String(), as.Role.String(), as.ID,
 			as.Role.String(), as.ID,
 		},

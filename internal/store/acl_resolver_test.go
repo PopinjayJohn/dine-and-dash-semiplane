@@ -281,9 +281,122 @@ func TestAnUnidentifiedRequestReadsNothing(t *testing.T) {
 
 	// A player still reads it, which is the other half: the fix is a conjunct
 	// and not a wall.
-	player := domain.Principal{ID: "p-1", Role: domain.RolePlayer}
+	player := domain.Principal{ID: "p-1", CampaignID: campaign.ID, Role: domain.RolePlayer}
 	paths := scopePaths(t, s, readable(campaign.ID, player))
 	if !slices.Contains(paths, "locations/rivergate") {
 		t.Errorf("a player read %v, want the players' page", paths)
+	}
+}
+
+// TestAPrincipalOfAnotherCampaignReadsNothing is the tenancy half of the read
+// predicate, and it is the half that was missing until M8 put a real principal in
+// front of it.
+//
+// A principal belongs to one campaign — the column is NOT NULL, and a share link
+// is scoped to one campaign (ADR 0003) — so asking for a page in campaign B while
+// holding a session for campaign A is not a question about rights. It is a
+// question with two answers, and the predicate was answering "whatever the role
+// clause says" for both of them. A player of the Blackwater could have read
+// every `players` page in Thornford, and a DM of the Blackwater every page in it,
+// by naming a campaign they had no link to.
+//
+// Every caller up to here had been the sync engine, which passes
+// `AsDM(campaignID)` and is therefore always of the campaign it is reading, so
+// the hole was only reachable by a caller with a real principal — which is the
+// HTTP layer, and only from M8. A predicate that is correct for callers who pass
+// the right pair of arguments is a predicate one handler away from a disclosure.
+func TestAPrincipalOfAnotherCampaignReadsNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	first, err := s.CreateCampaign(ctx, domain.Campaign{Slug: "blackwater", Name: "The Blackwater", VaultDir: "vault/blackwater"})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	second, err := s.CreateCampaign(ctx, domain.Campaign{Slug: "thornford", Name: "Thornford", VaultDir: "vault/thornford"})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// One page in the second campaign, readable by every player of it.
+	thornfordPage := domain.Page{
+		CampaignID:  second.ID,
+		Path:        "locations/thornford",
+		Title:       "Thornford",
+		Type:        domain.PageTypeLocation,
+		Visibility:  domain.VisibilityPlayers,
+		Frontmatter: "title: Thornford\n",
+		Body:        "A town in a campaign nobody here has a link to.\n",
+		ContentHash: "hash-of-thornford",
+	}
+	if _, upsertErr := s.UpsertPage(ctx, thornfordPage, AsDM(second.ID)); upsertErr != nil {
+		t.Fatalf("UpsertPage: %v", upsertErr)
+	}
+
+	tests := map[string]struct {
+		principal domain.Principal
+		want      []string
+	}{
+		"a player of that campaign reads its players' pages": {
+			principal: domain.Principal{ID: "p-thornford", CampaignID: second.ID, Role: domain.RolePlayer},
+			want:      []string{"locations/thornford"},
+		},
+		"a player of another campaign reads none of them": {
+			principal: domain.Principal{ID: "p-blackwater", CampaignID: first.ID, Role: domain.RolePlayer},
+			want:      nil,
+		},
+		// The DM row is the one that looks like it could not fail: `? = 'dm'`
+		// admits every page of the campaign, and a DM of one campaign reading
+		// another is exactly the shape a second DM would have if principals were
+		// not per-campaign. They are.
+		"a DM of that campaign reads its pages": {
+			principal: domain.Principal{ID: "dm-thornford", CampaignID: second.ID, Role: domain.RoleDM},
+			want:      []string{"locations/thornford"},
+		},
+		"a DM of another campaign reads none of them": {
+			principal: domain.Principal{ID: "dm-blackwater", CampaignID: first.ID, Role: domain.RoleDM},
+			want:      nil,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := scopePaths(t, s, readable(second.ID, tt.principal)); !equalStrings(got, tt.want) {
+				t.Errorf("the read scope admitted %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// And through a method, because a scope that is right and a query that does
+	// not use it are two different facts. `GetPage` takes the campaign as an
+	// argument and the principal as its own, which is precisely the shape that
+	// let the two disagree.
+	stranger := domain.Principal{ID: "p-blackwater", CampaignID: first.ID, Role: domain.RolePlayer}
+	if _, getErr := s.GetPage(ctx, second.ID, thornfordPage.Path, stranger); getErr == nil {
+		t.Error("GetPage returned a page in a campaign the principal is not of")
+	}
+
+	pages, err := s.ListPages(ctx, second.ID, stranger)
+	if err != nil {
+		t.Fatalf("ListPages: %v", err)
+	}
+	if len(pages) != 0 {
+		t.Errorf("ListPages returned %d pages of another campaign", len(pages))
+	}
+
+	// The search is the other read path through the same scope, and it is the one
+	// that would be a disclosure with a title in it: a hit carries the page's
+	// title, so a player of one campaign seeing another campaign's titles has
+	// learned that those pages exist.
+	sc := readable(second.ID, stranger)
+	if paths := scopePaths(t, s, sc); len(paths) != 0 {
+		t.Errorf("the read scope for a stranger admitted %v", paths)
+	}
+	if got := strings.Count(sc.where, "p.campaign_id = ?"); got != 2 {
+		t.Errorf("the scope asks whose campaign %d times, want 2:\n%s", got, sc.where)
 	}
 }
