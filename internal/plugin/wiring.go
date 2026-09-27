@@ -85,7 +85,7 @@ func (r *Registry) AddCommand(command Command) error {
 	if !commandName.MatchString(command.Name) {
 		return fmt.Errorf("%w: command name %q is not a single lower-case word", ErrInvalidName, command.Name)
 	}
-	if coreCommands[command.Name] {
+	if IsCoreCommand(command.Name) {
 		return fmt.Errorf("%w: command %q is a core command", ErrReservedName, command.Name)
 	}
 	if _, taken := r.commands[command.Name]; taken {
@@ -112,15 +112,42 @@ func (r *Registry) AddCommand(command Command) error {
 // They are here rather than in `cmd/wiki` for the same reason `coreFields` is
 // [vault.CoreKeys]: a list over there is a list that goes stale, and the two places
 // that need it — the refusal here and the dispatch loop — are the same list twice.
-// The test `TestTheCoreCommandListIsTheDispatchersOwn` holds them together.
-var coreCommands = map[string]bool{
-	"serve":    true,
-	"init":     true,
-	"mint":     true,
-	"sync":     true,
-	"reindex":  true,
-	"versions": true,
-	"help":     true,
+//
+// The list is **the dispatcher's own list**, held here as a name and not as a map, so
+// that the one place the names are written down is this comment rather than a literal
+// two files apart. `TestTheCoreCommandListIsTheDispatchersOwn` holds the two together
+// by importing neither: it reads `cmd/wiki`'s dispatcher through a test in *this*
+// package's directory tree and fails on a name in one and not the other.
+//
+// The first version of this literal reserved `init`, `mint` and `versions` — commands
+// that do not exist — and omitted `version` and `migrate`, which do. `wiki migrate` is
+// how a database's schema is applied, so a plugin could have claimed the name and
+// taken it. Nothing stopped it: the test this comment named was never written.
+var coreCommands = []string{
+	"help",
+	"migrate",
+	"reindex",
+	"serve",
+	"sync",
+	"version",
+}
+
+// CoreCommands is the list above, as a copy, for the test that holds it against the
+// dispatcher's own map.
+//
+// It is exported for the same reason `vault.CoreKeys` is: the question "which names
+// are core's" has one answer and two places that need it, and a test that has to reach
+// into an unexported literal cannot check either direction of the agreement. It lives
+// in `cmd/wiki` because that is a `main` package and this is not, so the test that
+// compares the two has to be on the side that can see both.
+func CoreCommands() []string {
+	return slices.Clone(coreCommands)
+}
+
+// IsCoreCommand reports whether a name is one `cmd/wiki` owns, so a plugin cannot
+// claim it.
+func IsCoreCommand(name string) bool {
+	return slices.Contains(coreCommands, name)
 }
 
 // Commands is every registered command, keyed by name, in `(Priority, Name)` order.

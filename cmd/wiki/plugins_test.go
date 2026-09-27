@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/plugin"
 )
 
 // TestTheBundledPluginsRegister is the test that says a build with a broken plugin
@@ -99,4 +103,60 @@ func wikiHelpText() string {
 	var stdout, stderr bytes.Buffer
 	execute(context.Background(), []string{"help"}, &stdout, &stderr)
 	return stdout.String()
+}
+
+// TestTheCoreCommandListIsTheDispatchersOwn holds `internal/plugin`'s reserved
+// command names against the dispatcher's own map, in **both** directions.
+//
+// The comment on that list names this test, and the test did not exist. The list it
+// described reserved `init`, `mint` and `versions` — commands that have never been in
+// the dispatcher — and omitted `version` and `migrate`, which are. `wiki migrate` is
+// how a database's schema is applied, so a plugin could have registered that name and
+// taken it, and the only thing standing in the way was a literal in a file nobody had
+// read since.
+//
+// It is here, in `cmd/wiki`, rather than beside the list, because `cmd/wiki` is a
+// `main` package: this is the only side of the comparison that can see both. That is
+// the cost of a reserved list living with the registry, and it is paid once.
+//
+// The two directions are not symmetric and both are checked:
+//   - a dispatcher name missing from the list is a **plugin can take it**, which is
+//     the bug that was there;
+//   - a list name missing from the dispatcher is a **stale reservation**, which
+//     refuses a name nothing uses and reads as a command that exists.
+func TestTheCoreCommandListIsTheDispatchersOwn(t *testing.T) {
+	t.Parallel()
+
+	reserved := plugin.CoreCommands()
+
+	for name := range commands {
+		if !plugin.IsCoreCommand(name) {
+			t.Errorf("the dispatcher has %q and no plugin may claim it: "+
+				"add it to plugin.CoreCommands", name)
+		}
+	}
+
+	// `help` is registered by `init` rather than in the literal, and the
+	// `allCommands` merge is what a plugin's command is compared against, so the
+	// dispatcher's own view is the merged one.
+	for _, name := range reserved {
+		if _, exists := allCommands()[name]; !exists {
+			t.Errorf("plugin.CoreCommands reserves %q and the dispatcher has no such "+
+				"command; a stale reservation refuses a name nothing uses", name)
+		}
+	}
+
+	// And the property the whole list exists for, asked through the registry: a
+	// plugin cannot register a core command even if it tries.
+	reg := plugin.New(slog.Default())
+	for _, name := range reserved {
+		err := reg.AddCommand(plugin.Command{
+			Name:    name,
+			Summary: "mine now",
+			Run:     func(context.Context, []string, io.Writer, io.Writer) error { return nil },
+		})
+		if !errors.Is(err, plugin.ErrReservedName) {
+			t.Errorf("a plugin registered the core command %q: %v", name, err)
+		}
+	}
 }

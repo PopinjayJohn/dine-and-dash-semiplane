@@ -369,6 +369,15 @@
   becoming a word, a statline keeping the DM's own rows, fifteen fields served by one
   renderer — is the plugin, which is the shape §1's "core is system-agnostic" was
   reaching for.
+- **`wiki migrate` was claim-able by a plugin, and a comment named a test that did
+  not exist.** M11 added a reserved list of core command names so a plugin could not
+  take one, and the list reserved `init`, `mint` and `versions` — commands that have
+  never existed — while omitting `version` and `migrate`, which are. `wiki migrate` is
+  how a database's schema is applied. The comment above the list said
+  "`TestTheCoreCommandListIsTheDispatchersOwn` holds them together" and there was no
+  such test, which is the exact failure `docs/security.md` opens on: *a security
+  property nobody tests is a comment*. `TestTheCoreCommandListIsTheDispatchersOwn`
+  exists now, checks both directions, and is the first thing M13 did.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a
