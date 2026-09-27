@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 )
@@ -166,6 +167,58 @@ func (s *Store) GetPage(ctx context.Context, campaignID, path string, as domain.
 		return domain.Page{}, fmt.Errorf("reading page %s: %w", path, err)
 	}
 	return p, nil
+}
+
+// GetPageArchived returns a page whether or not it is archived, and it is the
+// only way to reach one.
+//
+// It exists for the three operations that are *about* an archived page: purging
+// it, restoring it, and showing a DM its history. Every one of those needs a row
+// the read predicate will not return, and a caller that reached for
+// `GetPageIncludingDeleted` in a handler would have written the same query
+// without the predicate in it.
+//
+// **The read predicate still runs.** The only clause this drops is
+// `is_deleted = 0`, so an archived page a principal may not read is still not
+// found, and a player still cannot reach a DM's archived page this way. The write
+// gate does *not* run, and every caller must apply it: a row is not a permission,
+// and this method's whole surface is rows.
+//
+// The name says what it is rather than hiding it behind a flag, because a flag on
+// `GetPage` would be a way for a handler to turn a read into an administrative
+// lookup by accident.
+func (s *Store) GetPageArchived(ctx context.Context, campaignID, path string, as domain.Principal) (domain.Page, error) {
+	// The same scope with the deletion clause removed, which is the whole
+	// difference and is why the two cannot drift: the predicate is built here, not
+	// copied.
+	sc := readable(campaignID, as)
+
+	query := `SELECT ` + pageColumnsQualified() + ` FROM pages p
+		WHERE p.campaign_id = ? AND p.path = ? AND ` + archivedScope(sc.where)
+
+	p, err := scanPage(s.read.QueryRowContext(ctx, query, sc.argsAfter(campaignID, path)...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Page{}, notFound("page", campaignID+"/"+path)
+	}
+	if err != nil {
+		return domain.Page{}, fmt.Errorf("reading the archived page %s: %w", path, err)
+	}
+	return p, nil
+}
+
+// archivedScope is a scope with the `is_deleted` clause taken out, by the only
+// means that does not copy the predicate: the clause is where it always is, at the
+// front, and it is removed from there.
+func archivedScope(where string) string {
+	_, rest, found := strings.Cut(where, "\n\t\tAND ")
+	if !found {
+		// Unreachable unless the scope's shape changes, and a scope without the
+		// clause is a scope where this function has nothing to remove -- so it
+		// returns the scope and the caller gets the read predicate intact rather
+		// than a broken one.
+		return where
+	}
+	return "(" + rest + ")"
 }
 
 // GetPageByID returns the page with the given id, if as may read it. It is how

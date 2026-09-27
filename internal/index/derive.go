@@ -114,6 +114,14 @@ func (y *Syncer) CheckWritableAs(ctx context.Context, pagePath string, as domain
 	if err != nil {
 		return err
 	}
+	return y.checkWritable(ctx, p, as)
+}
+
+// checkWritable is the gate, asked about a plan. Both entry points go through it
+// so that "may I write this" has one answer, and it is deliberately independent of
+// whether the plan is settled.
+func (y *Syncer) checkWritable(ctx context.Context, p plan, as domain.Principal) error {
+	pagePath := p.path
 	if p.refusal != nil || p.skip != nil {
 		// The file is not a page this application can index, so there is no page
 		// to be refused a write to. Reporting the reason is more use than
@@ -136,6 +144,29 @@ func (y *Syncer) CheckWritableAs(ctx context.Context, pagePath string, as domain
 		return fmt.Errorf("%s: %w", pagePath, err)
 	}
 	return nil
+}
+
+// CheckWritableContentAs asks the gate about content that is not a file yet.
+//
+// It is the question an editor has to ask before it writes, and the reason it
+// takes content rather than a path is in `planForBytes`. The answer is the same
+// one `CheckWritableAs` gives for a file, because it is the same derivation over
+// the same gate -- so a page whose owner changes with the edit is gated on the
+// owner the *edit* implies and not the one on disk.
+//
+// A page that does not exist yet is a legal thing to write, and the path is
+// checked here so that an editor that has not written the file yet cannot offer a
+// save for a path the vault would refuse.
+func (y *Syncer) CheckWritableContentAs(ctx context.Context, pagePath string, markdown []byte, as domain.Principal) error {
+	if _, pathErr := vault.CheckPagePath(pagePath); pathErr != nil {
+		return fmt.Errorf("the path of %s: %w", pagePath, pathErr)
+	}
+
+	p, err := y.planForBytes(ctx, pagePath, markdown)
+	if err != nil {
+		return err
+	}
+	return y.checkWritable(ctx, p, as)
 }
 
 // OwnerPageID is the page id of the character a page belongs to, from the same
@@ -192,6 +223,25 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 	default:
 		return p, fmt.Errorf("reading %s: %w", pagePath, err)
 	}
+
+	return y.planForBytes(ctx, pagePath, data)
+}
+
+// planForBytes is the derivation, and everything in it reads the *bytes* rather
+// than the file.
+//
+// The split is M9's, and it is a correctness one rather than a tidiness one. An
+// editor has to ask "may this principal write *this content*" **before** the
+// content is a file, because the watcher indexes files as the DM and a player's
+// file on disk is a file the watcher will index into a row the gate would have
+// refused. A check that can only be asked about a path on disk forces the save to
+// write first and roll back on refusal, and that is a window, not a guarantee.
+//
+// So there is one derivation and it takes bytes. `planFor` is the file case; this
+// is the content case; and there is no second implementation of how a page's
+// owner, title, visibility or links are read out of a document.
+func (y *Syncer) planForBytes(ctx context.Context, pagePath string, data []byte) (plan, error) {
+	p := plan{path: pagePath}
 
 	doc, parseErr := vault.Parse(data)
 	if parseErr != nil {
@@ -458,7 +508,12 @@ func (y *Syncer) apply(ctx context.Context, p plan, as domain.Principal) (outcom
 func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) {
 	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
-		if errors.Is(err, vault.ErrNotFound) {
+		// **The store's sentinel, not the vault's.** This checked `vault.ErrNotFound`
+		// for an error the *store* returns, so the tolerance never applied: a
+		// single-path sync of a path with no file — which is what M9's archive
+		// does, and what a watcher reports for a page the DM deleted — reported a
+		// failure where there was nothing to do and no page to say so about.
+		if errors.Is(err, store.ErrNotFound) {
 			// Nothing indexed and no file: a path that was never a page, which
 			// is not worth a report line.
 			return outcome{path: pagePath}, nil
@@ -482,7 +537,7 @@ func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) 
 // then the next one too.
 func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
 	if err := y.store.DeletePage(ctx, page.ID); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, store.ErrNotFound) { //nolint:nilerr // already archived: see the function comment
 			return nil
 		}
 		return fmt.Errorf("archiving %s: %w", page.Path, err)

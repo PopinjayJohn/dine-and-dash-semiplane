@@ -1,5 +1,80 @@
 ## [Unreleased]
 
+### Added
+
+- **`internal/edit`: the writer.** Every page save goes through it, and so does
+  anything that later needs to write a page programmatically. Its save is seven
+  steps in a fixed order, and the order is the design:
+  1. check the path is a path a page can have;
+  2. read the file that is there now;
+  3. compare its hash with the one the caller last saw, and refuse on a mismatch;
+  4. ask the store's write gate about the content being saved, before any of it is
+     a file;
+  5. write the file, atomically;
+  6. re-derive the row through `internal/index`, as the caller;
+  7. record the previous text as a revision, in the database and in `_history`.
+
+  Step 6 is the same derivation a sync does, by the same function, so a row written
+  by an editor and a row written by a watcher cannot be two different derivations
+  of one file. Step 4 comes before step 5 because the watcher writes rows as the
+  DM: a player's file on disk is a file the watcher will index, as the DM, into a
+  page the gate refused.
+- **A save takes the whole file, not fields** — frontmatter and body, as the DM
+  would have it on disk. A save that took fields would have to decide what to do
+  with the keys it does not understand, and the only answer that does not lose a
+  DM's own YAML is to take their bytes.
+- **`Versions` returns the three texts a three-way diff needs** — base, current and
+  incoming — fetched on demand rather than carried on the error, so a save that is
+  not in conflict does not pay for a diff nobody looks at. The base is found by the
+  caller's own ETag, which is a fact only a revision holds, and it is *empty* when
+  this application has not kept that text rather than a guess: a page the DM wrote
+  in Obsidian has no revision here, and a diff that invented a base would be lying
+  about where the edit started.
+- **`Restore` is a save**, so it checks the ETag, it keeps the text it replaced as
+  a revision, and it goes through the gate. A restore that is itself undoable and a
+  restore that cannot overwrite a page that changed since the history panel was
+  drawn both come from that one decision.
+- **`Rename` moves a page and follows every link that pointed at it**, DM-only, and
+  it writes the new file *before* the old one goes so a failure in the middle
+  leaves two pages rather than none. §5 says a rename rewrites inbound links
+  atomically, and without that every `[[link]]` in the campaign becomes unresolved
+  the moment somebody renames a page.
+- **The link rewriter touches the target and nothing else.** `[[from|alias]]`
+  keeps its alias, `[[from#heading]]` keeps its fragment, `[text](from)` keeps its
+  text, and every other byte of the page is the DM's. It is a scanner over the
+  bytes with goldmark used for the one thing it is reliable about — *where* the
+  code blocks are — because **a `WikiLink` carries no source segment** (the
+  renderer's own parser says so), so an AST rewrite would have to re-render the
+  page, and re-rendering a DM's markdown is the one thing this project must never
+  do to a file.
+- **Archive removes the file and keeps the row**, so it is recoverable; **purge
+  throws the row, the revisions and the inbound links away**, and it is the second
+  of the two rather than a stronger first.
+- **`store.GetPageArchived` is the only way to reach an archived row**, and it keeps
+  the read predicate — the only clause it drops is `is_deleted = 0` — so an archived
+  page a principal may not read is still not found. The name says what it is
+  because a flag on `GetPage` would be a way for a handler to turn a read into an
+  administrative lookup by accident.
+
+### Fixed
+
+- **A character page created through a single-page sync was written unowned.** The
+  owner resolution answers "a character page is its own owner" with the page's own
+  id, and on the pass that *creates* it the row does not exist yet. A full sync
+  fixed it on the second pass, which is why M4 never saw it; a single-path sync did
+  one pass and stopped. `SyncPathAs` now settles the same way a full one does, and
+  the loop is the same loop rather than a second implementation of "until nothing
+  changes". A character page indexed once is a page no player is bound to and no
+  player can read.
+- **`archive` tested the wrong sentinel for "nothing indexed and no file"** — it
+  asked `errors.Is(err, vault.ErrNotFound)` for an error the *store* returns, so
+  the tolerance never applied and a sync of a path with no file reported a failure
+  where there was nothing to do. It is exactly what an archive does.
+- **A save that changes nothing does not grow the history.** Re-saving a page
+  without changing it is what an editor does when somebody opens it and types a
+  space and takes it back, and a history of identical copies is a history nobody
+  can read and nobody can restore from.
+
 ### Fixed
 
 - **The sync can write as somebody, and the store's write gate runs for an
@@ -24,14 +99,6 @@
   `characters/brian/` that declares `character: aria` carries the path's answer,
   not the frontmatter's, so the gate refuses it rather than admitting it on the
   strength of a key the page's own path contradicts.
-- **`archive` tested the wrong sentinel for "nothing indexed and no file"** — it
-  asked `errors.Is(err, vault.ErrNotFound)` for an error the *store* returns, so
-  the tolerance never applied and a sync of a path with no file reported a failure
-  rather than saying nothing. Found by a fixture that syncs a path before its file
-  exists.
-
-### Added
-
 - **`Syncer.OwnerPageID`, the character's page id for a path and a document**,
   exposed so M9's editor asks the same question through the same two rules as a
   sync instead of reimplementing `OwnerOf` and the `characters/<slug>` resolution.

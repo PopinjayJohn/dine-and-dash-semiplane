@@ -114,15 +114,38 @@ func (y *Syncer) SyncPathAs(ctx context.Context, pagePath string, as domain.Prin
 	report := Report{}
 	sets := newReportSets()
 
-	one, err := y.syncPath(ctx, &report, pagePath, as)
-	if err != nil {
-		report.finalise(sets)
-		return report, err
-	}
-	report.add(one, sets)
-	report.finalise(sets)
-	report.Passes = 1
+	// More than one pass, for one page, and the reason is a character page's own
+	// id. `checkOwner` answers "a character page is its own owner" with the page's
+	// id -- and on the pass that *creates* it the row does not exist yet, so the id
+	// is empty and the page is written unowned. The second pass finds the row, gets
+	// the id, and writes the owner. This is the same reason `Sync` walks a vault
+	// more than once, and it is not an optimisation: a character page indexed once
+	// is a page no player is bound to and no player can read.
+	//
+	// So a single-page sync settles the same way a full one does, and the loop is
+	// the same loop rather than a second implementation of "until nothing changes".
+	changed := 0
+	for pass := 1; pass <= maxPasses; pass++ {
+		one, err := y.syncPath(ctx, &report, pagePath, as)
+		if err != nil {
+			report.finalise(sets)
+			return report, err
+		}
+		report.add(one, sets)
 
+		if !one.indexed && !one.archived {
+			changed = 0
+			break
+		}
+		changed = 1
+		report.Passes = pass
+	}
+	if report.Passes == 0 {
+		report.Passes = 1
+	}
+	_ = changed
+
+	report.finalise(sets)
 	return report, nil
 }
 
