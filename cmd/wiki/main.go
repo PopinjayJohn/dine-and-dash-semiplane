@@ -142,7 +142,19 @@ func allCommands() map[string]command {
 	// before it is run, and a command that is never run must not have needed a
 	// database. The one plugin in this build that needs one answers "this build has
 	// no index" rather than dereferencing it.
-	registry, err := buildRegistry(nil, slog.Default())
+	//
+	// **A logger above Info, deliberately.** Every plugin logs a line as it
+	// registers, which is right for `wiki serve` and wrong for everything else:
+	// `wiki version` is the command `docs/security.md` tells people to paste into a
+	// bug report, and four `INFO plugin registered` lines above the version make that
+	// paste useless. A DM asking what is in this build did not ask for a plugin audit
+	// trail, and `wiki help` is a page a person reads.
+	//
+	// The warning below still goes to stderr at Warn, because a plugin that *fails*
+	// to register is a different thing from one that registers quietly: commands are
+	// missing, and the DM is the only person who can do anything about it.
+	registry, err := buildRegistry(nil, slog.New(slog.NewTextHandler(
+		os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	if err != nil {
 		// A plugin that cannot register is a startup failure, and this is a
 		// *dispatch* rather than a startup. The core commands are still there, so a

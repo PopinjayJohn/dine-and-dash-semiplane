@@ -2422,6 +2422,13 @@ breakdown and `docs/adr/` has the decisions._
   which is the only reason either is a fix rather than a deploy that does not start:
   `make check` can never catch either, because a workflow is not a Go file and a
   missing make target is only visible to something that runs it.
+- **`wiki version` printed four `INFO plugin registered` lines above the version.**
+  Every plugin logs a line as it registers, which is right for `wiki serve` and wrong
+  for everything else — and `wiki version` is the command `docs/security.md` tells
+  people to paste into a bug report, so four lines above it make the paste useless.
+  Found by running the built binary from the release archive, which is a step the
+  job did not take. A plugin that *fails* to register still warns, because commands
+  are then missing and the DM is the only person who can do anything about it.
 - **The release job uses the `gh` CLI and no third-party action at all.** The first
   draft published through `softprops/action-gh-release`, pinned to another SHA written
   from memory. `gh` is preinstalled on GitHub-hosted runners, so this job has **no
