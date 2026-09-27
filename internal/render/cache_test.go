@@ -140,6 +140,47 @@ func TestTheCacheIsKeyedByEverythingThatChangesTheOutput(t *testing.T) {
 			t.Errorf("the second page's entry is %+v (found = %t), want its own", got, found)
 		}
 	})
+
+	t.Run("a different campaign is a different entry", func(t *testing.T) {
+		t.Parallel()
+
+		// Two campaigns can each hold `locations/rivergate` with the same
+		// bytes -- two DMs who both started from the same template -- and every
+		// URL in the render names the campaign it is in. A shared entry would
+		// serve one campaign's links inside the other's HTML, which is a wrong
+		// page rather than a broken one, so it is worth an entry of its own.
+		renderer := render.NewWithLinks(testResolver(
+			map[string]string{"locations/rivergate": "Rivergate"},
+			map[string]string{},
+		))
+
+		page := render.Page{
+			Path:        "locations/the-drowned-hound",
+			Body:        "See [[locations/rivergate]].\n",
+			ContentHash: "the-same-bytes-in-two-campaigns",
+		}
+
+		one := page
+		one.Campaign = "blackwater"
+		two := page
+		two.Campaign = "thornford"
+
+		first, err := renderer.Render(ctx, one, render.Decision{})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		second, err := renderer.Render(ctx, two, render.Decision{})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+
+		if !strings.Contains(first.HTML, `href="/c/blackwater/locations/rivergate"`) {
+			t.Errorf("the first campaign's link is %s", first.HTML)
+		}
+		if !strings.Contains(second.HTML, `href="/c/thornford/locations/rivergate"`) {
+			t.Errorf("the second campaign was served the first campaign's link: %s", second.HTML)
+		}
+	})
 }
 
 // TestTheCacheEvicts: the bound is real, and what comes out is what the list

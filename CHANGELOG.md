@@ -2,6 +2,28 @@
 
 ### Added
 
+- **A resolved link carries the campaign it is in.** `/c/locations/rivergate`
+  became `/c/blackwater/locations/rivergate`, and the campaign is now a field of
+  `render.Page` rather than a thing the link path assumed. A data directory holds
+  several campaigns (ADR 0011), so a campaign-relative path was never a URL: the
+  link pointed at whichever campaign the reader happened to be in, which for a DM
+  with two campaigns is the wrong campaign's town.
+- **`render.PageURL` is exported, because four things link to a page.** A
+  rendered wiki link, the page tree, a backlink and a search result are four
+  callers of one rule, and the second implementation of "where does a page live"
+  is the second thing to get wrong in production.
+- **The campaign is in the render cache key.** Two campaigns can each hold
+  `locations/rivergate` with byte-identical content — two DMs who both started
+  from the same template — and a shared cache entry would have served one
+  campaign's URLs inside the other's HTML. Same class of mistake as the decision
+  not being in the key, and found by writing down the test that asks it.
+- **A page rendered with no campaign resolves nothing.** A caller that has not
+  said which campaign it is rendering for gets visibly unresolved links rather
+  than links to a plausible wrong place: the same fail-closed answer this project
+  gives everywhere else, and the thing that makes a handler forgetting the field
+  a visible bug rather than a subtle one.
+- `RendererVersion` is 2, because the output changed for the same input.
+
 - **`internal/auth`, and the minting half of it.** 32 bytes from `crypto/rand`,
   hex-encoded, shown once and never stored. What is kept is the SHA-256 and four
   characters of it, so a dump of the campaign database identifies a token and

@@ -55,7 +55,7 @@ func TestWikiLinks(t *testing.T) {
 	}{
 		"a link to a page the index knows": {
 			body:            "See [[locations/rivergate]] for the town.",
-			wantContains:    []string{`href="/c/locations/rivergate"`, ">locations/rivergate<", "wiki-link"},
+			wantContains:    []string{`href="/c/blackwater/locations/rivergate"`, ">locations/rivergate<", "wiki-link"},
 			wantNotContains: []string{"unresolved"},
 		},
 		"a link the index does not know is unresolved, and says where it was going": {
@@ -67,19 +67,19 @@ func TestWikiLinks(t *testing.T) {
 		// so that is what a link says: what the DM typed, never the page's title.
 		"an alias resolves to a page and shows what the DM wrote": {
 			body:         "Ask [[the toll-collector]] about it.",
-			wantContains: []string{`href="/c/npcs/garros-ironbar"`, ">the toll-collector<"},
+			wantContains: []string{`href="/c/blackwater/npcs/garros-ironbar"`, ">the toll-collector<"},
 		},
 		"a link with an alias of its own shows the alias, not the title": {
 			body:         "Ask [[the toll-collector|the collector]] about it.",
-			wantContains: []string{`href="/c/npcs/garros-ironbar"`, ">the collector<"},
+			wantContains: []string{`href="/c/blackwater/npcs/garros-ironbar"`, ">the collector<"},
 		},
 		"a heading on a link is resolution-neutral": {
 			body:         "See [[locations/rivergate#the-bridges]] for the bridges.",
-			wantContains: []string{`href="/c/locations/rivergate"`, ">locations/rivergate<"},
+			wantContains: []string{`href="/c/blackwater/locations/rivergate"`, ">locations/rivergate<"},
 		},
 		"an embed is a link with the embed class": {
 			body:         "![[locations/rivergate]]",
-			wantContains: []string{`href="/c/locations/rivergate"`, "embed", "wiki-link"},
+			wantContains: []string{`href="/c/blackwater/locations/rivergate"`, "embed", "wiki-link"},
 		},
 		"an unresolved embed is unresolved too": {
 			body:         "![[locations/thornford]]",
@@ -92,7 +92,7 @@ func TestWikiLinks(t *testing.T) {
 		},
 		"a markdown link to a page resolves the same way": {
 			body:         "See [the town](locations/rivergate) for the town.",
-			wantContains: []string{`href="/c/locations/rivergate"`},
+			wantContains: []string{`href="/c/blackwater/locations/rivergate"`},
 		},
 		"a markdown link to a URL is not a page and is left alone": {
 			body:            "See [the site](https://example.invalid/page).",
@@ -145,10 +145,10 @@ func TestLinksResolveInObsidiansOrder(t *testing.T) {
 	byAlias := renderLinks(t, "[[garros]]", index)
 	byPath := renderLinks(t, "[[npcs/garros-ironbar]]", index)
 
-	if !strings.Contains(byAlias, `href="/c/npcs/garros-ironbar"`) {
+	if !strings.Contains(byAlias, `href="/c/blackwater/npcs/garros-ironbar"`) {
 		t.Errorf("an alias did not resolve to its page\n%s", byAlias)
 	}
-	if !strings.Contains(byPath, `href="/c/npcs/garros-ironbar"`) {
+	if !strings.Contains(byPath, `href="/c/blackwater/npcs/garros-ironbar"`) {
 		t.Errorf("an exact path did not resolve to its page\n%s", byPath)
 	}
 }
@@ -189,17 +189,104 @@ func TestResolverErrorsFailTheRender(t *testing.T) {
 	}
 }
 
+// testCampaign is the campaign every link test renders in, and the reason every
+// expected href carries it: a data directory holds several campaigns, so a link
+// that named only a page's path would be a link to whichever campaign the reader
+// was already in.
+const testCampaign = "blackwater"
+
 func renderLinks(t *testing.T, body string, links render.LinkResolver) string {
 	t.Helper()
 
 	result, err := render.NewWithLinks(links).Render(context.Background(), render.Page{
-		Path: "locations/the-drowned-hound",
-		Body: body,
+		Campaign: testCampaign,
+		Path:     "locations/the-drowned-hound",
+		Body:     body,
 	}, render.Decision{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	return result.HTML
+}
+
+// TestAPageWithNoCampaignResolvesNothing is the fail-closed half of the change
+// that put the campaign in a link.
+//
+// A caller that has not said which campaign it is rendering for is a caller that
+// cannot build a URL, and the two available answers are a link to a plausible
+// wrong place or a link that says it is unresolved. This project takes the
+// second one everywhere, and the test is here because the alternative is a
+// handler that forgets a field and a wiki full of links into the other campaign.
+func TestAPageWithNoCampaignResolvesNothing(t *testing.T) {
+	t.Parallel()
+
+	index := testResolver(
+		map[string]string{"locations/rivergate": "Rivergate"},
+		map[string]string{},
+	)
+
+	result, err := render.NewWithLinks(index).Render(context.Background(), render.Page{
+		Path: "locations/the-drowned-hound",
+		Body: "See [[locations/rivergate]] and [the town](locations/rivergate).",
+	}, render.Decision{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(result.HTML, "unresolved") {
+		t.Errorf("a page with no campaign resolved a link anyway:\n%s", result.HTML)
+	}
+	if strings.Contains(result.HTML, "/c/") {
+		t.Errorf("a page with no campaign produced a campaign URL anyway:\n%s", result.HTML)
+	}
+}
+
+// TestPageURL: the one place a page's address is built, which is why it is
+// exported -- a rendered link, the tree, a backlink and a search result are four
+// callers of one rule.
+func TestPageURL(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		campaign, path string
+		want           string
+	}{
+		"a page in a campaign":  {campaign: "blackwater", path: "locations/rivergate", want: "/c/blackwater/locations/rivergate"},
+		"a page at the root":    {campaign: "blackwater", path: "campaign", want: "/c/blackwater/campaign"},
+		"no campaign, no URL":   {campaign: "", path: "locations/rivergate", want: ""},
+		"an empty path, no URL": {campaign: "blackwater", path: "", want: "/c/blackwater/"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := render.PageURL(tt.campaign, tt.path); got != tt.want {
+				t.Errorf("PageURL(%q, %q) = %q, want %q", tt.campaign, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTheCampaignIsEscaped: the slug reaches a URL, and `url.PathEscape` is what
+// keeps a slug that was never a slug from becoming a path. A `..` still appears
+// in the result as literal text -- and that is fine, because the slashes around
+// it are `%2F`, so it is a filename and not a traversal. Asserting the absence of
+// the two characters would be asserting something stronger than the property, and
+// would be satisfied by a fix that stopped the traversal.
+func TestTheCampaignIsEscaped(t *testing.T) {
+	t.Parallel()
+
+	got := render.PageURL("black water/../etc", "locations/rivergate")
+
+	for _, segment := range strings.Split(strings.TrimPrefix(got, "/c/"), "/") {
+		if segment == "." || segment == ".." {
+			t.Errorf("PageURL produced a path segment of %q, so the campaign escaped its segment: %q", segment, got)
+		}
+	}
+	if want := "/c/black%20water%2F..%2Fetc/locations/rivergate"; got != want {
+		t.Errorf("PageURL = %q, want %q", got, want)
+	}
 }
 
 // TestGoldenResolvedLinks is the golden for the path the other goldens do not
@@ -259,6 +346,7 @@ func TestAnIndexThatCannotAnswerIsNotAnUnresolvedLink(t *testing.T) {
 	renderer := render.NewWithLinks(failing)
 
 	result, err := renderer.Render(context.Background(), render.Page{
+		Campaign:    testCampaign,
 		Path:        "locations/rivergate",
 		Body:        "See [[locations/rivergate]] for the town.",
 		ContentHash: "hash",

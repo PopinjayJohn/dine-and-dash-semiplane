@@ -19,13 +19,12 @@
 // because a DM is the highest-value target and sanitising "only untrusted
 // authors" would leave that target on the weakest path.
 //
-// # What this does not know yet
+// # What this knows about a page
 //
-// A Decision here is not `access.Decision`, because access control is M7. It is
-// the one field the renderer needs, and its zero value is the safe one: a caller
-// that has not decided anything gets no secrets. M7 feeds the real decision in,
-// and the cache is keyed by it, so a render made for a DM can never be handed to
-// a player.
+// Two things and no more: the markdown it is turning into HTML, and the campaign
+// and path that a link to the page has to be built from. A page's *audience* is
+// not one of them, and neither is its secrets: those are an `access.Decision`,
+// and the decision is threaded in beside the page rather than read off it.
 package render
 
 import (
@@ -50,7 +49,11 @@ type Version = int
 // different heading anchor, a sanitiser policy change. Every page whose stored
 // version differs is re-rendered, so one constant invalidates the whole cache at
 // once rather than a cache going quietly stale.
-const RendererVersion Version = 1
+//
+// It is 2 because a resolved link grew the campaign it is in: `/c/rivergate`
+// became `/c/blackwater/rivergate`, which is a different string for the same
+// input and therefore a different render.
+const RendererVersion Version = 2
 
 // Renderer renders pages. It is safe for concurrent use, because a DM and three
 // players will render at the same time.
@@ -140,6 +143,7 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 		ContentHash:   page.ContentHash,
 		Version:       RendererVersion,
 		CanSeeSecrets: decision.CanSeeSecrets,
+		Campaign:      page.Campaign,
 		Path:          page.Path,
 	}
 	if cached, found := r.cache.Get(key); found {
@@ -166,7 +170,7 @@ func (r *Renderer) render(ctx context.Context, page Page, decision Decision) (Re
 	// Resolution walks the tree rather than the source, so a link that a
 	// resolver found is a link whose destination has been rewritten, not a
 	// string that was replaced somewhere in the markdown.
-	if err := resolveLinks(ctx, doc, r.links); err != nil {
+	if err := resolveLinks(ctx, doc, r.links, page.Campaign); err != nil {
 		return Result{}, fmt.Errorf("resolving the links in %s: %w", page.Path, err)
 	}
 
