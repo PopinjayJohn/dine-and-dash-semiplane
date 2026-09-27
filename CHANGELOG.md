@@ -393,6 +393,24 @@ House rules:
 
 ### Fixed
 
+- **A stale lock could not be taken over on Windows, and the test that said so
+  was testing the wrong thing.** `TestAStaleLockIsTakenOver` acquired a lock and
+  then tried to take it over *while still holding it*, which works on Linux —
+  unlinking a file with an open handle is legal there — and fails on Windows,
+  where a file in use cannot be deleted at all. Windows was right and the test
+  was wrong: an open handle is exactly what a **live** holder has, and a lock
+  file with no handle on it belongs to a process that died, because the operating
+  system closed the handle when it died. So the test asserted a situation that
+  cannot arise in production, and it asserted it in the one way that is
+  unportable. The stale cases now write the file a dead process leaves behind,
+  and assert that the takeover actually *wrote* the new holder's record rather
+  than only that no error came back.
+- A repeated comment in `Lock.Release`, which said the same thing twice about
+  why the handle closes before the name is unlinked. The second one now says what
+  the first did not: that the order is not tidiness, because `errors.Join`
+  evaluates its arguments left to right and closing second would make `Release`
+  fail on the one platform where a stale lock cannot be taken over behind a dead
+  process's back.
 - Two `internal/vault` tests compared things the operating system decides, and
   so passed on Linux and failed on the CI matrix: one compared a *resolved*
   path against the unresolved one it was given (identical on Linux, different

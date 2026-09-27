@@ -139,12 +139,17 @@ func (l *Lock) Release() error {
 
 	// The file goes before the handle: a lock file that outlives its handle is a
 	// lock nobody can take for the whole stale window.
+	//
+	// The two calls are written in one expression because the *order* is the
+	// point and `errors.Join` evaluates its arguments left to right, so the
+	// handle is closed before the name is unlinked. On Windows that is not
+	// tidiness — a file with an open handle cannot be deleted at all, so closing
+	// second would make Release fail on the one platform where a stale lock
+	// cannot be taken over behind a dead process's back.
 	path := l.path
 	file := l.file
 	l.file = nil
 
-	// The file goes before the handle: a lock file that outlives its handle is
-	// a lock nobody can take for the whole stale window.
 	if err := errors.Join(file.Close(), os.Remove(path)); err != nil {
 		return fmt.Errorf("releasing the lock at %s: %w", path, err)
 	}

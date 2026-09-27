@@ -2,6 +2,7 @@ package lockfile_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,19 @@ func TestTwoCampaignsDoNotBlockEachOther(t *testing.T) {
 	}
 }
 
+// TestAStaleLockIsTakenOver: "stale" means the holder is *gone*, and the test
+// has to be a stale lock to be testing that.
+//
+// It used to acquire a lock and then try to take it over while still holding it,
+// which passes on Linux and fails on Windows for a reason that is the code being
+// right: Windows will not delete a file that has an open handle, and an open
+// handle is exactly what a *live* holder has. So the old test asserted a
+// situation that cannot arise in production — a lock file with no handle on it
+// belongs to a process that died, and the operating system closed the handle when
+// it died — and it asserted it in the one way that is unportable.
+//
+// The stale cases below write the file a dead process leaves instead, which is
+// what the takeover path actually meets.
 func TestAStaleLockIsTakenOver(t *testing.T) {
 	t.Parallel()
 
@@ -140,14 +154,9 @@ func TestAStaleLockIsTakenOver(t *testing.T) {
 			t.Parallel()
 
 			locks := t.TempDir()
+			abandonedLock(t, locks, "blackwater", tt.heldSince)
 
-			held, err := lockfile.Acquire(locks, "blackwater", tt.heldSince, time.Hour)
-			if err != nil {
-				t.Fatalf("Acquire: %v", err)
-			}
-			defer func() { _ = held.Release() }()
-
-			_, err = lockfile.Acquire(locks, "blackwater", tt.readAt, tt.stale)
+			lock, err := lockfile.Acquire(locks, "blackwater", tt.readAt, tt.stale)
 			if tt.wantRefuse {
 				if !errors.Is(err, lockfile.ErrHeld) {
 					t.Fatalf("Acquire = %v, want an error matching ErrHeld", err)
@@ -158,7 +167,37 @@ func TestAStaleLockIsTakenOver(t *testing.T) {
 			if err != nil {
 				t.Fatalf("a stale lock was not taken over: %v", err)
 			}
+			defer func() { _ = lock.Release() }()
+
+			// Taken over means taken over: the file now names this process, not
+			// the one that left it. An Acquire that returned no error without
+			// having written the lock would pass the check above.
+			data, err := os.ReadFile(lock.Path())
+			if err != nil {
+				t.Fatalf("reading the taken-over lock: %v", err)
+			}
+			if want := itoa(os.Getpid()) + "\n"; !strings.HasPrefix(string(data), want) {
+				t.Errorf("the lock file does not name this process:\n%s", data)
+			}
 		})
+	}
+}
+
+// abandonedLock writes the lock file a process that died mid-sync leaves behind:
+// its pid, the moment it took the lock, and a note, with no handle held.
+//
+// The pid is this process's, on purpose. A stale lock is not judged on whether
+// its pid is alive — the whole point of the stale window is that a pid cannot be
+// checked, because pids are reused and because the process may be on another
+// machine — so using a live pid proves the timestamp is doing the work, and stops
+// the test from passing for the wrong reason if someone adds a liveness check.
+func abandonedLock(t *testing.T, locks, campaign string, heldSince time.Time) {
+	t.Helper()
+
+	contents := fmt.Sprintf("%d\n%s\nheld by pid above\n",
+		os.Getpid(), heldSince.UTC().Format(time.RFC3339))
+	if err := os.WriteFile(filepath.Join(locks, campaign+".lock"), []byte(contents), 0o600); err != nil {
+		t.Fatalf("writing the abandoned lock: %v", err)
 	}
 }
 
