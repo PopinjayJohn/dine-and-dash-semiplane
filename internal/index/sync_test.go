@@ -627,3 +627,13 @@ func writeVaultFile(t *testing.T, vaultDir, pagePath, body string) {
 		t.Fatalf("writing %s: %v", pagePath, err)
 	}
 }
+
+// removeVaultFile deletes one file from a synced vault, for the tests that need
+// a page to go away.
+func removeVaultFile(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("removing %s: %v", path, err)
+	}
+}

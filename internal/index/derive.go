@@ -63,6 +63,12 @@ type plan struct {
 	links []domain.PageLink
 	doc   *vault.Document
 
+	// index is what a search should find for this file, and is settled on its own
+	// terms like the row and the link graph are. It carries a page id that is
+	// filled in by apply, because the id is minted by the upsert and a plan is
+	// built before anything is written.
+	index store.IndexEntry
+
 	// owner is who this page belongs to, and ownerProblem is why that does not
 	// hold up. The column for the owner arrives in M7; what arrives here is the
 	// rule and the validation, which are the parts that are easy to get wrong.
@@ -154,6 +160,7 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 		p.ownerProblem = y.checkOwner(ctx, pagePath, doc, owner)
 	}
 	p.links = y.linksFor(ctx, p.page.ID, doc)
+	p.index = indexEntryFor(doc, p.page)
 
 	settled, err := y.isSettled(ctx, p)
 	if err != nil {
@@ -262,7 +269,51 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("reading the links of %s: %w", p.path, err)
 	}
-	return sameLinks(recorded, p.links), nil
+	if !sameLinks(recorded, p.links) {
+		return false, nil
+	}
+
+	// And the search indexes, by asking whether they already hold what this file
+	// derives. The question is a question rather than a read-back because an
+	// FTS5 row cannot be reconstructed -- its columns are a bag of tokens and its
+	// lists are joined with a space -- and the store answers the question the sync
+	// actually has, which is whether writing would change what a search returns.
+	entry := p.index
+	entry.PageID = p.page.ID
+
+	matched, err := y.store.PageIndexMatches(ctx, entry)
+	if err != nil {
+		return false, fmt.Errorf("comparing the search index rows of %s: %w", p.path, err)
+	}
+	return matched, nil
+}
+
+// indexEntryFor is what a search should find for a document.
+//
+// **BodyPublic is empty, and that is the state of the project rather than an
+// oversight.** The public index is fed from the body with its secrets replaced by
+// a marker, and working that out needs to know who may read the page, which is
+// the access-control milestone's question and not this one's. Until it can be
+// answered, the only safe value is the empty string: a body that reached the
+// public index with a secret in it is a disclosure, and a body that did not is a
+// missing feature. A page is findable by its title, its aliases, its tags and its
+// type today, and over its prose once the redaction lands. See ADR 0015.
+//
+// SecretText is filled in, because which text is secret is a *parsing* question
+// and the parser already answers it. So a DM can find their own secrets by
+// content from this milestone on, which is the feature ADR 0009 exists for.
+func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
+	secretText, _ := render.SecretText(page.Body)
+
+	return store.IndexEntry{
+		PageID:     page.ID,
+		Title:      page.Title,
+		Aliases:    doc.Aliases(),
+		Tags:       doc.Tags(),
+		Kind:       page.Type.String(),
+		BodyPublic: "",
+		SecretText: secretText,
+	}
 }
 
 // apply writes a plan. It is the only function in this package that writes a
@@ -278,6 +329,17 @@ func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
 	// path in the same transaction as the row.
 	if err := y.store.ReplacePageAliases(ctx, stored.ID, p.doc.Aliases()); err != nil {
 		return outcome{}, fmt.Errorf("recording the aliases of %s: %w", p.path, err)
+	}
+
+	// The search rows, in the same transaction as nothing else but immediately
+	// after: an index that disagrees with the row it was derived from is the
+	// rot-in-place failure the settled check exists to catch, and catching it on
+	// the next sync is a day late. The public body stays empty -- see
+	// indexEntryFor.
+	entry := p.index
+	entry.PageID = stored.ID
+	if err := y.store.ReplacePageIndex(ctx, entry); err != nil {
+		return outcome{}, fmt.Errorf("indexing %s for search: %w", p.path, err)
 	}
 
 	// The links were derived with the id the page had when the plan was made,
@@ -331,6 +393,14 @@ func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
 			return nil
 		}
 		return fmt.Errorf("archiving %s: %w", page.Path, err)
+	}
+
+	// An archived page is not findable. Leaving its search rows behind would let
+	// a search name a page no read can open, and a page that comes back is
+	// re-indexed by the sync that puts it back, so nothing is lost by clearing
+	// them here.
+	if err := y.store.DeletePageIndex(ctx, page.ID); err != nil {
+		return fmt.Errorf("removing the search rows of %s: %w", page.Path, err)
 	}
 	return nil
 }

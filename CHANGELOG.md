@@ -24,6 +24,29 @@ House rules:
 
 ### Added
 
+- **The sync keeps both search indexes in step.** A page is indexed from its file
+  on the same pass that writes its row, and the settled check asks whether the
+  index already holds what the file derives — so a page whose search rows were
+  deleted behind the sync's back is rewritten even though nothing in the vault
+  moved and every hash still matches. That is the rot-in-place failure one layer
+  up from the page row, and comparing the hashes would not have seen it.
+- **An archived page is not findable**, and only its findability went: the row
+  survives so the archive stays recoverable, but a search must not name a page no
+  read can open, because the error a player gets for opening it says the page does
+  not exist, which is a different answer from "you may not see it".
+- A page is findable end to end from a file on disk: **title, aliases, tags and
+  type today; prose once the redaction lands.** The body is *not* in the public
+  index yet, and that is a missing feature rather than an oversight — working out
+  which text a principal may be shown needs access control, and until that exists
+  the only safe value for `body_public` is the empty string.
+- **Secret text *is* indexed now**, because which text is secret is a *parsing*
+  question and the parser already answers it. A DM can find their own secrets by
+  content from this milestone on, which is the feature ADR 0009 exists for: the DM
+  forgets which page they wrote a name on.
+- A test that runs the whole chain — file, sync, query — because the chain is where
+  a decision made in one package quietly fails to reach another, and no unit test
+  in either package would notice.
+
 - **Reciprocal Rank Fusion** merges the two ranked lists: a page's score is
   `Σ 1 / (60 + rank)` over the lists it appears in, so a page whose title matches
   *and* whose secret contains the phrase outranks a page whose title matches
