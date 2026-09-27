@@ -80,9 +80,17 @@ cover: ## Report coverage and fail below $(COVERAGE_MIN)%
 	@# flag each package is measured by its own binary, a test helper reports
 	@# 0%, and the gate fails on code the tests exercise on every run.
 	go test $(TEST_FLAGS) -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out | tail -1
-	@total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub("%","",$$NF); print $$NF}'); \
-	awk -v total="$$total" -v min="$(COVERAGE_MIN)" -v file=coverage.out 'BEGIN { \
+	@# Generated templ output is excluded from the profile before it is read, for
+	@# the same reason `.golangci.yml` excludes it from linting: it is not code
+	@# anybody wrote, it is what the template compiler produced from the
+	@# `.templ` files, and measuring it says something about the templates'
+	@# element-by-element branches rather than about whether the application is
+	@# tested. The filter is a filename and nothing else, and the raw profile is
+	@# still written so a reviewer can diff the generated part separately.
+	@grep -v '_templ\.go:' coverage.out > coverage-handwritten.out || true
+	@go tool cover -func=coverage-handwritten.out | tail -1
+	@total=$$(go tool cover -func=coverage-handwritten.out | tail -1 | awk '{gsub("%","",$$NF); print $$NF}'); \
+	awk -v total="$$total" -v min="$(COVERAGE_MIN)" 'BEGIN { \
 		if (total + 0 < min + 0) { \
 			printf "coverage %.1f%% is below the %.0f%% gate\n", total, min; \
 			exit 1; \

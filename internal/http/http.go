@@ -1,0 +1,356 @@
+// Package http is the web shell: the router, the middleware, the handlers and
+// the templates that make a campaign readable in a browser.
+//
+// # What is in the request
+//
+// A handler is handed a `*request`: who is asking, which campaign they are
+// asking about, the per-response nonce and the request id. All four arrive from
+// middleware, and none of them is a parameter a handler takes, because a handler
+// that takes a principal as an argument is a handler whose caller decides who the
+// caller is. The whole point of the session middleware is that there is exactly
+// one place that turns a cookie into a principal.
+//
+// # The middleware order is the argument
+//
+//	request id -> logging -> recovery -> security headers -> session -> campaign
+//
+// Read from the inside out, it says what each layer is for:
+//
+//   - **Redeem** exchanges a `?k=` share link for a cookie and redirects. It is
+//     inside campaign and session because a token is scoped to one campaign and
+//     because a browser that already has a session and then arrives with a new
+//     link is becoming a *new* identity rather than the old one with a new
+//     cookie.
+//   - **Campaign** resolves `/c/<slug>` and refuses a principal who is not of
+//     that campaign. It is inside redeem because redemption has to be able to say
+//     "that link belongs to a different campaign", and it is outside everything
+//     below it because a handler that runs first has no campaign to scope
+//     anything to.
+//   - **Session** turns a cookie into a principal, and a cookie that does not
+//     resolve into *nobody* rather than into an error. An unidentified request
+//     is a request; it reads nothing.
+//   - **Security headers** are set before a handler runs, because a handler that
+//     has written a body has written the headers too and cannot add to them.
+//   - **Recovery** catches a panic, so it is outside the headers: it has to be
+//     able to produce a response of its own.
+//   - **Logging** sees every request, including the ones that panicked.
+//   - **Request id** is outermost because everything else's log line names it.
+//
+// # The query string is not logged
+//
+// `?k=<token>` is the share-link credential, and a logging middleware that writes
+// `r.URL.String()` puts it in every log line, in every proxy in front of this
+// server, and in whatever the DM pastes into a bug report. The log line here is
+// built from the method and the path and nothing else.
+//
+// # The cookie attributes are ADR 0003's
+//
+// `__Host-` prefix, `HttpOnly`, `SameSite=Lax`, `Secure` when the deployment is
+// production, `Path=/`, and an expiry that is the session's own rather than the
+// browser's. See cookie.go for why each one is there, because each of them is a
+// decision and not a default.
+package http
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/web"
+)
+
+// Config is everything the application cannot invent for itself.
+//
+// It is a struct of dependencies with defaults rather than a constructor per
+// combination, because the only caller that assembles it is `wiki serve` and the
+// other callers are tests. A field that may be nil and has a documented meaning
+// is a field a test does not have to set in order to test something else.
+type Config struct {
+	// Store is the index. It is an interface rather than `*store.Store` because
+	// this package is the consumer: it needs to read a page, list the pages a
+	// principal may see, resolve a campaign and ask about ownership, and nothing
+	// else. A method added to the store does not have to be added here, and one
+	// added here has to be one somebody can implement.
+	Store Store
+
+	// Redeemer exchanges a share link for a session, and a cookie's value for a
+	// principal. It is a value rather than a pointer because it holds a Backend
+	// and a Config and has no state of its own.
+	Redeemer auth.Redeemer
+
+	// Hub is the SSE fan-out. Nil means there are no live pages and the stream
+	// route answers 404, which is a missing feature rather than a broken page.
+	Hub *sse.Hub
+
+	// Logger is where the request log goes. Nil means the default slog logger,
+	// which is what `go run` wants and what a test replaces with one writing to a
+	// buffer, because `TestNoTokenInLogs` reads what was written.
+	Logger *slog.Logger
+
+	// Version is reported by /_/healthz and in the page footer. It is passed in
+	// rather than imported because the footer is telling the reader which binary
+	// they are running and internal/version is where that is assembled.
+	Version version.Info
+
+	// Now is the clock. Nil means the system clock, which is the right default
+	// for a program running on a DM's own machine and the wrong one for a test
+	// that wants a CSRF token to expire.
+	Now func() time.Time
+
+	// Production says whether this is a production deployment, and the only
+	// thing it changes is `Secure` on the cookie. A DM running the wiki on their
+	// own machine over plain HTTP on a LAN has to be able to use it, and a
+	// cookie the browser refuses is a wiki nobody can log in to.
+	Production bool
+
+	// Streams bounds the number of live page streams, and is only used when Hub
+	// is nil -- in which case one is built. Zero means DefaultStreams.
+	Streams int
+
+	// AllowedOrigin is the scheme and host a mutation has to come from, checked
+	// against `Origin` so that a page on another site cannot post to this one.
+	// Empty skips the check, which is the right default on a LAN where a browser
+	// sends no `Origin` for a same-origin form post -- and the double-submit
+	// token is the check that does not depend on the header being there.
+	//
+	// It is configuration and never derived from a request's `Host`, because the
+	// whole question is "is this the host I would have written a form into" and a
+	// `Host` the caller chose answers nothing.
+	AllowedOrigin string
+
+	// Secret is the CSRF secret, and a nil or short one makes a fresh random
+	// secret at startup. Supplying it is for the deployment with more than one
+	// process, where a per-process secret would mean a form written by one is
+	// refused by the other.
+	Secret []byte
+}
+
+// DefaultStreams is how many live page streams one server holds open. A campaign
+// is a DM and four players, each with a tab or two open, so this is generous; it
+// is here rather than hard-coded into the hub because the hub is a general
+// fan-out and this is one deployment's appetite.
+const DefaultStreams = 32
+
+// Store is what the HTTP layer reads through.
+//
+// The lookups are `index.Lookups` because the link resolver in a rendered page
+// needs exactly those and the renderer will not take a second, narrower view of
+// the same index: a `[[link]]` and the page tree must agree about what exists,
+// and two interfaces that each listed a subset of the store is a way for them to
+// stop agreeing.
+type Store interface {
+	index.Lookups
+
+	// ListPages returns the pages a principal may read, ordered by path, which
+	// is the page tree and everything else that is "what is in this campaign".
+	ListPages(ctx context.Context, campaignID string, as domain.Principal) ([]domain.Page, error)
+
+	// CampaignBySlug resolves the slug in a URL. A slug that is not a campaign
+	// is `store.ErrNotFound` and the route answers 404.
+	CampaignBySlug(ctx context.Context, slug domain.Slug) (domain.Campaign, error)
+
+	// OwnerExists answers "is this principal bound to this character page", and
+	// takes the *character's* page id rather than the page being decided about.
+	// The resolver's `Owned` is that answer, and it must not be approximated by
+	// asking whether a character owns the page: that is the version which gives
+	// a player the whole subtree or none of it.
+	OwnerExists(ctx context.Context, principalID, characterPageID string) (bool, error)
+}
+
+// request is what a handler is given: everything the middleware decided, and
+// nothing a handler has to go and look up.
+//
+// It is one struct rather than four context values because a handler that reads
+// one out of a context and then has to nil-check it has a code path for "the
+// middleware did not run", and that path is the one nobody tests. It is
+// unexported because the only way in is `requestFrom`, and a type that is in a
+// context under an unexported key is not much use to a caller who cannot set it.
+type request struct {
+	// Principal is who is asking. The zero value is nobody, and nobody reads
+	// anything: the store's predicate admits nothing for it, which is a
+	// property of the predicate and not of this package.
+	Principal domain.Principal
+
+	// Campaign is the campaign in the URL, and the zero value on a route outside
+	// `/c/`.
+	Campaign domain.Campaign
+
+	// Nonce is the per-response CSP nonce. It is in the request because the
+	// templates need it, and because a stream that injects a script needs the
+	// same one or the page's own policy refuses it.
+	Nonce string
+
+	// ID is the request id, which is in the response headers and in the log line.
+	ID string
+}
+
+// identified reports whether a principal was found for this request. It is a
+// method rather than a test of a field because a handler asking "is anybody
+// there" is asking about the session, and the answer is not "is the id non-empty".
+func (r *request) identified() bool { return r.Principal.ID != "" }
+
+// isDM reports whether the caller is a DM of this campaign. It reads the role
+// rather than a decision because the things it gates -- the logout form, the DM's
+// own navigation -- are not per-page rights, and pretending they were would put a
+// fourth Decision field in the resolver for nothing.
+func (r *request) isDM() bool { return r.Principal.Role == domain.RoleDM }
+
+// app is the assembled application. It is unexported and handed back as an
+// `http.Handler`, because there is nothing a caller can do with the type that it
+// cannot do by making a request.
+type app struct {
+	cfg Config
+	log *slog.Logger
+
+	// startedAt is when this application was built, on the *injected* clock.
+	//
+	// It was a package variable reading `time.Now()`, and a test with a fixed
+	// clock then reported an uptime of minus five thousand hours -- which is the
+	// whole argument for injecting a clock in the first place, and the reason the
+	// uptime is computed here rather than from a global.
+	startedAt time.Time
+
+	// renderers is one renderer per campaign, built on first use.
+	//
+	// A renderer holds a link resolver and a resolver belongs to a campaign --
+	// `index.NewResolver` takes one -- so a single shared renderer could not
+	// resolve anything. Each has its own LRU, and sharing one cache across
+	// campaigns would have been the cheaper choice except that the campaign is in
+	// the cache key precisely because two campaigns can hold byte-identical
+	// pages.
+	renderersMu sync.Mutex
+	renderers   map[domain.Slug]*render.Renderer
+}
+
+// errNoStore is what New refuses with, and it is a refusal rather than a
+// default: an application with no store answers every request with a 500, and a
+// DM finds that out by looking at their campaign.
+var errNoStore = errors.New("http: no store was configured")
+
+// New returns the application.
+func New(cfg Config) (http.Handler, error) {
+	if cfg.Store == nil {
+		return nil, errNoStore
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Streams < 1 {
+		cfg.Streams = DefaultStreams
+	}
+	if cfg.Hub == nil {
+		cfg.Hub = sse.NewHub(cfg.Streams)
+	}
+
+	a := &app{
+		cfg:       cfg,
+		log:       cfg.Logger,
+		renderers: map[domain.Slug]*render.Renderer{},
+		startedAt: cfg.Now(),
+	}
+	a.initSecret()
+
+	router := chi.NewRouter()
+	router.NotFound(a.notFound)
+	router.MethodNotAllowed(a.methodNotAllowed)
+
+	// The order of the middleware is in the package comment and none of it is
+	// arbitrary: each layer is outside the one that needs it.
+	router.Use(a.requestID)
+	router.Use(a.logRequests)
+	router.Use(a.recoverPanics)
+	router.Use(a.securityHeaders)
+
+	router.Get("/_/healthz", a.healthz)
+	router.Handle("/static/*", web.Handler("/static/"))
+
+	router.Route("/c/{slug}", func(c chi.Router) {
+		// The order of these three is the answer to "who is asking, about what,
+		// and do they have a link": session first because a cookie is the only
+		// thing that carries an identity, campaign second because a token is
+		// scoped to one, and redeem last because it needs both.
+		c.Use(a.session)
+		c.Use(a.campaign)
+		c.Use(a.redeem)
+
+		// The campaign root, which is where a redemption lands and where a
+		// reader lands with nothing else to read: every page they may see.
+		c.Get("/", a.browse)
+		c.Post("/", a.logout)
+
+		// A page. `?raw=1` is the same page as markdown and `?stream=1` is the
+		// same page as a stream. Both are query parameters and not path
+		// segments, because a path segment would be a first-segment name that
+		// the vault could not also use -- and the vault is the source of truth
+		// (ADR 0001), so it wins any argument about what a URL may look like.
+		c.Get("/*", a.page)
+	})
+
+	return router, nil
+}
+
+// rendererFor returns the renderer for a campaign, building it the first time it
+// is asked for.
+//
+// A campaign can appear while the server is running -- a DM drops a folder into
+// `vault/` and the watcher indexes it -- so the map fills lazily rather than at
+// startup, and it is never pruned: a renderer is a renderer and a 500-entry
+// cache, and a DM with a dozen campaigns over a year has a dozen of them.
+func (a *app) rendererFor(slug domain.Slug) *render.Renderer {
+	a.renderersMu.Lock()
+	defer a.renderersMu.Unlock()
+
+	if existing, found := a.renderers[slug]; found {
+		return existing
+	}
+
+	built := render.NewWithLinks(index.NewResolver(a.cfg.Store, slug.String()))
+	a.renderers[slug] = built
+	return built
+}
+
+// contextKey is the private type behind the request in a context, so that
+// nothing outside this package can put one there or read one out by accident.
+type contextKey struct{}
+
+// requestFrom is the request a handler is working on. It is never nil: the
+// middleware stack puts one in for every request, and a handler that found nil
+// would have been mounted outside the router rather than inside it.
+func requestFrom(ctx context.Context) *request {
+	if req, ok := ctx.Value(contextKey{}).(*request); ok {
+		return req
+	}
+	return &request{}
+}
+
+// campaignURL is a campaign's root: where a redemption lands, and what the
+// browse route answers.
+//
+// It is `render.PageURL` and not a second copy of the rule, because the URLs the
+// renderer writes into a page and the URLs this handler redirects to are the same
+// URLs. Two implementations of "where does a campaign live" is a campaign that
+// works until somebody changes one of them.
+func campaignURL(slug domain.Slug) string {
+	return render.PageURL(slug.String(), "")
+}
+
+// withRequest puts a request in a context. It is one function because the
+// middleware chain and nothing else builds these contexts, and a context value
+// assembled in two places is two places to forget the key.
+func withRequest(ctx context.Context, req *request) context.Context {
+	return context.WithValue(ctx, contextKey{}, req)
+}

@@ -1,7 +1,91 @@
 ## [Unreleased]
 
+### Added
+
+- **`internal/http`: the web shell.** The chi router, the middleware, the
+  handlers and the templates. A handler is handed everything the middleware
+  decided and takes no principal as an argument, because a handler that takes a
+  principal as an argument is a handler whose caller decides who the caller is.
+- **The middleware order is the argument, and it is written down where the
+  package is read:** request id → logging → recovery → security headers → session
+  → campaign → redeem. Read from the inside out it says what each layer is for,
+  and campaign is inside redeem because redemption has to be able to say "that link
+  belongs to a different campaign".
+- **`/_/healthz`,** JSON because the thing reading it is a script. It is under
+  `/_/` because every campaign's URLs are under `/c/`, and it never needs a
+  session: a health check that did would report a wiki as down every time a
+  player's link was revoked.
+- **The CSP is `default-src 'none'` with a per-response nonce** for the script and
+  `'self'` for the stylesheet, plus `base-uri 'none'` and `frame-ancestors 'none'`.
+  A nonce that repeats is a nonce that authorises a script an attacker injected
+  into an earlier response, and `TestTheCSPNonceIsNotTheSameOnEveryRequest` is the
+  test that says so.
+- **`Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex` and `Cache-Control:
+  no-store` on every campaign response,** per ADR 0003, and
+  `X-Content-Type-Options: nosniff` on every response, which is what makes the
+  asset handler's content-type table a correctness question rather than a nicety.
+- **The query string is not logged.** `?k=<token>` is the share-link credential
+  and `r.URL.String()` would put it in every log line, in every proxy in front of
+  the server, and in whatever a DM pastes into a bug report. The log line is built
+  from the method and the path and nothing else.
+- **The CSRF token is an HMAC of the principal's id,** so a player cannot compute
+  one, one principal's is not another's, and a token minted for one campaign is
+  useless in another — the tenancy check happening in a form field. It is tied to
+  the principal and not to the session, because a session rotation is a security
+  event and a token that died with it would make a player reload at the worst
+  moment.
+- **A deployment with no CSRF secret generates one at startup** rather than
+  falling back to something everybody knows.
+- **`?raw=1` is a page's markdown,** under the same decision the HTML is made
+  under, and the body that goes out is `render.PublicText` — the same function
+  the public search index is built from, so a page found by a search and a page
+  fetched raw contain the same characters by construction rather than by
+  agreement.
+- **`?raw=1` and `?stream=1` are query parameters and not path segments,** because
+  a path segment would be a first-segment name the vault could not also use, and
+  the vault is the source of truth.
+- **The logout form is a POST and carries the token,** because a GET that ends a
+  session is a session anybody can end, and a forged POST is refused with a 403.
+- **`index.NewResolver` takes a `Lookups` interface instead of a
+  `*store.Store`,** because `internal/http` needs a narrower view of the index
+  than the sync engine does and a caller that has to assert its way back to the
+  concrete type to build a link resolver is a caller whose interface is a lie.
+- **The cookie name follows the deployment.** `__Host-wiki_session` in production,
+  `wiki_session` over plain HTTP — because a browser refuses a `__Host-` cookie
+  without `Secure`, *silently*, so a local deployment that kept the prefix would
+  be a wiki where every redemption works and no page is ever readable. This is
+  the one thing in the cookie attributes that is not ADR 0003's, and the reason is
+  written on the constant.
+- **`make cover` measures hand-written code.** Generated templ output is filtered
+  out of the profile first, for the same reason `.golangci.yml` excludes it from
+  linting: measuring it says something about the templates' element-by-element
+  branches rather than about whether the application is tested. The filter is a
+  filename and nothing else, and the raw profile is still written so a reviewer can
+  diff the generated part separately. Hand-written coverage is 88.7%.
+
 ### Fixed
 
+- **A share link is a reusable bearer credential, not a one-time code** — a
+  finding, not a decision, and the first test to ask the question found that ADR
+  0003's five steps do not rotate the token. The case it serves is a player who
+  clears their cookies or wants the wiki on a second device, and the alternative
+  is a DM issuing a fresh link every time a browser forgets somebody. The threat
+  model's answer is revocation and expiry rather than rotation, and
+  `TestALinkIsRedeemableAgainUntilItIsRevoked` asserts that revocation stops it.
+- **The 500 page asks the store for nothing.** The store is the thing that has
+  just failed, and an error page that lists a page tree is an error page that
+  queries the database again — which is a second failure, and a panic inside the
+  recovery handler is a panic that takes the process down with every other
+  player's session on it. Found by a test that made the store *panic* rather than
+  fail.
+- **The uptime was a package variable reading `time.Now()`** while everything else
+  used the injected clock, so a test with a fixed clock got minus five thousand
+  hours. It passed as a duration string, which is what makes it the kind of wrong
+  that survives review: it is a duration, it is a string, and it is nonsense.
+- **The 404, the 500, the 403 and the 405 build their shell through one
+  function,** because three hand-written ones had already disagreed about whether
+  the CSRF token was in it and the 404 ended up with a logout form whose token was
+  the empty string: a form that could never be submitted.
 - **The read predicate now asks whose campaign the principal is.** It always
   asked which campaign the *caller* wanted, and never whether the caller belongs
   to it, so a `GetPage` for a page in Thornford made with a session for the

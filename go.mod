@@ -15,6 +15,7 @@ require (
 require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-chi/chi/v5 v5.2.3 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

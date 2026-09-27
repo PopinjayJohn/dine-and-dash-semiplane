@@ -1,0 +1,228 @@
+package http
+
+import "github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
+
+// The templates.
+//
+// Five components, and the count is the point: a layout every page goes through,
+// the page itself, the campaign root, a notice for the status codes, and the
+// article on its own so that the stream can patch it without replacing the
+// navigation a reader is looking at.
+//
+// Everything a template is given comes from `view.go`, and everything a template
+// draws from a request comes through `viewRequest`. That is deliberate: generated
+// code is not read line by line before a commit, so the guarantee is not "the
+// template does not print the cookie" but "the template was never given the
+// cookie".
+//
+// The only unescaped value anywhere in here is `pageData.Page.HTML`, which is the
+// output of the sanitising renderer. It is typed `pageFragment` so that the one
+// place that skips escaping says so in its type.
+
+// layout is the shell: the head, the sidebar and the content.
+//
+// The nonce is on the script tag and nowhere else, because a nonce authorises
+// this one element and nothing else, and it is the reason `script-src` does not
+// need `unsafe-inline` even though the stream injects script elements into the
+// page afterwards.
+templ layout(v shell) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ v.Title }</title>
+			<link rel="stylesheet" href={ stylesheetPath }/>
+			<script type="module" src={ datastarPath } nonce={ v.Nonce } defer></script>
+		</head>
+		<body>
+			<a class="skip-link" href="#content">Skip to the page</a>
+			<div class="shell">
+				@sidebar(v)
+				<main class="main" id="content">
+					{ children... }
+					@footer(v.Footer)
+				</main>
+			</div>
+		</body>
+	</html>
+}
+
+// footer is the version line, and it is on every page because a DM reporting a
+// bug will say which build and a build with no version on the page makes that a
+// question.
+templ footer(v footerView) {
+	<footer class="footer">
+		<p>
+			{ v.Version.Version }
+			if v.Version.Commit != "" {
+				{ " " }<code>{ v.Version.Commit }</code>
+			}
+			{ " " }<time datetime={ v.Version.Date }>{ v.Version.Date }</time>
+		</p>
+	</footer>
+}
+
+// sidebar is the campaign, the tree, and the logout form.
+//
+// The logout form is a POST because a GET that ends a session is a session
+// anybody can end, and it carries the CSRF token because that is what stops
+// somebody else's page from ending it. There is no form when nobody is logged in,
+// because there would be nothing for it to log out of.
+templ sidebar(v shell) {
+	<nav class="sidebar" aria-label="Campaign">
+		if v.Campaign.Root != "" {
+			<a class="brand" href={ v.Campaign.Root }>{ v.Campaign.Name }</a>
+			<span class="brand-sub">A wiki for one table</span>
+			<h2>Pages</h2>
+			if len(v.Tree) == 0 {
+				<p class="tree-empty">Nothing here yet.</p>
+			} else {
+				@treeList(v.Tree, v.Current)
+			}
+			if v.Identified {
+				<h2>Session</h2>
+				<form method="post" action={ v.Campaign.Root }>
+					<input type="hidden" name="csrf" value={ v.CSRF }/>
+					<button type="submit">Log out</button>
+				</form>
+			}
+		} else {
+			<span class="brand">The wiki</span>
+		}
+	</nav>
+}
+
+// treeList is the page tree, recursively.
+//
+// `aria-current="page"` is how the page being read is marked, rather than a class
+// the stylesheet colours: the browser's own notion of the current page is what a
+// keyboard user and a screen reader already understand, and a bespoke one is a
+// second implementation of it.
+//
+// A node with no URL is a directory -- `locations/` with no page of its own -- and
+// is drawn as a label, because a link to a page that does not exist is a 404 a
+// reader clicked on purpose.
+templ treeList(nodes []*treeNode, current string) {
+	<ul class="tree">
+		for _, node := range nodes {
+			<li>
+				if node.page() {
+					if node.Path == current {
+						<a href={ node.URL } aria-current="page">{ node.Name }</a>
+					} else {
+						<a href={ node.URL }>{ node.Name }</a>
+					}
+				} else {
+					<span class="tree-empty">{ node.Name }</span>
+				}
+				if len(node.Children) > 0 {
+					@treeList(node.Children, current)
+				}
+			</li>
+		}
+	</ul>
+}
+
+// page is one page, in the shell.
+//
+// The article is its own component so that the stream can patch `#page` and leave
+// the sidebar and the footer where they are: a reader who is looking at a page
+// when it changes should see the page change, not have their scroll position and
+// their place in the tree thrown away.
+templ page(v pageData) {
+	@layout(v.shell) {
+		@article(v.Page)
+	}
+}
+
+// article is a page's body and nothing else.
+//
+// The id is `page` and it is in the CSS and in the stream's patch selector, so it
+// is a contract in three places; `TestTheStreamPatchesTheArticle` is what holds
+// the third to the first.
+templ article(p renderedPage) {
+	<article class="page" id="page">
+		<h1 class="page-title">{ p.Title }</h1>
+		<p class="page-meta">
+			<span class="badge">{ p.Kind }</span>
+			<span class="badge">{ p.Audience }</span>
+			<time datetime={ p.Updated }>{ p.Updated }</time>
+		</p>
+		@tableOfContents(p.TOC)
+		<div class="page-body">
+			@templ.Raw(p.HTML)
+		</div>
+		<p class="page-meta">
+			<a href={ p.RawURL }>Source</a>
+		</p>
+	</article>
+}
+
+// tableOfContents is the headings the renderer found, and it is skipped when
+// there are none rather than drawn empty.
+templ tableOfContents(entries []render.Heading) {
+	if len(entries) > 0 {
+		<nav class="toc" aria-label="On this page">
+			<h2>On this page</h2>
+			<ol>
+				for _, entry := range entries {
+					<li>
+						<a href={ "#" + entry.Anchor }>{ entry.Text }</a>
+					</li>
+				}
+			</ol>
+		</nav>
+	}
+}
+
+// browse is the campaign root: the campaign's own page if it has one, and the
+// count of what the reader may see.
+//
+// The count is shown even when the list is not, because it is the honest thing to
+// say to a player: a wiki with three pages in it and forty in the vault is a wiki
+// they are not being shown all of, and saying so is better than letting them
+// assume it is all of them.
+templ browse(v browseData) {
+	@layout(v.shell) {
+		<h1 class="page-title">{ v.Campaign.Name }</h1>
+		<p class="page-meta">{ pluralPages(v.Count) }</p>
+		if v.HasIntro {
+			@intro(v.Intro)
+		}
+		if len(v.Tree) == 0 {
+			<div class="notice notice-plain">
+				<p>There is nothing to read here yet.</p>
+			</div>
+		}
+	}
+}
+
+// intro is the campaign's landing page, rendered through the same path as every
+// other page and under the same decision.
+templ intro(fragment pageFragment) {
+	<div class="page-body">
+		@templ.Raw(fragment)
+	</div>
+}
+
+// notice is a 404, a 405 or a 500.
+//
+// One component for all three, and the layout is the same for all three, so a DM
+// who hits a 500 still has their campaign's navigation and can go somewhere else
+// instead of being stuck on an error page.
+templ notice(v noticeData) {
+	@layout(v.shell) {
+		<div class={ noticeClass(v.Status) }>
+			<h1 class="page-title">{ v.Title }</h1>
+			<p class="page-meta">HTTP { v.Status }</p>
+			<p>{ v.Body }</p>
+			if v.Request.ID != "" {
+				<p class="page-meta">Request { v.Request.ID }</p>
+			}
+			if v.Campaign.Root != "" {
+				<p><a href={ v.Campaign.Root }>Back to { v.Campaign.Name }</a></p>
+			}
+		</div>
+	}
+}
