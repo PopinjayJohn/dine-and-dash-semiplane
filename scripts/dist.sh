@@ -88,7 +88,18 @@ for platform in "${platforms[@]}"; do
 	# A tar and not a zip, because every platform's tools can make one and not
 	# every platform's tools can unzip one. `tar -xzf` on the far end is the
 	# ADR 0011 property: a restore that needs this project to be working.
-	tar -C "$stage" -czf "${dist}/${name}.tar.gz" .
+	#
+	# **Named members, not `.`.** `tar -C "$stage" -czf out.tar.gz .` puts an entry
+	# called `.` in the archive, and extracting that entry makes tar set the
+	# *destination directory's* mode and timestamps — so a DM who unzips a release
+	# into their own folder has that folder's permissions rewritten, and in a
+	# container the extraction fails outright with "Cannot change mode to
+	# rwx-----T: Operation not permitted". The first version of this script did that
+	# and `release.yml`'s own binary check found it, because the job extracts the
+	# archives it just built.
+	members=("wiki${extension}" "README.md")
+	[ -d "${stage}/docs" ] && members+=("docs")
+	tar -C "$stage" -czf "${dist}/${name}.tar.gz" "${members[@]}"
 
 	echo "dist:   ${dist}/${name}.tar.gz"
 done

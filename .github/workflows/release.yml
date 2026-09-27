@@ -75,17 +75,35 @@ jobs:
           # ADR 0004 claims a single static binary, and `ci.yml` checks it for the
           # local build. A release archive is the one artifact that leaves the
           # repository, so the claim is checked *there*.
+          #
+          # Each archive is extracted into **its own directory**, because an archive
+          # that contains a `.` entry makes tar set the extraction target's mode and
+          # timestamps — which is both a thing a DM would notice and a thing that
+          # fails outright in a container. `scripts/dist.sh` stopped putting one in;
+          # this is the check that says so rather than trusting it.
           for archive in dist/*.tar.gz; do
-            binary="$(tar -tzf "$archive" | grep -E 'wiki(\.exe)?$' | head -1)"
+            scratch="$(mktemp -d)"
+            binary="$(tar -tzf "$archive" | grep -E '(^|/)wiki(\.exe)?$' | head -1)"
+
             if [ -z "$binary" ]; then
               echo "::error::$archive holds no wiki binary"
               exit 1
             fi
-            tar -xzf "$archive" -C /tmp
-            file "/tmp/$binary" | grep -qE "ELF|Mach-O|PE32"
-            rm -f "/tmp/$binary"
+            if tar -xzf "$archive" -C "$scratch"; then
+              :
+            else
+              echo "::error::$archive will not extract"
+              exit 1
+            fi
+            if file "$scratch/$binary" | grep -qE "ELF|Mach-O|PE32"; then
+              echo "  $(basename "$archive"): $binary"
+            else
+              echo "::error::$binary in $archive is not a binary"
+              exit 1
+            fi
+            rm -rf "$scratch"
           done
-          echo "every archive holds a binary"
+          echo "every archive holds a binary, and every archive extracts"
 
       - name: publish
         env:
