@@ -426,6 +426,26 @@
   quoted on the way out as well, so `tag: :00` survives a round trip.
 
 ### Fixed
+- **An unauthenticated request could read the whole campaign.** The read
+  predicate's first clause was `p.visibility = 'players'` with no mention of the
+  principal, so a request that identified nobody — a session that could not be
+  found, a cookie that was never sent — passed it. An empty role is not `dm`, so
+  the rest of the clause never ran and every `players` page came back. The fix is
+  one conjunct: `? = 'player' AND p.visibility = 'players'`.
+  **`TestStoreReadPredicateMatchesResolver` found it**, in the first two of its 36
+  cells, on its first run — the SQL said yes and `access.For` said no. **The
+  specification writes the same clause**, so this is a correction to the spec as
+  well as to the code, and it is pinned in its own test
+  (`TestAnUnidentifiedRequestReadsNothing`) so that simplifying the audience test
+  back to a bare visibility check fails in one place.
+- **A `character:` key resolved to a page at `<slug>`** rather than at
+  `characters/<slug>` — an M4 bug, which M7 surfaced by using the answer as a page
+  id. Nothing could go wrong from it before: a wrong path only ever produced a "not
+  a page in this campaign" report for a page whose owner was perfectly fine, which
+  is noise. As a page id it is a character that is never owned, which is fail-closed
+  but still a bug — a player's spell sheet would be nobody's, and the report would
+  blame a page that does not exist. The spec is explicit that a character is a page
+  at `characters/<slug>` and both ways of naming one resolve to the same thing.
 
 - **A test fixture's table keys were long enough to make two Go versions
   disagree about the file.** `gofmt` aligns the values in a run of

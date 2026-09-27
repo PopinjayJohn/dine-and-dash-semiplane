@@ -175,9 +175,14 @@ func TestReadScopeAdmits(t *testing.T) {
 			as:   player,
 			want: []string{"locations/rivergate"},
 		},
-		"a principal with no role reads only the players' pages": {
+		// Nothing. This case used to expect the `players` page, and the
+		// expectation was the bug: the first clause of the audience test was
+		// `p.visibility = 'players'` on its own, which does not look at the role
+		// before it answers true, so a request that identified nobody read the
+		// whole campaign. It now needs to be a player to be a player.
+		"a principal with no role reads nothing": {
 			as:   unknown,
-			want: []string{"locations/rivergate"},
+			want: nil,
 		},
 	}
 
@@ -285,10 +290,28 @@ func TestOwnershipBranchIsTheBindingTable(t *testing.T) {
 			"the audience test and the secret test are different questions", got, want)
 	}
 
-	if !strings.Contains(aclOwnership, "pc.character_page_id = p.id") {
-		t.Errorf("the ownership test is not correlated on the page being read: %q\n"+
-			"a subquery that compared against the campaign instead would admit every "+
-			"player to every dm-and-owner page in it", aclOwnership)
+	// Correlated on the page's *owner*, which is the character and not the page.
+	// The version that correlated on `p.id` said a player may read the one file
+	// they are bound to and not the notes underneath it.
+	if !strings.Contains(aclOwnership, "pc.character_page_id = p.owner_character_page_id") {
+		t.Errorf("the ownership test is not correlated on the page's owner: %q\n"+
+			"a binding is between a principal and a character, and every page under "+
+			"that character belongs to the same people", aclOwnership)
+	}
+
+	// And the two correlations that would be a disclosure instead of a missing
+	// feature. Both are one word away from the real one, which is why they are
+	// named here rather than left to be noticed.
+	for _, leak := range []string{
+		// "does this principal own *anything* in this campaign"
+		`pc.principal_id = ? AND pc.character_page_id = p.campaign_id`,
+		// "does this principal own this page" -- the pre-M7 correlation
+		`pc.principal_id = ? AND pc.character_page_id = p.id`,
+	} {
+		if strings.Contains(aclOwnership, leak) {
+			t.Errorf("the ownership test contains %q, which admits more than it should: %q",
+				leak, aclOwnership)
+		}
 	}
 	if strings.Contains(aclOwnership, "1 = 0") {
 		t.Error("the ownership test still has the placeholder in it: no principal owns a page any more")
@@ -464,11 +487,14 @@ func principalRow(t *testing.T, s *Store, campaignID, label, tokenHash string) d
 func characterPage(t *testing.T, s *Store, campaignID string) domain.Page {
 	t.Helper()
 
+	// A character page is its own owner, which is what makes a `dm-and-owner`
+	// character page readable by the player bound to it rather than by nobody.
+	// The id is not known before the insert, so it goes in afterwards.
 	character, err := s.UpsertPage(context.Background(), domain.Page{
 		CampaignID:  campaignID,
 		Path:        "characters/aria",
 		Title:       "Aria",
-		Type:        domain.PageTypeNote,
+		Type:        domain.PageTypeCharacter,
 		Visibility:  domain.VisibilityDMAndOwner,
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker who owes the toll-collector money.\n",
@@ -477,7 +503,23 @@ func characterPage(t *testing.T, s *Store, campaignID string) domain.Page {
 	if err != nil {
 		t.Fatalf("UpsertPage for the character page: %v", err)
 	}
-	return character
+
+	owned, err := s.UpsertPage(context.Background(), domain.Page{
+		CampaignID:           campaignID,
+		Path:                 character.Path,
+		Title:                character.Title,
+		Type:                 character.Type,
+		Visibility:           character.Visibility,
+		OwnerCharacterPageID: character.ID,
+		Frontmatter:          character.Frontmatter,
+		Body:                 character.Body,
+		ContentHash:          character.ContentHash + "-owned",
+		RendererVersion:      character.RendererVersion,
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage for the owned character page: %v", err)
+	}
+	return owned
 }
 
 // mustSearchQuery parses a query for the cases above, which are about who can see

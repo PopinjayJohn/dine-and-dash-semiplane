@@ -8,22 +8,25 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 )
 
-// TestForDecisionMatrix is the named test from §14, and it is the whole rights
-// matrix of §8 written out as 36 cells: two principals, three audiences, and the
-// four things a decision can say.
+// TestForDecisionMatrix is the named test from §14: every cell of the rights
+// matrix in §8, written out.
+//
+// Twenty-four cells here — §8's two principals × three audiences × two ownership
+// states × two archived states — and the two dimensions that are not in §8's
+// table are the two it does not describe: *ownership* is the `dm-and-owner`
+// column made explicit, and *archived* is a page that is not there, which no
+// matrix column describes because it is not a question about who may read it.
+//
+// `TestStoreReadPredicateMatchesResolver` in the store covers the same matrix
+// with a third role added, the one where the request identified nobody, and
+// checks it against what the SQL says.
 //
 // Every cell is written down rather than generated. A generated matrix is a
 // matrix and a generator, and when they disagree the generator is the one that
 // reads as authoritative — which is how a table of tests becomes a restatement of
-// the code. Writing all thirty-six by hand means a change to `For` has to be
-// answered cell by cell, and a cell somebody forgot to write about is a cell
-// nobody checked.
-//
-// The matrix is 2 principals × 3 audiences × 3 ownership states × 2 archived
-// states = 36, and the two extra dimensions are not in §8's table because they
-// are not access control: *ownership* is the `dm-and-owner` column of the table
-// made explicit, and *archived* is a page that is not there, which no matrix
-// column describes because it is not a question about who may read it.
+// the code. Writing every cell by hand means a change to `For` has to be answered
+// cell by cell, and a cell somebody forgot to write about is a cell nobody
+// checked. It is also what caught the `dm-only` bug described in the changelog.
 
 func TestForDecisionMatrix(t *testing.T) {
 	t.Parallel()
