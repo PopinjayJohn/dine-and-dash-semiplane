@@ -82,6 +82,20 @@ func (a *app) browse(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Query().Has("new"):
 		a.newPage(w, r)
 		return
+	case r.URL.Query().Has("search"):
+		// The search dropdown, and it hangs off the root as a query for the reason
+		// every auxiliary surface in this application does: a path segment would be
+		// a first-segment name the vault could also use, and `search` is a page a
+		// DM could write. `chi` would route `/c/<slug>/search` to the dropdown and
+		// make that page unreachable, which is the same rule ADR 0001 settles and
+		// the same answer.
+		//
+		// The cost is that a search is not a URL a DM can paste into a chat, which
+		// is a real thing to want and is a thing the *page* answers instead: a
+		// results page is a page with a query on it, and that is M11's problem
+		// rather than this milestone's.
+		a.searchResults(w, r)
+		return
 	case r.URL.Query().Has(usersQuery):
 		a.usersPage(w, r)
 		return

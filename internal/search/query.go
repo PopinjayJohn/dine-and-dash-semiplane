@@ -39,6 +39,19 @@ type Query struct {
 	// applied inside the same read predicate as everything else, so a player who
 	// searches `is:dm-only` gets no results rather than a page (ADR 0009).
 	Visibility domain.Visibility
+
+	// PrefixLastTerm makes the last text term a prefix match rather than a whole
+	// word, and it is a *field on the query* rather than a flag on the store's
+	// method for one reason: the match expression's invariant is that nothing
+	// outside a quoted literal is FTS5 syntax, and a prefix `*` is syntax. So the
+	// widening is something a caller asks for by name, lands in the expression from
+	// exactly one place, and a search that did not ask for one cannot grow one.
+	//
+	// M10's search box asks for it and nothing else does. A box that matches whole
+	// words only is not a box: somebody typing `fort` gets nothing, `forti` gets
+	// nothing, and `fortified` gets the page, so every result appears after the
+	// last character of the word that would find it.
+	PrefixLastTerm bool
 }
 
 // ErrQuery is what a search that cannot be answered as typed returns, so a

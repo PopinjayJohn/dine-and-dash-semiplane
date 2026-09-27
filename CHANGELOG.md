@@ -1,7 +1,57 @@
 ## [Unreleased]
 
+### Added
+
+- **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
+  of candidates and nothing else, so the page's chrome is not re-rendered
+  underneath a reader's cursor. The candidates are the ACL's answer and not a
+  filter applied afterwards: the query goes through `search.Run` and the two
+  indexed scopes, so a `dm-only` page is not in the list for a player — including
+  its *title*, which is the disclosure that ADR 0020's fix removed from a
+  `[[link]]`, arriving by another route.
+- **A hit from the private index is marked, not hidden.** A player searching their
+  own character's page and finding it in the private index is the point of that
+  index, and a dropdown that silently hid it would be a dropdown lying about what
+  it searched.
+- **The dropdown is bounded and it is not the query language's limit.**
+  `search.MaxLimit` is fifty and a dropdown wants eight; the fusion cost is linear
+  in the depth it fetches, and the two numbers being different is the difference
+  between a search box and a denial of service. A one-character query is not
+  searched for at all.
+- **A query that cannot be read is a 200 with an empty dropdown, not a 500.**
+  `search.ErrQuery` already existed for exactly this; the first version of the
+  handler classified it by string-matching for "unterminated" and "unbalanced",
+  which **cannot fire** — an unterminated quote is a literal quote in this query
+  language, and the only thing `Parse` refuses is an `is:` with a level that is
+  not one of the three. A 500 for a keystroke is a wiki that appears to break
+  while somebody types.
+- **`search.Query.PrefixLastTerm`, and `search.WithPrefixLastTerm()`.** M10 added a
+  search box, and a box that matches whole words only is not a box: somebody typing
+  `fort` gets nothing, `forti` gets nothing, and `fortified` gets the page, so
+  every result appears after the last character of the word that would find it.
+  Only the **last** term — every term would make `toll collector` match
+  `tolerance` — and only when asked, because the `*` is the one piece of FTS5
+  syntax the match expression emits and
+  `TestSearchMatchExpressionQuotesEveryClause` holds the line that nothing else
+  can. A field on the query rather than a flag on the store's method, so a caller
+  widens the index by name.
+- **`web/static/wiki.js`**, the reading layer: the dropdown, the live page and the
+  toasts. The patch handler honours a selector of `#page` and **drops any other**,
+  so a hijacked stream can at worst put a stale page on screen; and every surface
+  has an ordinary URL behind it, so a blocked script costs a dropdown and a live
+  page and nothing else.
+
 ### Fixed
 
+- **The http test fixture wrote rows and no files' worth of frontmatter.** It
+  hand-wrote each page's frontmatter block *and* set the struct's fields, and the
+  two drifted: `type:` was in the struct and missing from every block, and one
+  title contained a colon that is a YAML error, so that page did not parse and was
+  skipped. **Nothing failed loudly**, because the rows used to come from the struct
+  and the files were never read by anything. It is now built through the
+  derivation, like a real campaign — which is what made the search test able to
+  notice: it found no pages at all, and the titles and audiences it would have
+  found were nonsense.
 - **A link resolves for its reader, and the reader is the DM no more.**
   [ADR 0020](docs/adr/0020-link-resolution-is-campaign-wide.md)'s fix, which M9
   decided and did not build. `domain.PrincipalFrom(ctx)` is read by the resolver

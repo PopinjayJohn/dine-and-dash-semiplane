@@ -10,6 +10,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
@@ -47,6 +48,14 @@ func (b brokenStore) CampaignBySlug(context.Context, domain.Slug) (domain.Campai
 
 func (b brokenStore) OwnerExists(context.Context, string, string) (bool, error) {
 	return false, b.out("OwnerExists")
+}
+
+func (b brokenStore) SearchPublic(context.Context, string, domain.Principal, search.Query, int) ([]search.Hit, error) {
+	return nil, b.out("SearchPublic")
+}
+
+func (b brokenStore) SearchSecrets(context.Context, string, domain.Principal, search.Query, int) ([]search.Hit, error) {
+	return nil, b.out("SearchSecrets")
 }
 
 func (b brokenStore) ListPrincipals(context.Context, string) ([]domain.Principal, error) {

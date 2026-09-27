@@ -851,3 +851,136 @@ a:hover {
 .revisions form {
   margin-left: auto;
 }
+
+/* --------------------------------------------------------------- search ---- */
+
+.search {
+  position: relative;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.search input {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.search-dropdown {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 12%);
+}
+
+/* `hidden` is the attribute and the rule is the one that beats it, because
+ * `.search-dropdown` sets `display: block`-ish properties and a browser's
+ * `[hidden] { display: none }` is weaker than a class selector. */
+.search-dropdown[hidden] {
+  display: none;
+}
+
+.search-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search-hit {
+  display: block;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.search-hit:last-child {
+  border-bottom: 0;
+}
+
+.search-hit:hover,
+.search-hit:focus-visible {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+
+.search-hit-title {
+  font-weight: 600;
+}
+
+.search-hit-kind,
+.search-hit-path,
+.search-hit-secret {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  margin-left: 0.4rem;
+}
+
+/* Not a badge about the page: a note about *this result*, because it matched in a
+ * secret block. Hiding the hit would be a dropdown that lied about what it
+ * searched. */
+.search-hit-secret {
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.search-hit-snippet {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.search-empty {
+  margin: 0;
+  padding: 0.5rem 0.55rem;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+/* --------------------------------------------------------------- toasts ---- */
+
+/* Top right, over the content, and out of the way of the sidebar so a toast
+ * never covers the tree somebody is about to click. */
+.toasts {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-width: min(24rem, 90vw);
+  pointer-events: none;
+}
+
+.toast {
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 14%);
+  font-size: 0.9rem;
+}

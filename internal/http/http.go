@@ -66,6 +66,7 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/web"
@@ -200,6 +201,14 @@ type Store interface {
 	// the reason is known.
 	RevokePrincipal(ctx context.Context, id string) error
 	AppendAudit(ctx context.Context, e domain.AuditEntry) (domain.AuditEntry, error)
+
+	// The two searches, which are what a search box is. They are a named pair
+	// rather than one method with a flag because they read different tables and
+	// are filtered by different scopes, and only one of them may be called for a
+	// principal who is not entitled to it -- a flag would make the unsafe call a
+	// one-character mistake. The comment is `search.Searcher`'s and is the reason
+	// they are here rather than reached for separately.
+	search.Searcher
 
 	// OwnerExists answers "is this principal bound to this character page", and
 	// takes the *character's* page id rather than the page being decided about.

@@ -301,6 +301,39 @@ type revisionRow struct {
 	Message string
 }
 
+// searchFragment is the dropdown's contents: the candidates, and the query they
+// were found for.
+//
+// The query is in the data rather than read back out of the request by the
+// template, for the same reason every other template's data is built here: a
+// template that could reach the request could print the request.
+type searchFragment struct {
+	Candidates []candidate
+	Query      string
+}
+
+// candidate is one row of the dropdown.
+//
+// It has a `URL` and not a `Path` for the same reason the tree does: a template
+// that builds a URL is a template that can build the wrong one, and the campaign
+// is in every URL in this application.
+type candidate struct {
+	Path  string
+	Title string
+	Kind  string
+	URL   string
+
+	// Snippet is plain text from the index and the template escapes it. It is
+	// already plain — `search.Hit.Snippet` refuses to be markup — so it is a
+	// sentence and not a rendered excerpt, and the CSS does the rest.
+	Snippet string
+
+	// Secret records that the hit came from the private index, so it matched in a
+	// secret block. The scope already admitted it, so this is a note for the
+	// reader rather than a filter.
+	Secret bool
+}
+
 // usersView is the campaign's principals.
 //
 // It carries a `shell` and not a `page`, because there is no page: a list of
@@ -455,3 +488,10 @@ var (
 // the same two reasons: nothing is fetched at runtime, and it is reviewed code in
 // this repository rather than a string in a handler.
 const editorScriptPath = "/static/editor.js"
+
+// readingScriptPath is the reading layer: the search dropdown, the live page and
+// the toasts. It is a separate file from the editor's because the two have
+// different readers -- one is somebody reading a campaign and the other is
+// somebody writing a page -- and a file per reader is a file a person can hold in
+// their head.
+const readingScriptPath = "/static/wiki.js"
