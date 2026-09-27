@@ -8,6 +8,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // Rotation is the hardening item ADR 0003 lists as "session rotation whenever role
@@ -86,7 +87,7 @@ func TestABindingChangeEndsEverySession(t *testing.T) {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestRotationIsRecorded(t *testing.T) {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestTheBindingDetailIsACountAndNotAPageList(t *testing.T) {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestAChangeTakesEffectOnTheNextRequest(t *testing.T) {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}

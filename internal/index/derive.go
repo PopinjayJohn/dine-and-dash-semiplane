@@ -324,7 +324,11 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 // row, and it is called only with a plan that `isSettled` said was not already
 // there.
 func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
-	stored, err := y.store.UpsertPage(ctx, p.page)
+	// As the DM, which is what the sync *is*: it indexes the DM's own vault and
+	// has to write every page in it, including the `dm-only` ones. The store's
+	// write gate is for the other writers, and M9's editor is the one that will
+	// be refused.
+	stored, err := y.store.UpsertPage(ctx, p.page, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return outcome{}, fmt.Errorf("indexing %s: %w", p.path, err)
 	}

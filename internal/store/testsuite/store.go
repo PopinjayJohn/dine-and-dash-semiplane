@@ -355,7 +355,7 @@ func referencesAreEnforced(t *testing.T, factory Factory) {
 	ctx := context.Background()
 	s := factory(t)
 
-	if _, err := s.UpsertPage(ctx, pageFixture("no-such-campaign")); err == nil {
+	if _, err := s.UpsertPage(ctx, pageFixture("no-such-campaign"), asDM("no-such-campaign")); err == nil {
 		t.Error("a page belonging to a campaign that does not exist was accepted")
 	}
 	if _, err := s.AppendRevision(ctx, revisionFixture("no-such-page")); err == nil {
@@ -647,7 +647,10 @@ func createPage(t *testing.T, s API, campaignID string, mutate ...func(*domain.P
 		m(&p)
 	}
 
-	stored, err := s.UpsertPage(context.Background(), p)
+	// As the DM, because this is the suite's page fixture and a case about
+	// anything other than access control is about the store's behaviour rather
+	// than about who is allowed to write.
+	stored, err := s.UpsertPage(context.Background(), p, asDM(campaignID))
 	if err != nil {
 		t.Fatalf("UpsertPage(%q): %v", p.Path, err)
 	}
@@ -679,7 +682,7 @@ func lookupTargets(t *testing.T, factory Factory) {
 		Title:       "Garros Ironbar",
 		Type:        domain.PageTypeNPC,
 		ContentHash: "hash-of-garros",
-	}); err != nil {
+	}, asDM(campaign.ID)); err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 

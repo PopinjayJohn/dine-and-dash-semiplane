@@ -48,7 +48,7 @@ func audienceFixture(t *testing.T) (*Store, domain.Campaign) {
 			Frontmatter: "title: " + path + "\n",
 			Body:        "Some prose about " + path + ".\n",
 			ContentHash: "hash-of-" + path,
-		})
+		}, AsDM(campaign.ID))
 		if upsertErr != nil {
 			t.Fatalf("UpsertPage(%q): %v", path, upsertErr)
 		}
@@ -65,7 +65,7 @@ func audienceFixture(t *testing.T) (*Store, domain.Campaign) {
 		Frontmatter: "title: the old Rivergate\n",
 		Body:        "Demolished.\n",
 		ContentHash: "hash-of-old-rivergate",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the archived page: %v", err)
 	}
@@ -92,7 +92,7 @@ func audienceFixture(t *testing.T) (*Store, domain.Campaign) {
 		Frontmatter: "title: somebody else's Rivergate\n",
 		Body:        "Not this campaign's town.\n",
 		ContentHash: "hash-of-their-rivergate",
-	}); err != nil {
+	}, AsDM(campaign.ID)); err != nil {
 		t.Fatalf("UpsertPage for the other campaign: %v", err)
 	}
 
@@ -499,7 +499,7 @@ func characterPage(t *testing.T, s *Store, campaignID string) domain.Page {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker who owes the toll-collector money.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, AsDM(campaignID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the character page: %v", err)
 	}
@@ -515,7 +515,7 @@ func characterPage(t *testing.T, s *Store, campaignID string) domain.Page {
 		Body:                 character.Body,
 		ContentHash:          character.ContentHash + "-owned",
 		RendererVersion:      character.RendererVersion,
-	})
+	}, AsDM(campaignID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the owned character page: %v", err)
 	}

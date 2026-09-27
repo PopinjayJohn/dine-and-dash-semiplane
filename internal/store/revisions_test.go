@@ -228,7 +228,7 @@ func TestRevisionsAreNumberedPerPage(t *testing.T) {
 	first := mustCreatePage(t, s, c.ID)
 	second := page(c.ID)
 	second.Path = "npcs/garros-ironbar"
-	secondOther, upsertErr := s.UpsertPage(ctx, second)
+	secondOther, upsertErr := s.UpsertPage(ctx, second, store.AsDM(c.ID))
 	if upsertErr != nil {
 		t.Fatalf("UpsertPage: %v", upsertErr)
 	}

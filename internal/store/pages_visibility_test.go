@@ -39,7 +39,7 @@ func TestUpsertPageRecordsTheAudience(t *testing.T) {
 			given := page(c.ID)
 			given.Visibility = tt.given
 
-			stored, err := s.UpsertPage(ctx, given)
+			stored, err := s.UpsertPage(ctx, given, store.AsDM(c.ID))
 			if err != nil {
 				t.Fatalf("UpsertPage: %v", err)
 			}
@@ -99,7 +99,7 @@ func TestUpsertPageReplacesTheAudienceInPlace(t *testing.T) {
 
 	closed := page(c.ID)
 	closed.Visibility = domain.VisibilityDMOnly
-	updated, err := s.UpsertPage(ctx, closed)
+	updated, err := s.UpsertPage(ctx, closed, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}

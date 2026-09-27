@@ -45,7 +45,7 @@ func TestSyncRepairsInjectedDrift(t *testing.T) {
 					RendererVersion: page.RendererVersion,
 					CreatedAt:       page.CreatedAt,
 					UpdatedAt:       page.UpdatedAt,
-				}); err != nil {
+				}, store.AsDM(page.CampaignID)); err != nil {
 					t.Fatalf("damaging the row: %v", err)
 				}
 			},
@@ -89,7 +89,7 @@ func TestSyncRepairsInjectedDrift(t *testing.T) {
 					Title:       "Never existed",
 					Type:        domain.PageTypeNote,
 					ContentHash: "a-hash-for-a-file-that-is-not-there",
-				}); err != nil {
+				}, store.AsDM(syncer.Campaign().ID)); err != nil {
 					t.Fatalf("adding a phantom row: %v", err)
 				}
 			},
@@ -316,7 +316,7 @@ func TestReindexFullForgetsWhatTheFilesDoNotSay(t *testing.T) {
 		Title:       "Never existed",
 		Type:        domain.PageTypeNote,
 		ContentHash: "a-hash-for-a-file-that-is-not-there",
-	}); err != nil {
+	}, store.AsDM(syncer.Campaign().ID)); err != nil {
 		t.Fatalf("adding a phantom row: %v", err)
 	}
 
@@ -390,7 +390,7 @@ func corruptBody(t *testing.T, ctx context.Context, syncer *index.Syncer, page d
 		RendererVersion: page.RendererVersion,
 		CreatedAt:       page.CreatedAt,
 		UpdatedAt:       time.Time{},
-	}); err != nil {
+	}, store.AsDM(syncer.Campaign().ID)); err != nil {
 		t.Fatalf("corrupting the row: %v", err)
 	}
 }

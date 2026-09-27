@@ -142,7 +142,7 @@ func buildCell(t *testing.T, role domain.Role, visibility domain.Visibility, own
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the character page: %v", err)
 	}
@@ -159,7 +159,7 @@ func buildCell(t *testing.T, role domain.Role, visibility domain.Visibility, own
 			Frontmatter:          character.Frontmatter,
 			Body:                 character.Body,
 			ContentHash:          "hash-of-aria-owned",
-		})
+		}, AsDM(campaign.ID))
 		if err != nil {
 			t.Fatalf("UpsertPage for the owned page: %v", err)
 		}

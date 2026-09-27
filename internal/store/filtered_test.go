@@ -34,7 +34,7 @@ func filteredFixture(t *testing.T) (*Store, domain.Campaign, domain.Principal) {
 		Frontmatter: "title: Aria\n",
 		Body:        "A lockpicker.\n",
 		ContentHash: "hash-of-aria",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -49,7 +49,7 @@ func filteredFixture(t *testing.T) (*Store, domain.Campaign, domain.Principal) {
 		Frontmatter:          character.Frontmatter,
 		Body:                 character.Body,
 		ContentHash:          "hash-of-aria-owned",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the owned page: %v", err)
 	}
@@ -67,7 +67,7 @@ func filteredFixture(t *testing.T) (*Store, domain.Campaign, domain.Principal) {
 		Frontmatter:          "title: Brian\n",
 		Body:                 "A character the DM has marked private.\n",
 		ContentHash:          "hash-of-brian",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage for the absolute page: %v", err)
 	}

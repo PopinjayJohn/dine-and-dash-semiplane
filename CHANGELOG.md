@@ -89,6 +89,36 @@
   a secret is never in the public text and a render is never wrong about one,
   however many goroutines are doing it.
 
+- **The write side of the rights matrix: `UpsertPage` takes a principal.** A
+  read-only predicate with an open write path is a building with a locked front
+  door and an unlocked back one — a player who cannot read a page can still write
+  it, and the next sync indexes what they wrote and it appears in somebody else's
+  list. The check is in the store rather than in each handler, because the other
+  shape makes "the check that must not be forgotten" a line of code in a file
+  whose other job is turning a request into HTML.
+- **A refusal is `ErrNotAllowed` and deliberately not `ErrNotFound`.** A read must
+  not confirm that a page exists; a write is a request about a page the caller
+  already holds, and telling a player their link is dead sends them to the DM with
+  a different question. The asymmetry is the point.
+- **It checks ownership, not position, and says so.** A page whose
+  `owner_character_page_id` is empty is refused to a player, and one whose owner is
+  a character they are not bound to is refused. It does *not* check that the path
+  lies inside that character, because that is `internal/index`'s `OwnerOf` and
+  duplicating it here would be a second implementation of the same rule. The
+  residual is named in the file: a caller that supplied its own character as the
+  owner of a page elsewhere would be caught by the path check and not by this one.
+  No caller can do that today — the only writer is the sync, which reads as the DM,
+  and the player-facing one arrives with the editor.
+- **Reveal is a level change and only ever loosens one.** The owner may open their
+  own page's audience; a player may not *tighten* one, because a method that could
+  close a page is a method a player could use to make their own notes vanish from
+  the DM's page tree. `SetPageVisibility` reads the page as the DM and gates on the
+  write rule, so a principal who cannot read a page gets "you may not" rather than
+  "there is nothing here".
+- A gate that does not consult the resolver would be a third implementation of the
+  matrix, so the store's ownership question is the same one the predicate asks, and a
+  test checks that the gate and `access.For` agree on the same page.
+
 - **`internal/access`, the one place that answers "what may this principal do with
   this page".** `For(p, page) Decision` is pure — no store, no clock — because the
   rights matrix has 36 cells and the only way to be sure all 36 behave as

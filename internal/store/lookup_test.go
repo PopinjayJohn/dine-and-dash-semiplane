@@ -55,7 +55,7 @@ func TestFindPageByAlias(t *testing.T) {
 			Title:       p.path,
 			Type:        domain.PageTypeNote,
 			ContentHash: "hash-of-" + p.path,
-		})
+		}, store.AsDM(campaign.ID))
 		if err != nil {
 			t.Fatalf("UpsertPage(%q): %v", p.path, err)
 		}
@@ -133,7 +133,7 @@ func TestFindPageByName(t *testing.T) {
 			Title:       path,
 			Type:        domain.PageTypeNote,
 			ContentHash: "hash-of-" + path,
-		})
+		}, store.AsDM(campaign.ID))
 		if err != nil {
 			t.Fatalf("UpsertPage(%q): %v", path, err)
 		}
@@ -187,7 +187,7 @@ func TestReplacePageTargetsReplaces(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestReplacePageTargetsDeduplicatesAndTrims(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestArchivedPagesAnswerToNothing(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestLookupsArePerCampaign(t *testing.T) {
 			Title:       "Rivergate",
 			Type:        domain.PageTypeLocation,
 			ContentHash: "hash-of-" + campaign.ID,
-		})
+		}, store.AsDM(campaign.ID))
 		if upsertErr != nil {
 			t.Fatalf("UpsertPage: %v", upsertErr)
 		}
@@ -340,7 +340,7 @@ func TestASecondUpsertOfTheSamePathKeepsTheRow(t *testing.T) {
 		Title:       "Rivergate",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash-one",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestASecondUpsertOfTheSamePathKeepsTheRow(t *testing.T) {
 		Title:       "Rivergate, after the flood",
 		Type:        domain.PageTypeLocation,
 		ContentHash: "hash-two",
-	})
+	}, store.AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage again: %v", err)
 	}

@@ -187,7 +187,7 @@ func TestPageIndexMatches(t *testing.T) {
 		// enough; a test that computed one would be testing sha256.
 		ContentHash: "hash-of-garros",
 	}
-	stored, err := s.UpsertPage(ctx, other)
+	stored, err := s.UpsertPage(ctx, other, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}
@@ -372,7 +372,7 @@ func storeWithPage(t *testing.T) (*Store, domain.Campaign, domain.Page) {
 		// The hash is checked by the store and nothing else, so a fixed string
 		// is enough here; a test that computed one would be testing sha256.
 		ContentHash: "hash-of-rivergate",
-	})
+	}, AsDM(campaign.ID))
 	if err != nil {
 		t.Fatalf("UpsertPage: %v", err)
 	}

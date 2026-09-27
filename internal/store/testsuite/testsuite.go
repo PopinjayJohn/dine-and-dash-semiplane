@@ -44,10 +44,10 @@ type API interface {
 	// convenience: invariant 3 says no page-returning method may exist without
 	// the access predicate, and a signature that can be called without naming a
 	// principal is a method whose ACL is somebody's decision per call site. A
-	// caller that wants everything says so with `store.AsDM()`; a caller that has
+	// caller that wants everything says so with `asDM()`; a caller that has
 	// not identified anybody says so with `store.Nobody()`. Between them they are
 	// the two answers, and the middle of that range is the interesting part.
-	UpsertPage(ctx context.Context, p domain.Page) (domain.Page, error)
+	UpsertPage(ctx context.Context, p domain.Page, as domain.Principal) (domain.Page, error)
 	GetPage(ctx context.Context, campaignID, path string, as domain.Principal) (domain.Page, error)
 	GetPageByID(ctx context.Context, id string, as domain.Principal) (domain.Page, error)
 	ListPages(ctx context.Context, campaignID string, as domain.Principal) ([]domain.Page, error)

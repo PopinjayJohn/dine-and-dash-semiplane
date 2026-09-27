@@ -18,7 +18,7 @@ func TestReplaceLinksReplacesRatherThanAppends(t *testing.T) {
 
 	garros := page(c.ID)
 	garros.Path = "npcs/garros-ironbar"
-	target, upsertErr := s.UpsertPage(ctx, garros)
+	target, upsertErr := s.UpsertPage(ctx, garros, store.AsDM(c.ID))
 	if upsertErr != nil {
 		t.Fatalf("UpsertPage: %v", upsertErr)
 	}
@@ -165,7 +165,7 @@ func TestBacklinksAndLinksToPath(t *testing.T) {
 	town := mustCreatePage(t, s, c.ID)
 	tavern := page(c.ID)
 	tavern.Path = "locations/the-drowned-hound"
-	tavernStore, upsertErr := s.UpsertPage(ctx, tavern)
+	tavernStore, upsertErr := s.UpsertPage(ctx, tavern, store.AsDM(c.ID))
 	if upsertErr != nil {
 		t.Fatalf("UpsertPage: %v", upsertErr)
 	}

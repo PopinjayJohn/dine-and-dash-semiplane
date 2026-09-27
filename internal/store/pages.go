@@ -32,7 +32,11 @@ const pageColumns = `id, campaign_id, path, title, type, visibility,
 //
 // IsDeleted is taken from the caller rather than preserved, because the file
 // is the source of truth: a page the DM un-deleted on disk comes back.
-func (s *Store) UpsertPage(ctx context.Context, p domain.Page) (domain.Page, error) {
+func (s *Store) UpsertPage(ctx context.Context, p domain.Page, as domain.Principal) (domain.Page, error) {
+	if err := s.checkMayWrite(ctx, p, as); err != nil {
+		return domain.Page{}, err
+	}
+
 	if p.ID == "" {
 		p.ID = s.mint()
 	}
