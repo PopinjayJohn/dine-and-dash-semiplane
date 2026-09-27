@@ -21,6 +21,33 @@
   it to, a role that is not one, or **no label** — because the label is the only
   thing that tells two links apart in the DM's list, and a list of six links with
   no labels is a list of six sixteen-bit numbers.
+- **A redacting logger, and `TestNoTokenInLogs`.** The named test runs a *full
+  auth flow* — mint, log the URL and the token, redeem, authenticate, fail a
+  redemption, log out — and then greps everything it produced for every token it
+  touched. Both halves matter and are not the same check: a test that only
+  exercised the redaction unit would pass against a logger that redacts and a flow
+  that never logs the token, which is a logger nobody has connected to the thing
+  that matters.
+- **Redaction is by attribute name *and* by shape**, because a caller who logs a
+  whole URL is doing something a shape check alone only catches by luck. A caller
+  who logs something under the key `token` is telling us what it is.
+- Two bugs the tests found in the redactor itself. **`Redacted` checked the whole
+  remaining string for hex rather than the 64-character window**, so a token at the
+  start of a sentence followed by a space was not recognised — a leak in every
+  message anybody ever wrote. And **a token's SHA-256 is 64 hex characters, and so
+  is the token**, so the shape check redacts a hash along with a credential; the
+  plan had been that a hash is a fingerprint worth logging, the cost is one
+  correlation, and the log carries the principal id anyway. Requiring a delimiter
+  after the window would have left "redeem `<token>`1" unredacted, so a 65-character
+  hex run has its first 64 redacted and the last one left — a decision, and the
+  wrong version of it is easy to imagine.
+- **The redaction is a handler, not a rule callers remember**, so a caller who logs
+  a request struct is covered by the same rule as one who logs a token
+  deliberately, and a JSON logger gets the same redaction rather than a way round
+  it. Redaction that leaves nothing readable teaches a DM to stop reading the log,
+  which is how the next real problem goes unnoticed — so the test also asserts
+  that the log still says what it did.
+
 - **A rate limit on redemption**, ten attempts a minute per address, and the
   named test `TestRateLimitedRedemption` is written so that a limiter refusing the
   *second* attempt cannot pass it. Ten is about right for a campaign at a table: a

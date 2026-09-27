@@ -201,13 +201,29 @@ func ParseToken(hexToken string) (Token, error) {
 	return Token{bytes: raw}, nil
 }
 
-// Redacted is whether a string might be a token, for the logger.
+// Redacted is whether a *whole string* is token-shaped: exactly as long as a
+// token, and hex throughout.
 //
-// It is a *guard*, not a filter: the logger redacts anything that looks like a
-// token in a message it did not construct, and this is the test it uses. A caller
-// that knows it holds a token does not pass it here at all — it passes
-// Token.String(), which is already safe.
+// It is deliberately the whole string, and it is not what the logger uses to find
+// a token inside a message — that is RedactTokenShaped's job, and the distinction
+// is the difference between a question and a window. Getting it wrong in the
+// direction that happened here, where this was used as a prefix test and so said
+// "no" to a token at the start of a sentence followed by a space, is a leak in
+// every message anybody ever wrote.
 func Redacted(s string) bool { return len(s) == 2*TokenBytes && isHex(s) }
+
+// looksLikeToken is whether the first TokenBytes' worth of hex characters at the
+// start of s is a token, whatever follows it.
+//
+// The window is the whole test. A 64-character prefix of hex is a token no matter
+// what comes after it, and checking only the window is what makes a token inside
+// "could not redeem <token> in link" findable at all.
+func looksLikeToken(s string) bool {
+	if len(s) < 2*TokenBytes {
+		return false
+	}
+	return isHex(s[:2*TokenBytes])
+}
 
 // isHex reports whether s is a hex string and nothing else. Written out rather
 // than using a regexp, because this runs on every log line and because the
