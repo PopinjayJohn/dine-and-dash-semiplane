@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,10 +19,12 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/clock"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/datadir"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/idgen"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 )
 
@@ -79,6 +83,20 @@ type fixture struct {
 	// change publishes it on this one.
 	hub *sse.Hub
 
+	// vaultDir and vault are the campaign's, and the editor is built from them --
+	// and the fixture writes into the vault, because a DM's editor is not the only
+	// thing that writes a page file and a test that could not produce one by hand
+	// could not test a watcher either.
+	vaultDir string
+	vault    *vault.Vault
+
+	// editor is the writer, and it is what the editor routes go through.
+	editor *edit.Editor
+
+	// dm is the campaign's DM as a principal, for a test that saves directly rather
+	// than over HTTP -- which is how a test sets up the *other* side of a conflict.
+	dm domain.Principal
+
 	dmLink     auth.Issued
 	playerLink auth.Issued
 	otherLink  auth.Issued
@@ -113,6 +131,22 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 
 	root := t.TempDir()
 	ctx := context.Background()
+
+	// A vault as well as a store, because M9 writes files and a fixture with only
+	// a store cannot produce one. The campaign's pages are written as *files* and
+	// then indexed, so the two agree the way they do in a real campaign -- a fixture
+	// with a row and no file is a state the sync would repair and the editor would
+	// refuse to read.
+	vaultDir := filepath.Join(root, "vault", "blackwater")
+	if err := os.MkdirAll(vaultDir, 0o700); err != nil {
+		t.Fatalf("creating the vault directory: %v", err)
+	}
+	campaignVault, err := vault.Open(vaultDir)
+	if err != nil {
+		t.Fatalf("vault.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = campaignVault.Close() })
+
 	s, err := store.Open(ctx, datadir.DatabaseFile(root), store.Options{
 		Clock: clock.NewFixed(fixedNow, time.Minute),
 		IDGen: idgen.NewSequence("id"),
@@ -128,7 +162,11 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	campaign := mustCampaign(t, s, "blackwater", "The Blackwater")
 	other := mustCampaign(t, s, "thornford", "Thornford")
 
-	f := &fixture{t: t, store: s, logs: &strings.Builder{}, campaign: campaign, otherName: other}
+	f := &fixture{
+		t: t, store: s, logs: &strings.Builder{},
+		campaign: campaign, otherName: other,
+		vaultDir: vaultDir, vault: campaignVault,
+	}
 	f.hands = &fakeClock{at: now}
 
 	f.writePages()
@@ -164,7 +202,12 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 	f.otherLink = mustIssue(t, s, authCfg, other, domain.RolePlayer, "a player of Thornford")
 
 	f.hub = sse.NewHub(wiki.DefaultStreams)
+	f.editor = edit.New(campaignVault, s, campaign)
+	f.dm = mustCreatePrincipal(t, s, f.campaign, domain.RoleDM, "the DM")
 	f.cfg = wiki.Config{
+		EditorFor: func(campaign domain.Campaign) (*edit.Editor, error) {
+			return f.editor, nil
+		},
 		Store:      s,
 		Redeemer:   auth.Redeemer{Backend: s, Config: authCfg},
 		Hub:        f.hub,
@@ -182,6 +225,58 @@ func newFixtureAt(t *testing.T, now time.Time, production bool) *fixture {
 // rebuild re-assembles the handler after a test has changed the configuration, so
 // that a test can vary one field without rebuilding the whole fixture.
 func (f *fixture) rebuild() { f.handler = mustHandler(f.t, f.cfg) }
+
+// writeFile puts a page in the campaign's vault, which is what a DM's editor does
+// and what the sync then indexes. The file is the truth (ADR 0001), so a test that
+// wants the index to change writes the file and lets the index follow.
+func (f *fixture) writeFile(path, body string) {
+	f.t.Helper()
+
+	full := filepath.Join(f.vaultDir, filepath.FromSlash(path)+".md")
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		f.t.Fatalf("creating the directory for %s: %v", path, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+		f.t.Fatalf("writing %s: %v", path, err)
+	}
+}
+
+// hashOf is a file's content hash, which is the ETag a browser would have been
+// served and the value a save has to echo back.
+func (f *fixture) hashOf(path string) string {
+	f.t.Helper()
+
+	return vault.Hash([]byte(f.readFile(path)))
+}
+
+// savePage writes a page through the editor as the DM, which is the "somebody
+// else saved it" half of a conflict: a test drives one side through the route it
+// is testing and the other side directly, because two concurrent HTTP requests in
+// one test is a race rather than a scenario.
+func (f *fixture) savePage(path, markdown string) {
+	f.t.Helper()
+
+	if _, _, err := f.editor.Save(f.t.Context(), edit.Save{
+		Path:     path,
+		Markdown: markdown,
+		Expect:   f.hashOf(path),
+		As:       f.dm,
+	}); err != nil {
+		f.t.Fatalf("saving %s: %v", path, err)
+	}
+}
+
+// readFile is what is on disk, for a test that wants to know what a save did
+// rather than what the index says about it.
+func (f *fixture) readFile(path string) string {
+	f.t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(f.vaultDir, filepath.FromSlash(path)+".md"))
+	if err != nil {
+		f.t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(data)
+}
 
 // newRequest builds a request with a form body, for the tests that need to set a
 // header of their own.
@@ -295,6 +390,11 @@ func (f *fixture) writePages() {
 
 	for _, page := range pages {
 		page.CampaignID = f.campaign.ID
+
+		// The file first, because that is the order a DM's editor has and the
+		// order the file is the truth in (ADR 0001).
+		f.writeFile(page.Path, page.Frontmatter+page.Body)
+
 		stored, err := f.store.UpsertPage(ctx, page, store.AsDM(f.campaign.ID))
 		if err != nil {
 			t.Fatalf("UpsertPage(%q): %v", page.Path, err)
@@ -347,6 +447,25 @@ func mustCampaign(t *testing.T, s *store.Store, slug, name string) domain.Campai
 		t.Fatalf("CreateCampaign(%q): %v", slug, err)
 	}
 	return campaign
+}
+
+// mustCreatePrincipal is a principal with no link, for a test that needs an
+// identity without needing a session.
+func mustCreatePrincipal(t *testing.T, s *store.Store, campaign domain.Campaign, role domain.Role, label string) domain.Principal {
+	t.Helper()
+
+	created, err := s.CreatePrincipal(t.Context(), domain.Principal{
+		CampaignID: campaign.ID,
+		Label:      label,
+		Role:       role,
+		TokenHash:  "hash-" + label,
+		TokenHint:  "test",
+		CreatedAt:  fixedNow,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrincipal(%q): %v", label, err)
+	}
+	return created
 }
 
 func mustIssue(t *testing.T, backend auth.Backend, cfg auth.Config, campaign domain.Campaign, role domain.Role, label string) auth.Issued {

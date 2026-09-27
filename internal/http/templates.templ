@@ -161,6 +161,12 @@ templ article(p renderedPage) {
 			// DM checks that the live copy works: open it in a browser tab and the
 			// events arrive as text.
 			<a href={ p.StreamURL } data-stream={ p.StreamURL }>Live</a>
+			// The Edit link is drawn only when the page may be edited. An Edit link
+			// the gate would refuse is a promise the wiki does not keep, and a DM who
+			// follows one and gets a 403 concludes the wiki is broken.
+			if p.CanEdit && p.EditURL != "" {
+				<a href={ p.EditURL }>Edit</a>
+			}
 		</p>
 	</article>
 }

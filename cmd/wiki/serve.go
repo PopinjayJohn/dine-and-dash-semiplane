@@ -20,10 +20,12 @@ import (
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/datadir"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	wiki "github.com/popinjayjohn/dine-and-dash-semiplane/internal/http"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/version"
 )
 
@@ -146,6 +148,26 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Redeemer: auth.Redeemer{
 			Backend: s,
 			Config:  authConfigFor(baseURLOf(opts, listener)),
+		},
+		// The writers this server already has open. `openCampaigns` holds a vault
+		// per campaign for the life of the process, and an editor is a vault plus a
+		// store plus a campaign -- so the table is the answer and opening a second
+		// vault per campaign would be two handles on one directory.
+		EditorFor: func(campaign domain.Campaign) (*edit.Editor, error) {
+			for _, open := range served {
+				if open.row.Slug == campaign.Slug {
+					return edit.New(open.syncer.Vault(), s, campaign), nil
+				}
+			}
+			// A campaign the server was not started for: a DM has added a folder
+			// since. It is opened on demand rather than refused, because a wiki that
+			// cannot serve a campaign somebody just added is a wiki that needs a
+			// restart for every new session.
+			opened, openErr := vault.Open(filepath.Join(dir, "vault", campaign.Slug.String()))
+			if openErr != nil {
+				return nil, fmt.Errorf("opening the vault of %s: %w", campaign.Slug, openErr)
+			}
+			return edit.New(opened, s, campaign), nil
 		},
 		Hub:           hub,
 		Logger:        logger,

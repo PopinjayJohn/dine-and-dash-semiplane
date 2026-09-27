@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/access"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
@@ -167,6 +168,34 @@ func (y *Syncer) CheckWritableContentAs(ctx context.Context, pagePath string, ma
 		return err
 	}
 	return y.checkWritable(ctx, p, as)
+}
+
+// DecisionForContent is the access decision for content that is not a file yet,
+// and it is what an editor's preview asks.
+//
+// It is the same derivation and the same gate as a save, so a preview cannot
+// disagree with the save about who may see what — which is the property §9 is about
+// ("there is exactly one render path") applied to the decision rather than to the
+// HTML. A preview that used a different owner rule than the save would render a
+// player's page with the DM's secrets, and the only thing standing between that and
+// a disclosure is that there is one owner rule.
+//
+// The write gate runs first and refuses on its own, so a preview of a page the
+// caller may not write is not a preview at all.
+func (y *Syncer) DecisionForContent(ctx context.Context, pagePath string, markdown []byte, as domain.Principal) (access.Decision, error) {
+	p, err := y.planForBytes(ctx, pagePath, markdown)
+	if err != nil {
+		return access.Decision{}, err
+	}
+	if gateErr := y.checkWritable(ctx, p, as); gateErr != nil {
+		return access.Decision{}, gateErr
+	}
+
+	meta, err := y.store.PageMetaOf(ctx, p.page, as)
+	if err != nil {
+		return access.Decision{}, err
+	}
+	return access.For(access.PrincipalOf(as), meta), nil
 }
 
 // OwnerPageID is the page id of the character a page belongs to, from the same

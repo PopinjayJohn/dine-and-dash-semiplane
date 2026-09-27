@@ -2,6 +2,59 @@
 
 ### Added
 
+- **The editor.** A textarea, a preview pane, a save, and the three ways a save can
+  be refused — each with its own answer, because they are three different facts:
+  not writable is a 403 (a player who just read a page is not told it does not
+  exist), a conflict is a 409 with three texts, and a page that has gone is a 404.
+- **The form posts to itself with a real action, the ETag and the CSRF token are
+  hidden fields, and the save button is a submit.** A JavaScript-only save path is
+  untestable from Go and unshippable on a machine where the script did not load, so
+  `TestTheEditorWorksWithNoScript` posts the form the way a browser with scripting
+  disabled would. Autosave is a convenience and the form is the feature.
+- **`?edit=1` and `?new=1`,** and not paths, for the reason `?raw=1` and `?stream=1`
+  are queries: a path segment would be a first-segment name the vault could not
+  also use, so a DM with a page called `edit` gets it.
+- **A preview is the same derivation, the same decision and the same component as
+  the save**, so a preview cannot disagree with the save about who may see what —
+  which is §9's "one render path" applied to a path nobody thought about when it
+  was written. It writes nothing: a route that answered a question by doing the act
+  would be a route a browser's prefetch could write to.
+- **A conflict is three texts side by side and no merge.** A merge is a decision
+  about somebody's prose, and a server that makes it silently is a server that has
+  edited a DM's page without asking. The base column is empty — not guessed — when
+  this application has not kept the text the edit was made from.
+- **A preview of something that is not a page yet says why instead of failing**, and
+  it is a 200: a DM typing a frontmatter fence is in that state for a second, and a
+  pane that flashed a 500 while they typed would be a pane they stopped looking at.
+- **`failWith` is a 500 that carries the reason, for exactly one case: the DM typed
+  something that is not a page.** A DM whose `visibility: secret` is a typo and
+  gets "500 Internal Server Error" learns nothing and files a bug; a DM who gets
+  "visibility must be one of players, dm-only, dm-and-owner" fixes it. The person
+  reading it is the person who can fix it, which is what makes it different from
+  the usual rule that an error string must not reach a response.
+- **`web/static/editor.js`, vendored and reviewed,** like the client: a preview as
+  you type and a *scheduled* autosave rather than a debounced one, because a
+  debounced autosave into never is a common way to ship a feature that appears not
+  to work. The CSP allows it through the layout's per-response nonce, with no
+  `unsafe-inline` anywhere.
+- **The Edit link comes from the decision and is drawn only when a page may be
+  edited.** A link the gate would refuse is a promise the wiki does not keep, and a
+  DM who follows one and gets a 403 concludes the wiki is broken.
+- **`wiki serve` wires the writers it already has open** rather than opening a
+  second vault per campaign, and opens one on demand for a campaign added since
+  the server started.
+
+### Fixed
+
+- **The preview rendered the frontmatter as prose.** The handler had the whole
+  file's bytes and the renderer wants the body, so a preview put an `<hr>` where
+  the `---` fences were and a heading out of the `title:` line. The preview is now
+  one function in `internal/edit` that parses, derives, decides and renders — the
+  same four steps the save takes, in the same code, because two places that each
+  build a page are two places that can disagree about one.
+
+### Added
+
 - **`internal/edit`: the writer.** Every page save goes through it, and so does
   anything that later needs to write a page programmatically. Its save is seven
   steps in a fixed order, and the order is the design:

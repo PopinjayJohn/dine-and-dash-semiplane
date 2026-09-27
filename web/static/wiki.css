@@ -480,3 +480,183 @@ a:hover {
   border-radius: 4px;
   padding: 0.35rem 0.6rem;
 }
+
+/* ------------------------------------------------------------- editor ---- */
+
+/* The editor is a different page shape from a page: a textarea and a preview side
+ * by side, and no sidebar. An editor inside the reading layout would be a textarea
+ * a third of the screen wide, which is a textarea nobody types into. */
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sidebar);
+}
+
+.editor-bar .page-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.editor-bar .brand,
+.editor-back {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.editor-bar .editor-back {
+  color: var(--link);
+}
+
+.editor {
+  padding: 1rem 1.5rem 3rem;
+}
+
+.editor-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* One breakpoint, and it is the phone: a DM editing at a table is as likely to be
+ * on a phone as a laptop, and a preview beside a textarea is a layout for a
+ * screen with room on it. */
+@media (max-width: 60rem) {
+  .editor-panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.editor-input label {
+  display: block;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin-bottom: 0.25rem;
+}
+
+#markdown {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+
+#path {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.editor-preview {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  background: var(--paper);
+  min-height: 8rem;
+  overflow-wrap: anywhere;
+}
+
+.editor-hint {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+#save-state.is-warn {
+  color: var(--warn);
+}
+
+#save-state.is-error {
+  color: var(--danger);
+}
+
+/* -------------------------------------------------------------- conflict -- */
+
+.conflict {
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--paper-sunk);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.conflict h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  color: var(--warn);
+}
+
+.conflict-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+@media (max-width: 60rem) {
+  .conflict-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conflict-column h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 0 0 0.25rem;
+}
+
+/* `pre` and not a diff: a DM editing prose wants the two versions, not a hunk,
+ * and the plain text is what they can copy out of. */
+.conflict-column pre,
+.conflict-base pre {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conflict-base {
+  margin-top: 0.6rem;
+}
+
+.conflict-base summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}

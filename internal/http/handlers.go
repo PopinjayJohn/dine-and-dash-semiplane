@@ -75,6 +75,13 @@ func (a *app) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// `?new=1` is the editor for a page that does not exist yet, and it hangs off
+	// the root because a create has no path to hang off.
+	if r.URL.Query().Has("new") {
+		a.newPage(w, r)
+		return
+	}
+
 	pages, err := a.cfg.Store.ListPages(r.Context(), req.Campaign.ID, req.Principal)
 	if err != nil {
 		a.fail(w, r, "listing the pages of "+req.Campaign.Slug.String(), err)
@@ -125,6 +132,20 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// `?edit=1` is the editor, and it is reached before the path is resolved: the
+	// editor is about a page, so it needs the same 404 for a page that is not there
+	// as the page itself does, and resolving the path twice is two chances to
+	// resolve it differently.
+	if r.URL.Query().Has("edit") {
+		path, ok := pagePathFromURL(chi.URLParam(r, "*"))
+		if !ok {
+			a.notFound(w, r)
+			return
+		}
+		a.editPage(w, r, path)
+		return
+	}
+
 	path, ok := pagePathFromURL(chi.URLParam(r, "*"))
 	if !ok {
 		// Not a 400. A URL that cannot name a page is a URL that names nothing,
@@ -163,7 +184,18 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := a.renderPage(r.Context(), req.Campaign, stored, req.Principal)
+	// The decision is computed once and used twice: once to render, and once to
+	// decide whether the page offers an Edit link. It is the *same* decision, so
+	// the link cannot be offered to somebody the page was rendered against as
+	// somebody who may not write it — and the write gate is asked again when the
+	// editor is opened, because an affordance is a hint and a gate is a rule.
+	decision := a.decisionFor(r.Context(), stored, req.Principal)
+	result, err := a.rendererFor(req.Campaign.Slug).Render(r.Context(), render.Page{
+		Campaign:    req.Campaign.Slug.String(),
+		Path:        stored.Path,
+		Body:        stored.Body,
+		ContentHash: stored.ContentHash,
+	}, decision)
 	if err != nil {
 		a.fail(w, r, "rendering "+path, err)
 		return
@@ -181,6 +213,8 @@ func (a *app) page(w http.ResponseWriter, r *http.Request) {
 			TOC:       result.TOC,
 			RawURL:    rawURL(req.Campaign, stored.Path),
 			StreamURL: streamURL(req.Campaign, stored.Path),
+			EditURL:   editURL(req.Campaign, stored.Path),
+			CanEdit:   decision.CanEdit,
 		},
 	}
 	view.Current = stored.Path
@@ -409,6 +443,39 @@ func (a *app) forbidden(w http.ResponseWriter, r *http.Request, why string) {
 	}))
 }
 
+// failWith is a 500 that carries the reason in the body, and it is for exactly one
+// case: **the DM typed something that is not a page.**
+//
+// The usual rule is that an error string must not reach a response — an error from
+// SQLite carries a table name and a value, and a player is the one reading it. This
+// is the other case, and the difference is who typed it: the text in the body is the
+// editor's own frontmatter, quoted back with the reason the vault or the index gave
+// for it, and the person reading it is the person who can fix it. A DM whose
+// `visibility: secret` is a typo and gets "500 Internal Server Error" learns
+// nothing and files a bug; a DM who gets "visibility must be one of players,
+// dm-only, dm-and-owner" fixes it.
+//
+// Nothing about the *server* is in the body, and the log line below still has the
+// full error for whoever is debugging.
+func (a *app) failWith(w http.ResponseWriter, r *http.Request, operation string, cause error) {
+	req := requestFrom(r.Context())
+	a.log.LogAttrs(r.Context(), slog.LevelError, "a request failed",
+		slog.String("operation", operation),
+		slog.String("error", cause.Error()),
+		slog.String("path", r.URL.Path),
+		slog.String("request_id", orDash(req.ID)),
+		slog.String("principal", orDash(req.Principal.ID)),
+	)
+
+	a.render(w, r, http.StatusInternalServerError, notice(noticeData{
+		shell:   a.noticeShell(req, nil, "That did not work"),
+		Request: viewRequestFor(req),
+		Title:   "That did not work",
+		Body:    "Nothing was saved. The wiki said: " + cause.Error(),
+		Status:  http.StatusInternalServerError,
+	}))
+}
+
 // render writes a page, and the buffer is in renderInto: nothing reaches the
 // response until the whole document exists.
 func (a *app) render(w http.ResponseWriter, r *http.Request, status int, view templ.Component) {
@@ -456,6 +523,14 @@ func rawURL(campaign domain.Campaign, path string) string {
 
 func streamURL(campaign domain.Campaign, path string) string {
 	return render.PageURL(campaign.Slug.String(), path) + "?stream=1"
+}
+
+// editURL is where a page's editor is, and it is a *query* for the reason `?raw=1`
+// and `?stream=1` are: a path segment would be a first-segment name the vault could
+// not also use, and a DM with a page called `edit` would find that their campaign
+// root's editor edits it instead.
+func editURL(campaign domain.Campaign, path string) string {
+	return render.PageURL(campaign.Slug.String(), path) + "?edit=1"
 }
 
 // campaignNavFor is the three template-visible facts about a campaign, and it is a

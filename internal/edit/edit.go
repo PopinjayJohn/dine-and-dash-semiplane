@@ -50,9 +50,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
@@ -66,6 +68,12 @@ type Editor struct {
 	store    *store.Store
 	campaign domain.Campaign
 	sync     *index.Syncer
+
+	// renderers is one renderer for this campaign's previews, built on first use
+	// for the same reason the HTTP layer keeps one per campaign: a renderer holds a
+	// link resolver and a resolver belongs to a campaign.
+	renderersMu sync.Mutex
+	renderers   map[domain.Slug]*render.Renderer
 }
 
 // New returns an editor for one campaign. The syncer is built here rather than
@@ -74,10 +82,11 @@ type Editor struct {
 // accident.
 func New(v *vault.Vault, s *store.Store, campaign domain.Campaign) *Editor {
 	return &Editor{
-		vault:    v,
-		store:    s,
-		campaign: campaign,
-		sync:     index.New(v, s, campaign),
+		vault:     v,
+		store:     s,
+		campaign:  campaign,
+		sync:      index.New(v, s, campaign),
+		renderers: map[domain.Slug]*render.Renderer{},
 	}
 }
 
@@ -386,6 +395,62 @@ func (e *Editor) Read(ctx context.Context, path string) (text string, hash strin
 		return "", "", fmt.Errorf("reading %s: %w", checked, err)
 	}
 	return string(data), vault.Hash(data), nil
+}
+
+// Preview is what a page would render as, under a principal's decision, from
+// content that is not a file yet.
+//
+// One function rather than a decision and a render done by the caller, and the
+// reason is a bug this shape had: the caller had the whole file's bytes and the
+// renderer wants the *body*, so a preview rendered the frontmatter as prose --
+// an `<hr>` where the `---` fences were and a heading out of the `title:` line. The
+// save stores `doc.Body()` and the page route renders that, so a preview built
+// any other way is not a preview of the save.
+//
+// It writes nothing. A preview is a question and a save is an act, and a route
+// that answered a question by doing the act would be a route a browser's prefetch
+// could write to.
+func (e *Editor) Preview(ctx context.Context, path string, markdown []byte, as domain.Principal) (render.Result, error) {
+	checked, err := vault.CheckPagePath(path)
+	if err != nil {
+		return render.Result{}, fmt.Errorf("previewing %s: %w", path, err)
+	}
+
+	doc, err := vault.Parse(markdown)
+	if err != nil {
+		return render.Result{}, fmt.Errorf("previewing %s: %w", checked, err)
+	}
+
+	decision, err := e.sync.DecisionForContent(ctx, checked, markdown, as)
+	if err != nil {
+		return render.Result{}, fmt.Errorf("previewing %s: %w", checked, err)
+	}
+
+	return e.rendererFor(checked).Render(ctx, render.Page{
+		Campaign:    e.campaign.Slug.String(),
+		Path:        checked,
+		Body:        doc.Body(),
+		ContentHash: vault.Hash(markdown),
+	}, decision)
+}
+
+// rendererFor is a renderer for this campaign, with the same link resolver the sync
+// uses, so a preview resolves `[[links]]` the way the saved page will.
+//
+// A preview *is* the page, including the links in it, which is most of what makes
+// one worth having: a DM writing a link to a page they have not written yet wants
+// to know that the link is unresolved before they save, not after.
+func (e *Editor) rendererFor(_ string) *render.Renderer {
+	e.renderersMu.Lock()
+	defer e.renderersMu.Unlock()
+
+	if existing, found := e.renderers[e.campaign.Slug]; found {
+		return existing
+	}
+
+	built := render.NewWithLinks(index.NewResolver(e.store, e.campaign.ID))
+	e.renderers[e.campaign.Slug] = built
+	return built
 }
 
 // MayWrite answers whether a principal may write a page, for the Edit button.

@@ -63,6 +63,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/auth"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/edit"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/render"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/sse"
@@ -88,6 +89,16 @@ type Config struct {
 	// principal. It is a value rather than a pointer because it holds a Backend
 	// and a Config and has no state of its own.
 	Redeemer auth.Redeemer
+
+	// EditorFor returns the writer for a campaign, and it is a function because the
+	// writer needs a vault and a vault is a directory -- which `wiki serve` has
+	// open per campaign and this package has no business opening.
+	//
+	// It is the same shape as a `Store` field: the consumer says what it needs and
+	// the caller assembles it. The result is cached per campaign, because an editor
+	// is an editor and a 500-entry cache; a DM with a dozen campaigns over a year
+	// has a dozen of them.
+	EditorFor func(campaign domain.Campaign) (*edit.Editor, error)
 
 	// Hub is the SSE fan-out, and it is required rather than optional.
 	//
@@ -223,6 +234,11 @@ type app struct {
 	// uptime is computed here rather than from a global.
 	startedAt time.Time
 
+	// editors is one writer per campaign, built on first use, for the same reason
+	// `renderers` is one renderer per campaign.
+	editorsMu sync.Mutex
+	editors   map[domain.Slug]*edit.Editor
+
 	// renderers is one renderer per campaign, built on first use.
 	//
 	// A renderer holds a link resolver and a resolver belongs to a campaign --
@@ -285,6 +301,7 @@ func New(cfg Config) (http.Handler, error) {
 		cfg:       cfg,
 		log:       cfg.Logger,
 		renderers: map[domain.Slug]*render.Renderer{},
+		editors:   map[domain.Slug]*edit.Editor{},
 		startedAt: cfg.Now(),
 	}
 	a.initSecret()
@@ -312,17 +329,22 @@ func New(cfg Config) (http.Handler, error) {
 		c.Use(a.campaign)
 		c.Use(a.redeem)
 
-		// The campaign root, which is where a redemption lands and where a
-		// reader lands with nothing else to read: every page they may see.
+		// The campaign root, which is where a redemption lands and where a reader
+		// lands with nothing else to read: every page they may see. The editor for a
+		// new page hangs off it as a query, because a create has no path yet and a
+		// path segment would be a name the vault could not also use.
 		c.Get("/", a.browse)
-		c.Post("/", a.logout)
+		c.Post("/", a.rootPost)
 
-		// A page. `?raw=1` is the same page as markdown and `?stream=1` is the
-		// same page as a stream. Both are query parameters and not path
-		// segments, because a path segment would be a first-segment name that
-		// the vault could not also use -- and the vault is the source of truth
-		// (ADR 0001), so it wins any argument about what a URL may look like.
+		// A page. `?raw=1` is the same page as markdown, `?stream=1` is the same
+		// page as a stream, and `?edit=1` is the same page being edited. All
+		// three are query parameters and not path segments, because a path
+		// segment would be a first-segment name that the vault could not also
+		// use -- and the vault is the source of truth (ADR 0001), so it wins any
+		// argument about what a URL may look like. A DM with a page at
+		// `locations/edit` has it.
 		c.Get("/*", a.page)
+		c.Post("/*", a.pagePost)
 	})
 
 	return router, nil
@@ -335,6 +357,39 @@ func New(cfg Config) (http.Handler, error) {
 // `vault/` and the watcher indexes it -- so the map fills lazily rather than at
 // startup, and it is never pruned: a renderer is a renderer and a 500-entry
 // cache, and a DM with a dozen campaigns over a year has a dozen of them.
+// editorFor is the writer for a campaign.
+//
+// A missing `EditorFor` is a 500 on the editor route and a *missing Edit link*
+// everywhere else, rather than a refusal at startup: a server with no editor is a
+// read-only wiki, and a read-only wiki is a thing somebody might want (a DM
+// syncing on one machine and serving on another), so it is a missing feature in the
+// safe direction rather than a misconfiguration.
+func (a *app) editorFor(campaign domain.Campaign) *edit.Editor {
+	a.editorsMu.Lock()
+	defer a.editorsMu.Unlock()
+
+	if existing, found := a.editors[campaign.Slug]; found {
+		return existing
+	}
+	if a.cfg.EditorFor == nil {
+		return nil
+	}
+
+	built, err := a.cfg.EditorFor(campaign)
+	if err != nil {
+		// Logged and cached as nil, so a vault that cannot be opened is one log
+		// line rather than one per request.
+		a.log.LogAttrs(context.TODO(), slog.LevelError, "opening a campaign's writer",
+			slog.String("campaign", campaign.Slug.String()),
+			slog.String("error", err.Error()))
+		a.editors[campaign.Slug] = nil
+		return nil
+	}
+
+	a.editors[campaign.Slug] = built
+	return built
+}
+
 func (a *app) rendererFor(slug domain.Slug) *render.Renderer {
 	a.renderersMu.Lock()
 	defer a.renderersMu.Unlock()
