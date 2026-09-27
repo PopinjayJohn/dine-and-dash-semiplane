@@ -46,7 +46,7 @@ func TestUpsertPageStoresEveryField(t *testing.T) {
 		t.Error("a page that was never archived reads back as deleted")
 	}
 
-	read, err := s.GetPage(ctx, c.ID, "locations/rivergate")
+	read, err := s.GetPage(ctx, c.ID, "locations/rivergate", store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestUpsertPageReplacesTheRowAtTheSamePath(t *testing.T) {
 
 	// One row, not two: a reindex that inserted a second row for the same
 	// path would make the page tree depend on which row came back first.
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -213,14 +213,14 @@ func TestDeletePageArchivesRatherThanRemoves(t *testing.T) {
 		t.Fatalf("DeletePage: %v", err)
 	}
 
-	if _, err := s.GetPage(ctx, c.ID, p.Path); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.GetPage(ctx, c.ID, p.Path, store.AsDM(c.ID)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetPage after archiving returned %v, want an error matching ErrNotFound", err)
 	}
-	if _, err := s.GetPageByID(ctx, p.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.GetPageByID(ctx, p.ID, store.AsDM(c.ID)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetPageByID after archiving returned %v, want an error matching ErrNotFound", err)
 	}
 
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestListPagesIsOrderedByPath(t *testing.T) {
 		}
 	}
 
-	pages, err := s.ListPages(ctx, c.ID)
+	pages, err := s.ListPages(ctx, c.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestPagesOfOneCampaignDoNotLeakIntoAnother(t *testing.T) {
 	mustCreatePage(t, s, one.ID)
 	mustCreatePage(t, s, two.ID)
 
-	onePages, err := s.ListPages(ctx, one.ID)
+	onePages, err := s.ListPages(ctx, one.ID, store.AsDM(one.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}

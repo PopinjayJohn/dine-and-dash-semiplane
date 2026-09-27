@@ -9,6 +9,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // drift is every way the index can stop describing the files, and each case here
@@ -323,12 +324,12 @@ func TestReindexFullForgetsWhatTheFilesDoNotSay(t *testing.T) {
 		t.Fatalf("ReindexFull: %v", err)
 	}
 
-	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/never-existed"); err == nil {
+	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/never-existed", store.AsDM(syncer.Campaign().ID)); err == nil {
 		t.Error("a page the vault does not have survived a full reindex")
 	}
 
 	// And the rest of the campaign is still there.
-	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID)
+	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -364,7 +365,7 @@ func TestAReindexOnAFreshDatabaseIsJustASync(t *testing.T) {
 func indexedPage(t *testing.T, ctx context.Context, syncer *index.Syncer, pagePath string) domain.Page {
 	t.Helper()
 
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath)
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage(%q): %v", pagePath, err)
 	}

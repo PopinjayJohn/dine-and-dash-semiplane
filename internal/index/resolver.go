@@ -116,17 +116,17 @@ func (r *Resolver) ResolvePage(ctx context.Context, target, heading string) (dom
 	// fallbacks: a DM who wrote a path and has not written the page yet means
 	// the path, and falling through to a name lookup would resolve their
 	// deliberate placeholder to somebody else's page.
-	if page, err := r.store.GetPage(ctx, r.campaignID, target); err == nil {
+	if page, err := r.store.GetPage(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err == nil {
 		return page, true, nil
 	}
 
-	if page, found, err := r.store.FindPageByAlias(ctx, r.campaignID, target); err != nil {
+	if page, found, err := r.store.FindPageByAlias(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err != nil {
 		return domain.Page{}, false, err
 	} else if found {
 		return page, true, nil
 	}
 
-	if page, found, err := r.store.FindPageByName(ctx, r.campaignID, target); err != nil {
+	if page, found, err := r.store.FindPageByName(ctx, r.campaignID, target, store.AsDM(r.campaignID)); err != nil {
 		return domain.Page{}, false, err
 	} else if found {
 		return page, true, nil

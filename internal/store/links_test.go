@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 func TestReplaceLinksReplacesRatherThanAppends(t *testing.T) {
@@ -178,7 +179,7 @@ func TestBacklinksAndLinksToPath(t *testing.T) {
 		t.Fatalf("ReplaceLinks: %v", err)
 	}
 
-	backlinks, err := s.Backlinks(ctx, town.ID)
+	backlinks, err := s.Backlinks(ctx, town.ID, store.AsDM(c.ID))
 	if err != nil {
 		t.Fatalf("Backlinks: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestLinksFromAnUnknownPage(t *testing.T) {
 		t.Errorf("an unknown page has %d links, want none", len(links))
 	}
 
-	backlinks, err := s.Backlinks(ctx, "no-such-page")
+	backlinks, err := s.Backlinks(ctx, "no-such-page", store.AsDM("the campaign is not the subject: the page does not exist"))
 	if err != nil {
 		t.Fatalf("Backlinks: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/index"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
 
@@ -219,7 +220,7 @@ A fortified town, half under water since the winter.
 		t.Errorf("the sync indexed %d pages, want only the edited one: %v", len(report.Indexed), report.Indexed)
 	}
 
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate")
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestSyncArchivesAPageWhoseFileIsGone(t *testing.T) {
 
 	// Archived, not gone: the row is still there with its revisions, and it is
 	// out of every read.
-	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "npcs/garros-ironbar"); err == nil {
+	if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "npcs/garros-ironbar", store.AsDM(syncer.Campaign().ID)); err == nil {
 		t.Error("an archived page is still returned by a page read")
 	}
 
@@ -330,7 +331,7 @@ func TestSyncSkipsWhatItCannotReadAndRefusesWhatItMustNot(t *testing.T) {
 
 			// Either way the page is not in the index, and the rest of the
 			// campaign still is: one unreadable file does not stop the other 240.
-			if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, page); err == nil {
+			if _, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, page, store.AsDM(syncer.Campaign().ID)); err == nil {
 				t.Error("the page is in the index despite not being readable")
 			}
 			if report.Unchanged+len(report.Indexed) < len(vaultFiles) {
@@ -461,7 +462,7 @@ func TestSyncWritesTheLinkGraph(t *testing.T) {
 func assertIndexedFromFile(t *testing.T, ctx context.Context, syncer *index.Syncer, pagePath, body string) {
 	t.Helper()
 
-	indexed, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath)
+	indexed, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage(%q): %v", pagePath, err)
 	}
@@ -518,7 +519,7 @@ func assertIndexedFromFile(t *testing.T, ctx context.Context, syncer *index.Sync
 func linksFrom(t *testing.T, ctx context.Context, syncer *index.Syncer, pagePath string) []domain.PageLink {
 	t.Helper()
 
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath)
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePath, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage(%q): %v", pagePath, err)
 	}
@@ -536,7 +537,7 @@ func linksFrom(t *testing.T, ctx context.Context, syncer *index.Syncer, pagePath
 func indexSnapshot(t *testing.T, ctx context.Context, syncer *index.Syncer) []string {
 	t.Helper()
 
-	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID)
+	pages, err := syncer.Store().ListPages(ctx, syncer.Campaign().ID, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}

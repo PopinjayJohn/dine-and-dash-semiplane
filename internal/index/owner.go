@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/vault"
 )
 
@@ -179,7 +180,7 @@ func (y *Syncer) checkOwner(ctx context.Context, pagePath, pageID string, doc *v
 		return pageID, nil
 	}
 
-	character, err := y.store.GetPage(ctx, y.campaign.ID, target)
+	character, err := y.store.GetPage(ctx, y.campaign.ID, target, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return "", &OwnershipProblem{
 			Path:   pagePath,

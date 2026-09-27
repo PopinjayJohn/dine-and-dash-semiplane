@@ -126,6 +126,13 @@ const aclSecretScope = aclScopeBase + `
 		AND (` + aclAudience + `)
 		AND ( ? = 'dm' OR ` + aclOwnership + ` )`
 
+// args puts a query's own arguments before a scope's, which is the order every
+// statement in this package uses: the question's own answers, then the access
+// control's. It exists because the alternative is `append([]any{...}, sc.args...)`
+// written at every call site, and a hand-built slice is a place to put one
+// argument in the wrong order.
+func (sc scope) argsAfter(before ...any) []any { return append(before, sc.args...) }
+
 // A scope is a `WHERE` clause and the arguments that fill it, kept together so
 // that a caller cannot pair the clause for one question with the arguments of
 // another. Every placeholder in the clause has an argument here, in order, and a

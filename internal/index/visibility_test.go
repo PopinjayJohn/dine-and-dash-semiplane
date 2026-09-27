@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // A page's audience reaches the row. M4 read the `visibility` key, refused a
@@ -55,7 +56,7 @@ func TestSyncRecordsThePageAudience(t *testing.T) {
 				t.Fatalf("Sync: %v", err)
 			}
 
-			stored, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePathOf(tt.file))
+			stored, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, pagePathOf(tt.file), store.AsDM(syncer.Campaign().ID))
 			if err != nil {
 				t.Fatalf("GetPage: %v", err)
 			}
@@ -105,7 +106,7 @@ func TestSyncRewritesAPageWhoseAudienceChanged(t *testing.T) {
 		t.Fatalf("the third Sync: %v", syncErr)
 	}
 
-	stored, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, path)
+	stored, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, path, store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}

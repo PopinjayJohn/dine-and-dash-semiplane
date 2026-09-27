@@ -67,7 +67,7 @@ func roundTrip(t *testing.T, factory Factory) {
 	created := createCampaign(t, s)
 	stored := createPage(t, s, created.ID)
 
-	read, err := s.GetPage(ctx, created.ID, stored.Path)
+	read, err := s.GetPage(ctx, created.ID, stored.Path, asDM(created.ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
@@ -75,7 +75,7 @@ func roundTrip(t *testing.T, factory Factory) {
 		t.Errorf("GetPage returned %+v, want %+v", read, stored)
 	}
 
-	byID, err := s.GetPageByID(ctx, stored.ID)
+	byID, err := s.GetPageByID(ctx, stored.ID, asDM(created.ID))
 	if err != nil {
 		t.Fatalf("GetPageByID: %v", err)
 	}
@@ -150,7 +150,7 @@ func idempotent(t *testing.T, factory Factory) {
 		t.Errorf("content hash changed from %q to %q on an unchanged write", first.ContentHash, second.ContentHash)
 	}
 
-	pages, err := s.ListPages(ctx, created.ID)
+	pages, err := s.ListPages(ctx, created.ID, asDM(created.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -206,7 +206,7 @@ func ordered(t *testing.T, factory Factory) {
 			}
 		}
 
-		pages, err := s.ListPages(ctx, created.ID)
+		pages, err := s.ListPages(ctx, created.ID, asDM(created.ID))
 		if err != nil {
 			t.Fatalf("ListPages: %v", err)
 		}
@@ -241,13 +241,13 @@ func archiving(t *testing.T, factory Factory) {
 		t.Fatalf("DeletePage: %v", err)
 	}
 
-	if _, err := s.GetPage(ctx, created.ID, stored.Path); !errors.Is(err, NotFound) {
+	if _, err := s.GetPage(ctx, created.ID, stored.Path, asDM(created.ID)); !errors.Is(err, NotFound) {
 		t.Errorf("GetPage after archiving returned %v, want an error matching NotFound", err)
 	}
-	if _, err := s.GetPageByID(ctx, stored.ID); !errors.Is(err, NotFound) {
+	if _, err := s.GetPageByID(ctx, stored.ID, asDM(created.ID)); !errors.Is(err, NotFound) {
 		t.Errorf("GetPageByID after archiving returned %v, want an error matching NotFound", err)
 	}
-	pages, err := s.ListPages(ctx, created.ID)
+	pages, err := s.ListPages(ctx, created.ID, asDM(created.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -286,7 +286,7 @@ func pathsArePerCampaign(t *testing.T, factory Factory) {
 	}
 
 	// Each campaign sees only its own page, even at the same path.
-	pages, err := s.ListPages(ctx, first.ID)
+	pages, err := s.ListPages(ctx, first.ID, asDM(one.ID))
 	if err != nil {
 		t.Fatalf("ListPages: %v", err)
 	}
@@ -332,10 +332,10 @@ func notFound(t *testing.T, factory Factory) {
 	if _, err := s.CampaignBySlug(ctx, "no-such-campaign"); !errors.Is(err, NotFound) {
 		t.Errorf("CampaignBySlug returned %v, want an error matching NotFound", err)
 	}
-	if _, err := s.GetPage(ctx, "no-such-campaign", "locations/rivergate"); !errors.Is(err, NotFound) {
+	if _, err := s.GetPage(ctx, "no-such-campaign", "locations/rivergate", asDM("no-such-campaign")); !errors.Is(err, NotFound) {
 		t.Errorf("GetPage returned %v, want an error matching NotFound", err)
 	}
-	if _, err := s.GetPageByID(ctx, "no-such-page"); !errors.Is(err, NotFound) {
+	if _, err := s.GetPageByID(ctx, "no-such-page", asDM("no-such-campaign")); !errors.Is(err, NotFound) {
 		t.Errorf("GetPageByID returned %v, want an error matching NotFound", err)
 	}
 	if _, err := s.GetRevision(ctx, "no-such-page", 1); !errors.Is(err, NotFound) {
@@ -532,7 +532,7 @@ func unresolvedLinks(t *testing.T, factory Factory) {
 		t.Fatalf("ReplaceLinks: %v", replaceErr)
 	}
 
-	backlinks, err := s.Backlinks(ctx, target.ID)
+	backlinks, err := s.Backlinks(ctx, target.ID, asDM(created.ID))
 	if err != nil {
 		t.Fatalf("Backlinks: %v", err)
 	}
@@ -721,7 +721,7 @@ func lookupTargets(t *testing.T, factory Factory) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			if tt.alias != "" {
-				got, found, err := s.FindPageByAlias(ctx, campaign.ID, tt.alias)
+				got, found, err := s.FindPageByAlias(ctx, campaign.ID, tt.alias, asDM(campaign.ID))
 				if err != nil {
 					t.Fatalf("FindPageByAlias(%q): %v", tt.alias, err)
 				}
@@ -734,7 +734,7 @@ func lookupTargets(t *testing.T, factory Factory) {
 				return
 			}
 
-			got, found, err := s.FindPageByName(ctx, campaign.ID, tt.name)
+			got, found, err := s.FindPageByName(ctx, campaign.ID, tt.name, asDM(campaign.ID))
 			if err != nil {
 				t.Fatalf("FindPageByName(%q): %v", tt.name, err)
 			}
@@ -775,11 +775,11 @@ func replacingAliases(t *testing.T, factory Factory) {
 		t.Fatalf("ReplacePageAliases: %v", err)
 	}
 
-	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "Flussport"); err != nil || found {
+	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "Flussport", asDM(campaign.ID)); err != nil || found {
 		t.Errorf("an alias the page no longer declares still resolves (found = %t, %v)", found, err)
 	}
 
-	got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the bridge town")
+	got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the bridge town", asDM(campaign.ID))
 	if err != nil || !found || got.Path != "locations/rivergate" {
 		t.Errorf("the new alias resolves to %+v (found = %t, %v), want the page", got, found, err)
 	}
@@ -812,10 +812,10 @@ func archivedAnswersToNothing(t *testing.T, factory Factory) {
 		t.Fatalf("DeletePage: %v", err)
 	}
 
-	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate"); err != nil || found {
+	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate", asDM(campaign.ID)); err != nil || found {
 		t.Errorf("an archived page answers to its own name (found = %t, %v)", found, err)
 	}
-	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town"); err != nil || found {
+	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town", asDM(campaign.ID)); err != nil || found {
 		t.Errorf("an archived page answers to its alias (found = %t, %v)", found, err)
 	}
 }
@@ -839,7 +839,7 @@ func targetsArePerCampaign(t *testing.T, factory Factory) {
 	}
 
 	for _, campaign := range []domain.Campaign{first, second} {
-		got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town")
+		got, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town", asDM(campaign.ID))
 		if err != nil || !found {
 			t.Fatalf("FindPageByAlias in campaign %s: found = %t, %v", campaign.Slug, found, err)
 		}
@@ -851,7 +851,7 @@ func targetsArePerCampaign(t *testing.T, factory Factory) {
 	// And a campaign with no such page says so, rather than reaching into
 	// another one.
 	empty := createCampaignWithSlug(t, s, "thornford-county")
-	if _, found, err := s.FindPageByName(ctx, empty.ID, "rivergate"); err != nil || found {
+	if _, found, err := s.FindPageByName(ctx, empty.ID, "rivergate", asDM(empty.ID)); err != nil || found {
 		t.Errorf("a page from another campaign was found (found = %t, %v)", found, err)
 	}
 }

@@ -299,7 +299,7 @@ func TestStoreWritesSurviveAReopen(t *testing.T) {
 		}
 	}()
 
-	got, err := second.GetPage(ctx, campaignStored.ID, pageStored.Path)
+	got, err := second.GetPage(ctx, campaignStored.ID, pageStored.Path, store.AsDM(campaignStored.ID))
 	if err != nil {
 		t.Fatalf("reading a page back after reopening: %v", err)
 	}

@@ -184,7 +184,7 @@ func (y *Syncer) planFor(ctx context.Context, pagePath string) (plan, error) {
 // plan for a page the index has never seen has no id yet, and the write mints
 // one.
 func (y *Syncer) pageID(ctx context.Context, pagePath string) string {
-	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath)
+	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return ""
 	}
@@ -243,7 +243,7 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 		return false, nil
 	}
 
-	indexed, err := y.store.GetPageByID(ctx, p.page.ID)
+	indexed, err := y.store.GetPageByID(ctx, p.page.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return false, nil //nolint:nilerr // a failed read means "write it"
 	}
@@ -373,7 +373,7 @@ func (y *Syncer) apply(ctx context.Context, p plan) (outcome, error) {
 
 // archive archives one page's row, for a file that is no longer there.
 func (y *Syncer) archive(ctx context.Context, pagePath string) (outcome, error) {
-	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath)
+	indexed, err := y.store.GetPage(ctx, y.campaign.ID, pagePath, store.AsDM(y.campaign.ID))
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
 			// Nothing indexed and no file: a path that was never a page, which
@@ -417,7 +417,7 @@ func (y *Syncer) archiveRow(ctx context.Context, page domain.Page) error {
 
 // archiveMissing archives every indexed page whose file is gone.
 func (y *Syncer) archiveMissing(ctx context.Context, present map[string]bool) ([]string, error) {
-	pages, err := y.store.ListPages(ctx, y.campaign.ID)
+	pages, err := y.store.ListPages(ctx, y.campaign.ID, store.AsDM(y.campaign.ID))
 	if err != nil {
 		return nil, fmt.Errorf("listing the indexed pages of %s: %w", y.campaign.Slug, err)
 	}

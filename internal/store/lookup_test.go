@@ -89,7 +89,7 @@ func TestFindPageByAlias(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, found, err := s.FindPageByAlias(ctx, campaign.ID, tt.alias)
+			got, found, err := s.FindPageByAlias(ctx, campaign.ID, tt.alias, store.AsDM(campaign.ID))
 			if err != nil {
 				t.Fatalf("FindPageByAlias(%q): %v", tt.alias, err)
 			}
@@ -162,7 +162,7 @@ func TestFindPageByName(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, found, err := s.FindPageByName(ctx, campaign.ID, tt.name)
+			got, found, err := s.FindPageByName(ctx, campaign.ID, tt.name, store.AsDM(campaign.ID))
 			if err != nil {
 				t.Fatalf("FindPageByName(%q): %v", tt.name, err)
 			}
@@ -263,7 +263,7 @@ func TestArchivedPagesAnswerToNothing(t *testing.T) {
 		t.Fatalf("ReplacePageTargets: %v", err)
 	}
 
-	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate"); err != nil || !found {
+	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate", store.AsDM(campaign.ID)); err != nil || !found {
 		t.Fatalf("the page answers to its own name before it is archived (found = %t, %v)", found, err)
 	}
 
@@ -273,10 +273,10 @@ func TestArchivedPagesAnswerToNothing(t *testing.T) {
 
 	// An archived page is gone from every read, and a link that resolves to it
 	// would be a link to a page nobody can open.
-	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate"); err != nil || found {
+	if _, found, err := s.FindPageByName(ctx, campaign.ID, "rivergate", store.AsDM(campaign.ID)); err != nil || found {
 		t.Errorf("an archived page answers to its own name (found = %t, %v)", found, err)
 	}
-	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town"); err != nil || found {
+	if _, found, err := s.FindPageByAlias(ctx, campaign.ID, "the toll town", store.AsDM(campaign.ID)); err != nil || found {
 		t.Errorf("an archived page answers to its alias (found = %t, %v)", found, err)
 	}
 }
@@ -314,7 +314,7 @@ func TestLookupsArePerCampaign(t *testing.T) {
 	// The same alias in two campaigns is two pages, and each campaign resolves
 	// to its own: a wiki link is resolved within a campaign, because a DM has
 	// two of them open in two tabs.
-	one, _, err := s.FindPageByAlias(ctx, first.ID, "the toll town")
+	one, _, err := s.FindPageByAlias(ctx, first.ID, "the toll town", store.AsDM(first.ID))
 	if err != nil {
 		t.Fatalf("FindPageByAlias: %v", err)
 	}

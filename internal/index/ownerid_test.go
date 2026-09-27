@@ -3,6 +3,8 @@ package index_test
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // A page's owner is a page id, and the whole of M4's resolution becomes that
@@ -32,7 +34,7 @@ func TestSyncStoresTheCharacterPageAsTheOwner(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	character, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "characters/aria")
+	character, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "characters/aria", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage for the character: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestSyncStoresTheCharacterPageAsTheOwner(t *testing.T) {
 	// Everything under it has the character as its owner, and the three of them
 	// agree.
 	for _, path := range []string{"characters/aria/backstory", "characters/aria"} {
-		page, getErr := syncer.Store().GetPage(ctx, syncer.Campaign().ID, path)
+		page, getErr := syncer.Store().GetPage(ctx, syncer.Campaign().ID, path, store.AsDM(syncer.Campaign().ID))
 		if getErr != nil {
 			t.Fatalf("GetPage(%q): %v", path, getErr)
 		}
@@ -60,7 +62,7 @@ func TestSyncStoresTheCharacterPageAsTheOwner(t *testing.T) {
 
 	// And a page outside any character has no owner at all, which is the
 	// fail-closed reading rather than an accident of the walk.
-	town, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate")
+	town, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage for the town: %v", err)
 	}
@@ -86,11 +88,11 @@ func TestSyncResolvesACharacterKeyToTheSameOwner(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	character, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "characters/aria")
+	character, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "characters/aria", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage for the character: %v", err)
 	}
-	spells, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells")
+	spells, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage for the spell notes: %v", err)
 	}
@@ -126,7 +128,7 @@ func TestACharacterThatDoesNotExistLeavesNoOwner(t *testing.T) {
 	if len(report.Ownership) == 0 {
 		t.Fatal("a character: key naming a page that does not exist was not reported")
 	}
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells")
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
@@ -178,7 +180,7 @@ func TestAChangeOfOwnerIsNotSettled(t *testing.T) {
 		t.Error("a character: key naming a page that does not exist was not reported")
 	}
 
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells")
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "notes/arias-spells", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/search"
+	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/store"
 )
 
 // This is the whole of M5 end to end, from a file on disk to a search result: a
@@ -196,7 +197,7 @@ func TestSyncSettlesOnTheSearchRows(t *testing.T) {
 	// Now damage one page's search rows behind the sync's back, the way a bug or
 	// a hand-typed session would. Nothing in the vault moved, and every hash
 	// still matches, so a check that only compared hashes would see nothing.
-	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate")
+	page, err := syncer.Store().GetPage(ctx, syncer.Campaign().ID, "locations/rivergate", store.AsDM(syncer.Campaign().ID))
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}

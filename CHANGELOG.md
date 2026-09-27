@@ -33,6 +33,29 @@
   read exactly the one file she happens to be bound to", and it is the spec's form
   of the ownership test; M6 had to correlate on the page itself because the column
   did not exist yet.
+- **A principal on every page-returning store method** — the other half of
+  invariant 3, and the one that has been outstanding since M4: `GetPage`,
+  `GetPageByID`, `ListPages`, `FindPageByAlias`, `FindPageByName` and `Backlinks`
+  all take one now. A signature that can be called without naming a principal is a
+  method whose ACL is somebody's decision per call site, and a method that *can* be
+  filtered and does not is worse than one that cannot.
+- **A page that exists and may not be read is `not found`, not "forbidden."** The
+  distinction tells a player which paths a DM has written, and a path is enough to
+  ask about.
+- **`Backlinks` filters on the *source*.** A backlink says "some page mentions this
+  one", and if the some page is a `dm-only` session log then the backlink is a
+  disclosure: it hands a player a path, and a path is a thing they can then try to
+  read and be told 404 about.
+- **`GetPageByID` and `Backlinks` scope by the principal's campaign**, because they
+  have no campaign argument of their own — so a principal from another campaign
+  gets not-found rather than somebody else's page. That is also why `store.AsDM()`
+  **takes a campaign**: the first version did not, and every page in every campaign
+  became invisible to the thing that indexes it. A principal without a campaign
+  cannot exist — the column is NOT NULL — and a DM of no particular campaign is not
+  a principal at all.
+- The alias and name lookups filter, so a `[[link]]` into a page a player may not
+  read resolves to nothing rather than to a page.
+
 - **`internal/access`, the one place that answers "what may this principal do with
   this page".** `For(p, page) Decision` is pure — no store, no clock — because the
   rights matrix has 36 cells and the only way to be sure all 36 behave as
