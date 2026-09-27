@@ -1,4 +1,22 @@
+# Changelog
+
+All notable changes to this project, following [Keep a Changelog] and
+[Semantic Versioning]. The **unreleased** section is everything since the last
+tag; a released section is never edited again, so a version of this file is what
+it said on the day it shipped.
+
+[Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
+[Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+
 ## [Unreleased]
+
+_Nothing yet. See `docs/spec.md` section 16 for what comes next._
+
+## [0.1.0] - 2026-09-27
+
+_First release. Milestones M0 through M13: from `internal/domain` to the
+plugin framework and the release machinery. `docs/spec.md` section 16 has the
+breakdown and `docs/adr/` has the decisions._
 
 ### Added
 
@@ -2367,9 +2385,5 @@
   meant to prevent it. `fmt-check` depends on it, so any formatting check catches
   it.
 
-## [0.1.0] - TBD
-
-_First release. Will cover milestones M0 through M12; see `docs/spec.md`
-§ Milestones for the breakdown._
-
 [Unreleased]: https://github.com/popinjayjohn/dine-and-dash-semiplane/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/popinjayjohn/dine-and-dash-semiplane/releases/tag/v0.1.0

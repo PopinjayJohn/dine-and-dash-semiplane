@@ -798,7 +798,7 @@ Each milestone is one branch, one PR, one changelog section.
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
 | **M11** | Plugin framework | `internal/plugin` and capabilities, `house-rules`, `spoilerbox`, `wordcount`, authoring guide | contract suite, ordering, panic isolation, duplicate rejection |
 | **M12** | The `dnd5e` ruleset | a plugin that is *about* a game rather than *for* one: page types with rich field schemas (`spell`, `creature`, `feat`, `magic-item`), a `statline` field type, a character-sheet template | the field-renderer security tests, the `render.FieldRenderer` contract, plugin output reviewed as HTML |
-| **M13** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run |
+| **M13** | DX and release | full CLI, `import obsidian`, `export --zip`, `users new`/`revoke`, Dockerfile, backup and restore, CSP and structured logs, full docs, **v0.1.0** | CLI tests, e2e smoke behind a build tag, release dry run (shipped) |
 
 The milestone table numbers `dnd5e` as its own **M12** and DX and release as
 **M13**, and that is a correction. The table used to have one row, M12, carrying
@@ -1240,6 +1240,50 @@ own buffer so the one sanitiser runs over it. The first version redacted
 unconditionally and handed the DM `[…]` for a field they could read in the
 body of the same page — which is the asymmetry between a search index's
 `body_public` and a render's decision, and it is worth a named test.
+
+### M13 commit sequence
+
+```
+fix(plugin): the core command list reserved the wrong names, and the test its comment named was not written
+fix(http): a response with no CSP header is a page that is open
+feat(log): a log format a DM can choose, and a refusal for one they cannot
+feat(config): config.yaml, the three DDSP_* settings, and the rate limit that was never called
+feat(cli): wiki users new, revoke and list
+feat(cli): wiki backup, and the test three documents have been naming
+feat(cli): wiki serve --lan, with the TLS security.md has been promising
+test(cli): TestOfflineBoot, which two documents have been listing
+feat(cli): wiki export --zip and wiki import obsidian, and the ADR for both
+build: a Dockerfile, a release workflow, make dist, and an e2e behind a tag
+docs: the README a DM reads, and the v0.1.0 release
+```
+
+M13 is nine items wide and its commit sequence is eleven commits, because
+**the first two are defects rather than features and they were in the
+milestone's own dependencies.**
+
+The rate limit is the one worth reading the sequence for. `auth.Limiter` and
+`auth.ClientIP` were built in M6, `TestRateLimitedRedemption` has tested
+them since, and `docs/security.md` has listed that test as *the control*
+against "the network, guessing share links" ever since. Nothing invoked
+either. **A test on a component nothing calls is a test of that component,
+not a control on the route** — and the route is where the attack is. The
+`trusted_proxies` setting that M13 needed to read turned out to be the
+third argument `auth.ClientIP` had been waiting for since M6, so the config
+and the limiter are one commit rather than two.
+
+The other defect is M11's, found by the test M11's own comment named and
+did not have: the reserved list of core command names held three commands
+that do not exist and omitted two that do, one of which is how a database's
+schema is applied.
+
+Two items were specified as one and arrived as one. **CSP was already
+shipped** (§11's policy is in `internal/http/headers.go` with four named
+tests), so the item was the one hole in it: a failed `crypto/rand` produced
+a response with *no* policy, which is the opposite of what that file argues
+for three functions below the code doing it. **Structured logs were already
+structured** — everything goes through `log/slog` with named fields — so
+the item was a format switch, and the constraint on adding a format is that
+`internal/auth`'s redaction has to survive it.
 
 ### Definition of Done
 
