@@ -24,6 +24,27 @@ House rules:
 
 ### Added
 
+- A search **query language**: bare words are ANDed, `"exact phrase"` is a
+  phrase, and `tag:`, `type:` and `is:` are filters. It is a pure value with no
+  database handle, so the relevance tests need no database and the parser can be
+  fuzzed on its own. Whatever the language does not recognise is searched for as
+  a word, because a search box that refuses input is worse than one that looks
+  for a strange word.
+- Every clause is quoted before it reaches FTS5 and the whole expression is
+  bound as a parameter, so a query cannot become a query *language*: `AND`,
+  `NOT`, `-`, `(`, `*` and a bare `"` are words, and `http://example.com` is a
+  word rather than a filter on its second colon.
+- `is:` is the one filter that is validated, and refusing `is:plyers` rather
+  than returning nothing is deliberate: a search that finds nothing looks exactly
+  like an index that has nothing to say, and a player cannot tell the two apart.
+  A player who searches `is:dm-only` gets no results, not a page.
+- A fuzzer for the language, which found two things worth fixing and kept both
+  as seeds: a byte that is not valid UTF-8 was riding through into a clause (and
+  would have made any response echoing the query invalid JSON), and a NUL inside
+  a term ended it as far as the tokenizer was concerned while not ending it as
+  far as the string was concerned. A filter value beginning with a colon is now
+  quoted on the way out as well, so `tag: :00` survives a round trip.
+
 - A `page_targets` table and three store methods, so a wiki link can resolve the
   way it does in Obsidian: the exact path, then an alias, then a case-insensitive
   file name. The aliases and the file name live in the index rather than being
