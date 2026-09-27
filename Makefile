@@ -238,3 +238,16 @@ print-templ-version:
 .PHONY: print-coverage-min
 print-coverage-min:
 	@echo $(COVERAGE_MIN)
+
+# The version a build would be stamped with, read by the release workflow so that
+# the stamp and the tag are compared by the *same* command that does the stamping.
+#
+# A release whose binary says `dev` while its tag says `v0.1.0` is one a DM cannot
+# report a bug against, and `docs/security.md` tells people to include `wiki version`
+# in a report — so the check that the two agree is the release workflow's first step.
+#
+# `git describe`, not a version in a file: `docs/spec.md` §15 says the version comes
+# from the git tag, and a version kept in two places is wrong in one of them.
+.PHONY: print-version
+print-version: ## Print the version a build would be stamped with
+	@git describe --tags --always --dirty 2>/dev/null || echo dev

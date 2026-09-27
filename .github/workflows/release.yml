@@ -42,13 +42,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The changelog check and the version stamp both read history: the first
           # needs the merge base and the second needs the tag that triggered this.
           fetch-depth: 0
 
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0bca9eb5 # v5.0.2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -88,14 +88,17 @@ jobs:
           echo "every archive holds a binary"
 
       - name: publish
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.2
-        with:
-          files: dist/*.tar.gz
-          # The release body is GitHub's own summary of what changed, and
-          # `CHANGELOG.md`'s `## [0.1.0]` section is the record of what the version
-          # *was* -- `docs/spec.md` §15 says released sections are never retro-edited,
-          # which makes the changelog the thing to read and the auto-notes the
-          # summary of it. A hand-written body file would be a third document to keep
-          # in step, and the first release is the one where three documents about
-          # the same thing disagree.
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # **The `gh` CLI, and no third-party action at all.**
+          #
+          # The first draft of this step used `softprops/action-gh-release`, pinned
+          # to a SHA written from memory — which is the exact thing ci.yml's header
+          # argues against, and it would not have resolved. `gh` is preinstalled on
+          # GitHub-hosted runners, so using it means this job has **no third-party
+          # code in it with `contents: write`**, which is a stronger property than any
+          # pin achieves: there is nothing to audit because there is nothing.
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
