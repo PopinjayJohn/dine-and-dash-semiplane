@@ -2,6 +2,42 @@
 
 ### Added
 
+- **The plugin registry, and the whole surface a plugin may touch.**
+  `internal/plugin` is the seam [ADR 0002](docs/adr/0002-plugin-registry-in-process.md)
+  described: a `Plugin` with a `Name`, a `Version` and a `Setup(*Registry) error`,
+  handed a `Registry` and nothing else. It is compiled in, not loaded — there is no
+  `Register` at init time and no package-level state, so a test can build a registry
+  with one plugin in it and know that nothing else in the process is reachable from
+  it. That is what "no ambient globals" has to mean if it is to mean anything, and
+  it is `TestTheRegistryHasNoAmbientState`.
+- **Capabilities run in `(Priority, Name)` order, and the name is the tie-break.**
+  Two plugins that both ask for the default priority are in the same relative order
+  in every binary, every run and every test, because a hook whose winner is decided
+  by a linker cannot be tested. `TestCapabilitiesRunInPriorityThenNameOrder`
+  registers the same five plugins in five orders and asserts the same answer five
+  times, which is the only version of that test that would notice a registry which
+  appended and left it there.
+- **Startup is loud.** A duplicate name, a name that is not a name, a plugin with no
+  version, a redefinition of something core owns and a `Setup` that returns an error
+  all stop the process, and the message names the plugin. None of them is resolved by
+  "whoever was added first", because that is a coin toss decided by an import graph.
+- **A plugin's name is its slug.** `Name()` goes through the same `domain.NewSlug` a
+  campaign's does, so a name is safe in a URL, in a log line and in a
+  `class="callout-<name>"` without a second escaping step anywhere — and two plugins
+  whose names differ only in spelling are one plugin, with the loser told why.
+  `../../etc/passwd` normalises to `etc-passwd`; a name that reduces to nothing is
+  refused.
+- **Page types and frontmatter keys are claims, and a claim can be refused.**
+  `AddPageType` and `AddFieldType` reserve a name for the plugin making it. A plugin
+  may not redefine `character` or `visibility:`, and the reason is not politeness:
+  `domain.PageType.IsCore` exists so core can tell a plugin's type from its own, and
+  a plugin that claimed `character` would make that function answer about a type whose
+  ownership rule — a character page owns itself — does not apply to it. The reserved
+  frontmatter list is `vault.CoreKeys()` and nothing else; a copy of it would be wrong
+  the first time somebody added a key to the vault without adding it here.
+- **`domain.CorePageTypes()` and `vault.CoreKeys()`**, so the authoring guide and
+  `wiki help` can print the two closed sets from the code that owns them rather than
+  from a list in a document.
 - **Search as you type.** `GET /c/<slug>/?search=1&q=…` answers with a fragment
   of candidates and nothing else, so the page's chrome is not re-rendered
   underneath a reader's cursor. The candidates are the ACL's answer and not a

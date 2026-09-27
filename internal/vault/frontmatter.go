@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -354,6 +355,20 @@ func ownedKeys() []Key {
 		KeyTitle, KeyAliases, KeyTags, KeyType,
 		KeyVisibility, KeyCreated, KeyUpdated, KeyCharacter,
 	}
+}
+
+// CoreKeys returns every key the application owns, in declaration order.
+//
+// It exists so that a second package can ask the same question without keeping its
+// own copy of the answer. `internal/plugin` refuses a plugin that claims one of
+// these, and a list over there is a list that goes stale the first time a key is
+// added here — which is how a plugin ends up redefining `visibility:` while the
+// code that defines it believes it cannot.
+//
+// `TestOwnedKeys` in this package is the other half: it already holds `ownedKeys`
+// against `keyKinds`, so the list cannot lose a key without a test noticing.
+func CoreKeys() []Key {
+	return slices.Clone(ownedKeys())
 }
 
 // checkValue reports whether a value can be stored under a key, so that
