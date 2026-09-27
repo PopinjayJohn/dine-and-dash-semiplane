@@ -32,12 +32,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
 )
 
 // Version is the type of RendererVersion, so the cache key and the index column
@@ -56,6 +56,11 @@ const RendererVersion Version = 1
 // players will render at the same time.
 type Renderer struct {
 	md goldmark.Markdown
+
+	// parseMu serialises parses against this renderer's parser. See parse.go for
+	// what it is defending and what it is not: it is defensive, and a render is
+	// one call per HTTP request from M8 onwards, so this parser is shared.
+	parseMu sync.Mutex
 
 	// cache holds the renders, keyed by everything that can change one.
 	cache *Cache
@@ -156,7 +161,7 @@ func (r *Renderer) Render(ctx context.Context, page Page, decision Decision) (Re
 func (r *Renderer) render(ctx context.Context, page Page, decision Decision) (Result, error) {
 	source := []byte(page.Body)
 
-	doc := r.md.Parser().Parse(text.NewReader(source))
+	doc := r.parseSource(source)
 
 	// Resolution walks the tree rather than the source, so a link that a
 	// resolver found is a link whose destination has been rewritten, not a

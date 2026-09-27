@@ -56,6 +56,39 @@
 - The alias and name lookups filter, so a `[[link]]` into a page a player may not
   read resolves to nothing rather than to a page.
 
+- **`body_public` is no longer empty, so a page is findable by its prose.** It is
+  filled from `render.PublicText`: the page's own text with its unrevealed secrets
+  removed, as **plain text rather than markdown**, because the column is read by
+  the tokenizer and by nothing else — a markdown version would need the byte range
+  of every secret callout, and the tree does not carry one, so it would mean a
+  second parser for the same grammar. This is the case that has been "a missing
+  feature, in the safe direction" since M5, and it became safe to fill because
+  **the public search's rows are filtered by the read predicate**: every
+  principal who can reach a hit in this text may read the page, so the index holds
+  exactly what a reader of that page may read.
+- **A revealed secret stays in the public half.** §9 says a `[!SECRET]{.revealed}`
+  block is visible to everyone who can read the page, and every principal the
+  predicate admits for that page may read it — so stripping it would be removing
+  text the reader is entitled to. A *callout's title* is in neither half, because
+  a title is an attribute on the node rather than text in it.
+- A forbidden-substring test from a file on disk to a search result: the secret's
+  word is findable by nobody through the public path, and findable by the DM
+  through the private one — the second half being what makes the first mean
+  something, since an index with no secret text in it would also pass it.
+- **One parser, one lock, one path into it.** goldmark's `Parser` is shared by
+  every render, every link resolution and every secret extraction, and whether
+  that is safe is a fact about goldmark's internals that this project concluded by
+  reading them: goldmark documents nothing, and the field I suspected of being
+  per-parse state turns out to be written once inside a `sync.Once`. **So this is
+  defensive and the commit says so** — I could not provoke a failure with the lock
+  removed and eight goroutines at it, and claiming a data race I cannot show
+  would be exactly the kind of thing this changelog exists to prevent. What *is* a
+  real defect: the first version of the fix had two mutexes guarding one parser,
+  because the package-level pipeline **is** a `*Renderer`. There is now one lock
+  and one way in. The tests beside it pin the behaviour that is actually ours —
+  a secret is never in the public text and a render is never wrong about one,
+  however many goroutines are doing it.
+
 - **`internal/access`, the one place that answers "what may this principal do with
   this page".** `For(p, page) Decision` is pure — no store, no clock — because the
   rights matrix has 36 cells and the only way to be sure all 36 behave as

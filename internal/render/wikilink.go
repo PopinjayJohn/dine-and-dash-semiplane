@@ -44,6 +44,28 @@ func (n *WikiLink) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, map[string]string{"WikiLink": "WikiLink"}, nil)
 }
 
+// wikilinkText is the text a wiki link shows, and therefore the text a reader
+// searching for it would type.
+//
+// The alias when they gave one, and the target when they did not, because that is
+// what the renderer puts between the anchor tags and so what a page *reads* as
+// containing. It is one function so that the renderer and the search index agree
+// on it: a page that displays "the collector" and indexes "the toll collector"
+// is a page a DM cannot find by what they can see on it.
+func wikilinkText(n *WikiLink) string {
+	if alias, found := n.AttributeString(AttrWikiAlias); found {
+		if text, isString := alias.(string); isString && text != "" {
+			return text
+		}
+	}
+	if target, found := n.AttributeString(AttrWikiTarget); found {
+		if text, isString := target.(string); isString {
+			return text
+		}
+	}
+	return ""
+}
+
 // The attributes a wiki link carries, as the resolver and the tests read them.
 const (
 	// AttrWikiTarget is the path or name the DM wrote, before resolution.

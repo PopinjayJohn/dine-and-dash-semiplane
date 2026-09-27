@@ -3,6 +3,7 @@ package index_test
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/popinjayjohn/dine-and-dash-semiplane/internal/domain"
@@ -51,9 +52,14 @@ A fortified town at the confluence of the [[Blackwater]].
 		who   domain.Principal
 		want  []string
 	}{
-		"the title": {
+		// Two, and not one: the Drowned Hound links to `[[rivergate]]`, and a
+		// wiki link's display text is indexed — so a page is findable by the names
+		// it uses as well as the names it has. That is the same sentence a reader
+		// would write in it, and a page that mentions a place is findable by that
+		// place.
+		"a word a page uses as well as one it has": {
 			input: "rivergate", who: player,
-			want: []string{"locations/rivergate"},
+			want: []string{"locations/rivergate", "locations/the-drowned-hound"},
 		},
 		"an alias": {
 			input: "Flussport", who: player,
@@ -67,12 +73,15 @@ A fortified town at the confluence of the [[Blackwater]].
 			input: "type:location", who: player,
 			want: []string{"locations/rivergate", "locations/the-drowned-hound"},
 		},
-		// The body is not in the public index yet, and this is the shape of that:
-		// a missing feature, named in a test so that the day it is filled in
-		// somebody sees which assertion has to move.
-		"a word in the public body is not findable yet": {
+		// Prose is findable, and this is the assertion that says so. It was
+		// `want: nil` until access control landed, with a comment saying the
+		// feature was missing in the safe direction; the word lives in the page's
+		// body, the body is in the public index, and the public search's rows are
+		// filtered by the read predicate — so a principal who may read the page
+		// may find it by its prose, and one who may not gets nothing.
+		"a word in the public body": {
 			input: "confluence", who: player,
-			want: nil,
+			want: []string{"locations/rivergate"},
 		},
 		// The secret is, for the DM, because which text is secret is a parsing
 		// question and the parser already answers it.
@@ -220,5 +229,125 @@ func TestSyncSettlesOnTheSearchRows(t *testing.T) {
 	}
 	if len(hits) == 0 {
 		t.Error("the page is not findable after the repair, so the row was deleted rather than rewritten")
+	}
+}
+
+// The redaction, end to end, from a file on disk. This is the case that has been
+// "a missing feature, in the safe direction" since M5, and it is a
+// forbidden-substring assertion rather than a check that some hits came back: the
+// failure a search can have is not returning a secret, it is *finding* one.
+func TestThePublicIndexHoldsNoSecretWord(t *testing.T) {
+	t.Parallel()
+
+	const canary = "IlithyaMarrowCanary"
+
+	ctx, syncer, root := newSyncer(t)
+	vaultDir := filepath.Join(root, "vault", "blackwater")
+
+	// A `players` page with a secret on it: every player may read the page, and
+	// none of them may read the secret. This is the case the two-index split
+	// exists for, and the one ADR 0009 uses as its example.
+	writeVaultFile(t, vaultDir, "locations/rivergate.md", `---
+title: Rivergate
+visibility: players
+---
+
+A fortified town at the confluence of the [[Blackwater]]. The toll-collector is
+known by another name entirely.
+
+> [!SECRET] The toll-collector's real name
+> Captain Vell is actually **`+canary+`**, sworn to the Umbral Court.
+`)
+
+	if _, err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	player := domain.Principal{ID: "principal-player", Role: domain.RolePlayer}
+	dm := domain.Principal{ID: "principal-dm", Role: domain.RoleDM}
+
+	// A player may read the page, so it comes back — and its prose is searchable.
+	hits, err := search.Run(ctx, syncer.Store(), syncer.Campaign().ID, player, "confluence", search.DefaultLimit)
+	if err != nil {
+		t.Fatalf("searching for prose: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("searching for a word in the public body returned %d hits, want 1: %+v", len(hits), hits)
+	}
+
+	// The secret's word is findable by nobody through the **public** path, and
+	// that is the assertion: `search.Run` fuses both indexes, so a hit the DM
+	// gets there is the private index working. Asking Run about the public index
+	// is asking the wrong question, so this asks the public index directly.
+	store_ := syncer.Store()
+	for who, principal := range map[string]domain.Principal{"a player": player, "the DM": dm} {
+		for _, query := range []string{canary, "ilithyamarrowcanary", `"` + canary + `"`} {
+			found, publicErr := store_.SearchPublic(ctx, syncer.Campaign().ID, principal, mustParse(t, query), search.DefaultLimit)
+			if publicErr != nil {
+				t.Fatalf("searching the public index for %q as %s: %v", query, who, publicErr)
+			}
+			for _, hit := range found {
+				assertNoCanary(t, "the public index, "+who, hit)
+			}
+			if len(found) != 0 {
+				t.Errorf("the public index found %+v for the secret as %s", found, who)
+			}
+		}
+	}
+
+	// And through the whole of `Run`, a player finds nothing — which is the other
+	// half, because the private index is filtered too.
+	for _, query := range []string{canary, "ilithyamarrowcanary"} {
+		found, runErr := search.Run(ctx, store_, syncer.Campaign().ID, player, query, search.DefaultLimit)
+		if runErr != nil {
+			t.Fatalf("searching for %q as a player: %v", query, runErr)
+		}
+		if len(found) != 0 {
+			t.Errorf("a player found the secret: %+v", found)
+		}
+	}
+
+	// The DM finds it through the private index, which is what makes the assertions
+	// above mean something: an index with no secret text in it would also pass them,
+	// and so would a private index the private scope refused.
+	found, err := search.Run(ctx, store_, syncer.Campaign().ID, dm, canary, search.DefaultLimit)
+	if err != nil {
+		t.Fatalf("searching for the secret as the DM: %v", err)
+	}
+	if len(found) == 0 {
+		t.Fatal("the DM cannot find their own secret by content, so the assertions above prove nothing")
+	}
+	if !strings.Contains(found[0].Snippet, canary) {
+		t.Errorf("the DM's excerpt is %q, want it to contain the secret", found[0].Snippet)
+	}
+}
+
+// mustParse parses a query for the assertions above, which are about who can see
+// the result and not about the language.
+func mustParse(t *testing.T, input string) search.Query {
+	t.Helper()
+
+	parsed, err := search.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", input, err)
+	}
+	return parsed
+}
+
+// assertNoCanary is a forbidden-substring assertion over every field a hit carries,
+// because an excerpt is the field that leaks and a title is the field that would
+// leak a private page's existence.
+func assertNoCanary(t *testing.T, what string, hit search.Hit) {
+	t.Helper()
+
+	for field, value := range map[string]string{
+		"path":    hit.Path,
+		"title":   hit.Title,
+		"snippet": hit.Snippet,
+		"id":      hit.PageID,
+	} {
+		if strings.Contains(value, "IlithyaMarrowCanary") {
+			t.Errorf("%s leaked the secret in the %s: %q", what, field, value)
+		}
 	}
 }

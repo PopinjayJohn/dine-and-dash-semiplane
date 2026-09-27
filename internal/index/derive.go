@@ -298,22 +298,16 @@ func (y *Syncer) isSettled(ctx context.Context, p plan) (bool, error) {
 	return matched, nil
 }
 
-// indexEntryFor is what a search should find for a document.
-//
-// **BodyPublic is empty, and that is the state of the project rather than an
-// oversight.** The public index is fed from the body with its secrets replaced by
-// a marker, and working that out needs to know who may read the page, which is
-// the access-control milestone's question and not this one's. Until it can be
-// answered, the only safe value is the empty string: a body that reached the
-// public index with a secret in it is a disclosure, and a body that did not is a
-// missing feature. A page is findable by its title, its aliases, its tags and its
-// type today, and over its prose once the redaction lands. See ADR 0015.
-//
-// SecretText is filled in, because which text is secret is a *parsing* question
-// and the parser already answers it. So a DM can find their own secrets by
-// content from this milestone on, which is the feature ADR 0009 exists for.
 func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 	secretText, _ := render.SecretText(page.Body)
+
+	// The public half, which is empty until M7 and is no longer empty now.
+	//
+	// It is `render.PublicText`, not the body with the secrets removed as
+	// markdown, and the difference matters less than it looks: `body_public` is
+	// read by the tokenizer and by nothing else, so plain text loses nothing and
+	// saves a second parser for the same grammar.
+	public, _ := render.PublicText(page.Body)
 
 	return store.IndexEntry{
 		PageID:     page.ID,
@@ -321,7 +315,7 @@ func indexEntryFor(doc *vault.Document, page domain.Page) store.IndexEntry {
 		Aliases:    doc.Aliases(),
 		Tags:       doc.Tags(),
 		Kind:       page.Type.String(),
-		BodyPublic: "",
+		BodyPublic: public,
 		SecretText: secretText,
 	}
 }

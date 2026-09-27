@@ -38,7 +38,7 @@ import (
 func SecretText(body string) (string, int) {
 	source := []byte(body)
 
-	doc := pipeline.md.Parser().Parse(text.NewReader(source))
+	doc := parseWithPipeline(body)
 
 	collector := &secretCollector{source: source, lastEnd: -1}
 	// walkChildren reports an error so that its mutating caller can use one
