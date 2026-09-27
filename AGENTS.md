@@ -50,29 +50,47 @@ re-litigate one without a new ADR that supersedes it.
   in SQL rather than in Go. The query language is documented once, in
   `docs/search.md`. It has **no `internal/http`**: a search runs against a store,
   and nothing serves one yet.
-- **A page's audience is recorded; it is not enforced yet.** `pages.visibility`
-  exists and the sync writes the value it reads, because M4 was already reading
-  and discarding it. **Every other page-returning store method is still
+- **M6 — Auth and principals is on `m6-auth-principals`.** `internal/auth` mints a
+  share link, redeems it for a session, rate limits redemption, rotates sessions on
+  a role or binding change, and logs through a handler that redacts. It has **no
+  `internal/http` and no plugins**: the exchange returns values and M8's router
+  turns them into a response, because every property in §10 is testable with two
+  arguments and a store and is not testable with a server — see
+  [ADR 0016](docs/adr/0016-auth-decides-and-returns-values.md). The cookie's
+  attributes are ADR 0003's and are M8's.
+- **A page's audience is recorded; it is still not enforced on every read.**
+  `pages.visibility` exists, the sync writes it, and the two *search* queries
+  filter on it. **Every other page-returning store method is still
   campaign-scoped and unfiltered** — `GetPage`, `GetPageByID`, `ListPages`,
-  `Backlinks`, the target lookups. Only the two search queries filter. That is
-  correct only while nothing outside the package can reach them, and M7 gives each
-  of them a principal. See [ADR 0015](docs/adr/0015-search-records-the-audience.md).
+  `Backlinks`, the target lookups. That is correct only while nothing outside the
+  package can reach them, and M7 gives each of them a principal. See
+  [ADR 0015](docs/adr/0015-search-records-the-audience.md).
+- **The read predicate's ownership test is real.** It was `1 = 0` for two
+  milestones, because no principal owned a page; it is now an `EXISTS` over
+  `principal_characters`, correlated on the page. The correlation is the whole of
+  it — a subquery that compared against the *campaign* would admit every player to
+  every `dm-and-owner` page in it. Never widen that file without reading its
+  header.
 - **`pages.body_public` is empty and stays empty until M7.** It is what the public
   index is fed from, so a value in it is a value anybody can find. Working out
   which text a *principal* may be shown needs access control; until that exists the
   only safe value is the empty string. So a page is findable by title, aliases,
   tags and type, and not by prose — a missing feature, in the safe direction.
   **The secret index is populated**: which text is secret is a *parsing* question,
-  so a DM can find their own secrets by content today.
-- **The read predicate is written once, in `internal/store/acl.go`,** and both
-  search queries go through it. Its ownership test is `1 = 0` until
-  `principal_characters` exists, and a test asserts the branch is still there —
-  leaving it out would silently widen every `dm-and-owner` page. Never widen that
-  file without reading its header.
+  so a DM can find their own secrets by content, and a player bound to a character
+  page can find theirs.
 - **Nothing a caller typed is concatenated into SQL.** Every query clause is
   quoted with FTS5's own string quoting and the expression is a bound parameter.
   There is a corpus and a fuzzer for it, and a test that strips the literals back
   out and asserts nothing but the builder's own operators are left.
+- **A share-link token cannot be printed.** `auth.Token` implements `String`,
+  `GoString` *and* `Format`, because `%#v` does not consult `String` and `%x` on a
+  struct hex-encodes its fields. The redacting logger is a *handler*, so a caller
+  who logs a whole request struct is covered by the same rule as one who logs a
+  token deliberately — and the named test greps the log output of a full flow.
+  Note that a token's SHA-256 is 64 hex characters and so is a token, so the shape
+  check redacts a hash along with a credential; that is the price and the log
+  carries the principal id instead.
 - **The sync engine reads files and writes rows, and never writes a file.**
   That is the property ADR 0001 is about, it is the first thing a change here
   can break, and a test hashes every file's contents *and* modification time
@@ -103,10 +121,14 @@ re-litigate one without a new ADR that supersedes it.
   of that file, and each shipped milestone's commit sequence is recorded there
   too.
 
-Next milestone: **M6 — Auth and principals**. Token mint and verify, the cookie
-exchange, sessions, rate limits, revocation, the audit log, and **character
-binding** — which is the `principal_characters` table the ownership test has been
-waiting for. Its key tests are every hardening item in §10 as a named test.
+Next milestone: **M7 — Access control**. The `access` package, `page_acl_read`
+over the predicate that now exists, **`body_public` redaction** — which is what
+makes a page findable by its prose — the reveal page and block actions, the Secrets
+panel, and **a principal on every page-returning store method**, which is the
+other half of invariant 3. Its key tests are the §14 access table and
+`TestStoreReadPredicateMatchesResolver`, which is the test that finally compares
+the SQL this project has been writing against the Go resolver it has been
+describing.
 
 ## Non-negotiable invariants
 

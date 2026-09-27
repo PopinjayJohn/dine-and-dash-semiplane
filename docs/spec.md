@@ -167,7 +167,18 @@ CREATE INDEX page_links_dst ON page_links(dst_page_id);
 Search tables are defined in §7. Principals, sessions and audit are in §9.
 
 ```sql
--- migrations/0004_access.sql
+-- migrations/0005_character_bindings.sql  (M6)
+
+CREATE TABLE principal_characters (
+  principal_id      TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  character_page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  PRIMARY KEY (principal_id, character_page_id)
+);
+CREATE INDEX principal_characters_page ON principal_characters(character_page_id);
+```
+
+```sql
+-- migrations/0004_access.sql  (M7)
 
 ALTER TABLE pages ADD COLUMN owner_character_page_id TEXT
   REFERENCES pages(id) ON DELETE SET NULL;
@@ -180,7 +191,12 @@ CREATE TABLE principal_characters (
 );
 ```
 
-Two of the three columns this used to hold moved earlier than planned, because
+`principal_characters` moved earlier than planned, into
+`migrations/0005_character_bindings.sql`, with the reason in
+[ADR 0016](adr/0016-auth-decides-and-returns-values.md): an ownership test of
+`1 = 0` beside a binding table nothing reads is a predicate nobody has run.
+
+Two of the other three columns moved earlier than planned too, because
 search cannot be written correctly without them and the reasons are in
 [ADR 0015](adr/0015-search-records-the-audience.md):
 
@@ -692,7 +708,7 @@ Each milestone is one branch, one PR, one changelog section.
 | **M3** | Renderer | pipeline, wiki-link extension, callout extension, **`[!SECRET]` parsing and fail-closed stripper**, TOC, sanitiser, render cache | golden, fuzz no-panic, XSS corpus, cache invalidation |
 | **M4** | Sync engine | incremental and full reindex, ownership resolution, drift detection, `fsnotify`, `sync --check` | idempotency over N runs, drift injection, external-edit detection |
 | **M5** | Search | FTS5 schema, query builder, BM25, **two indexes plus RRF**, ACL in SQL | relevance, FTS-injection corpus, "the secret never appears", benchmarks |
-| **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding** | every hardening item in §10 as a named test |
+| **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding**, a redacting logger | every hardening item in §10 as a named test |
 | **M7** | Access control | `access` package, `page_acl_read` over the existing predicate, `body_public` redaction, reveal page and block actions, Secrets panel, edit enforcement, a principal on every page-returning store method | the §14 access table, and the predicate matching the resolver |
 | **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/healthz` | httptest render tests, route coverage, HTML smoke assertions |
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages** | CRUD flows, conflict detection, restore fidelity, DM/player races |
@@ -831,6 +847,43 @@ milestone's own documentation lands in the ADR commit is a matter of taste; what
 is not a matter of taste is that a design decision with a security consequence —
 the audience arriving before the code that enforces it, and the public body
 arriving empty — is recorded rather than discovered by the next reader.
+
+### M6 commit sequence
+
+```
+feat(auth): the tables a share link needs
+feat(auth): mint a share link, and keep the token out of the database
+feat(auth): redeem a link for a cookie, and take the token out of the URL
+feat(auth): rate limit redemption
+feat(auth): a logger that cannot leak a token
+feat(access): bind a character to a principal, so the ownership test is no longer false
+docs(adr): record what M6 decided, and what it deliberately did not
+docs: record where the project actually is
+```
+
+The second one is a type that cannot print itself, and the reason is in the commit
+body: `%#v` does not consult `String` and `%x` on a struct hex-encodes its fields,
+so a `Token` with only a `String` hands out the whole credential to
+`t.Errorf("%#v", err)`. Both were found by a test that checks every verb, and both
+are why it also implements `GoString` and `Format`.
+
+The third one had a bug that no unit test found and every player would have: the
+minting side hashed 32 raw bytes and the redemption side hashed the 64 hex
+characters, so no link in any campaign would have worked. One function,
+`ParseToken`, is what both halves go through now, and its existence is the test.
+
+The fifth is the named test `TestNoTokenInLogs`, and it runs a *full* auth flow and
+greps everything it produced. The redactor had two bugs of its own: `Redacted`
+checked the whole remaining string for hex rather than the 64-character window, so a
+token at the start of a sentence was not recognised; and a token's SHA-256 is 64 hex
+characters and so is the token, so the shape check cannot tell a hash from a
+credential.
+
+The sixth is the one the previous two milestones were waiting for. The read
+predicate's ownership test stops being `1 = 0` and becomes the `EXISTS` over
+`principal_characters`, and a player can for the first time find their own
+character page's secrets — which is the rule ADR 0007 has described since M0 and
+which nothing could reach until a principal owned a page.
 
 ### M3 commit sequence
 

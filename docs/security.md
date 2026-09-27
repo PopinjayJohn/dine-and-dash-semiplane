@@ -51,8 +51,12 @@ your own input more than a player's.
 | Rendered markdown is sanitised **for the DM too** | `TestPlayerAuthoredXSSSanitisedForDM` |
 | A player cannot create a world page | `TestPlayerCannotCreateWorldPage` |
 | A player cannot reveal another player's secret | `TestPlayerCannotRevealOthersSecret` |
-| A share-link token appears in no log line after a full auth flow | `TestNoTokenInLogs` |
-| Redemption is refused past the rate limit | `TestRateLimitedRedemption` |
+| A share-link token appears in no log line after a full auth flow | `TestNoTokenInLogs` — and the log's redaction is a handler, so logging a request struct is covered by the same rule as logging a token |
+| Redemption is refused past the limit, and the limit counts the attempts it refuses | `TestRateLimitedRedemption` |
+| A revoked link stops working on the *next* request, and every session it made dies with it | `TestRevokingALinkStopsTheBrowserOnItsNextRequest` |
+| A role or character-binding change ends every session of that principal | `TestARoleChangeEndsEverySession`, `TestABindingChangeEndsEverySession` |
+| A player can read their own `dm-and-owner` page, and nobody else's | `TestABoundPrincipalReadsTheirOwnCharacterPage` |
+| A player can search their own character's secret text, and nobody else's | `TestABoundPrincipalReadsTheirOwnSecretText` |
 | A vault backup plus `reindex --full` rebuilds a byte-identical index | `TestBackupsRestoreIdenticalIndex` |
 | The app boots and serves with no network | `TestOfflineBoot` |
 
