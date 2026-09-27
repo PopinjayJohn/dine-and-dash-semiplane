@@ -167,13 +167,10 @@ CREATE INDEX page_links_dst ON page_links(dst_page_id);
 Search tables are defined in §7. Principals, sessions and audit are in §9.
 
 ```sql
--- migrations/0002_access.sql
+-- migrations/0004_access.sql
 
-ALTER TABLE pages ADD COLUMN visibility TEXT NOT NULL DEFAULT 'players'
-  CHECK (visibility IN ('dm-only','dm-and-owner','players'));
 ALTER TABLE pages ADD COLUMN owner_character_page_id TEXT
   REFERENCES pages(id) ON DELETE SET NULL;
-ALTER TABLE pages ADD COLUMN body_public TEXT NOT NULL DEFAULT '';
 CREATE INDEX pages_owner ON pages(owner_character_page_id);
 
 CREATE TABLE principal_characters (
@@ -182,6 +179,21 @@ CREATE TABLE principal_characters (
   PRIMARY KEY (principal_id, character_page_id)
 );
 ```
+
+Two of the three columns this used to hold moved earlier than planned, because
+search cannot be written correctly without them and the reasons are in
+[ADR 0015](adr/0015-search-records-the-audience.md):
+
+- `visibility` is in `migrations/0004_visibility.sql`. M4's sync already read
+  every page's `visibility` key and refused the values it did not recognise; it
+  then discarded the ones it did, because there was nowhere to put them, which left
+  a `dm-only` page indexed as a page anybody could read. A read predicate has to
+  filter on something.
+- `body_public` is in `migrations/0003_search.sql`, because the public index is
+  fed from it and the index is what the milestone ships. It is written as the empty
+  string until access control can compute it; a body that reached the public index
+  with a secret in it is a disclosure, and a body that did not is a missing
+  feature.
 
 **Page identity is the path.** Renaming a title never moves the file. Changing
 the path is an explicit, DM-only action that rewrites inbound links atomically.
@@ -679,9 +691,9 @@ Each milestone is one branch, one PR, one changelog section.
 | **M2** | Obsidian storage | frontmatter parse/serialise, safe paths, atomic writes, content hash, `_history`, attachments | round-trip, fuzz, traversal fuzz, atomicity under simulated crash |
 | **M3** | Renderer | pipeline, wiki-link extension, callout extension, **`[!SECRET]` parsing and fail-closed stripper**, TOC, sanitiser, render cache | golden, fuzz no-panic, XSS corpus, cache invalidation |
 | **M4** | Sync engine | incremental and full reindex, ownership resolution, drift detection, `fsnotify`, `sync --check` | idempotency over N runs, drift injection, external-edit detection |
-| **M5** | Search | FTS5 schema, query builder, BM25, facets, **two indexes plus RRF**, ACL in SQL | relevance, FTS-injection corpus, "the secret never appears", benchmarks |
+| **M5** | Search | FTS5 schema, query builder, BM25, **two indexes plus RRF**, ACL in SQL | relevance, FTS-injection corpus, "the secret never appears", benchmarks |
 | **M6** | Auth and principals | token mint/verify, cookie exchange and scrub redirect, roles, sessions, rate limits, revocation, audit log, **character binding** | every hardening item in §10 as a named test |
-| **M7** | Access control | `access` package, `page_acl_read`, `body_public` redaction, **`pages_secrets_fts`**, reveal page and block actions, Secrets panel, edit enforcement | the §14 access table |
+| **M7** | Access control | `access` package, `page_acl_read` over the existing predicate, `body_public` redaction, reveal page and block actions, Secrets panel, edit enforcement, a principal on every page-returning store method | the §14 access table, and the predicate matching the resolver |
 | **M8** | Web shell | router, middleware, layout, page view, browse tree, 404/500, embedded assets, `/healthz` | httptest render tests, route coverage, HTML smoke assertions |
 | **M9** | Editing | editor, autosave, preview, ETag and 409 plus three-way diff, archive and purge, rename, revisions and restore, **player editing of own character pages** | CRUD flows, conflict detection, restore fidelity, DM/player races |
 | **M10** | Datastar | `internal/sse` abstraction, search-as-you-type, live session log, toasts, optimistic fragments | SSE client tests, ordering, reconnect, cancellation, goroutine drain |
@@ -773,6 +785,52 @@ hash, which a row that rots in place and a change to how fields are derived
 both defeat. The fifth ships the ownership *rule* without its column, because
 the rule decides which subtree a player may write in and the column arrives
 with access control in M7.
+
+### M5 commit sequence
+
+```
+feat(search): a query language, and a fuzzer for it
+feat(store): the column a public search reads, and both FTS5 indexes
+feat(access): record a page's audience, and write the read predicate in SQL
+feat(search): run a query against the public index, ACL in SQL
+feat(render): lift a page's secret text off the tree, for the index that holds it
+feat(search): merge the two ranked lists with reciprocal rank fusion
+feat(index): keep both search indexes in step with a sync
+docs(adr): record the audience arriving before access control, and the empty body
+```
+
+The first is the milestone in miniature: a value with no handle in it, which is
+what makes the language fuzzerable and the relevance tests runnable without a
+database. Its fuzzer found two things worth fixing — a byte that is not valid
+UTF-8 riding through into a clause, which would have made any response echoing
+the query invalid JSON, and a NUL inside a term ending it for the tokenizer and
+not for the string.
+
+The third is a decision that had to be taken to write the fourth, and it is
+recorded in [ADR 0015](adr/0015-search-records-the-audience.md): a read predicate
+filters on an audience, M4 was already reading and discarding one, and the
+ownership branch is written down as `1 = 0` rather than left out — leaving it out
+silently widens every `dm-and-owner` page, and admitting every player to one is a
+disclosure the moment a DM writes one.
+
+The fifth ships the *secret* half of the split and not the public half, because
+which text is secret is a parsing question and which text a *principal* may be
+shown is an access-control one. So a DM can find their own secrets today and
+nobody can find a word in the middle of a paragraph: a missing feature, in the
+safe direction, with the test that names it.
+
+The sixth is where the benchmark earned its place. A `tag:` filter was asking
+whichever index it was reading for a `tags` column, and the private index has no
+`tags` column, so `tag:hub` was a SQL error on every secret search. A unit test
+with a single tag would have found it; the one that did not exist yet was a
+benchmark over a real campaign, and that is the argument for having one.
+
+The last commit is the one that writes the language down, in `docs/search.md`,
+and corrects the two documents that were wrong about how it arrived. Where a
+milestone's own documentation lands in the ADR commit is a matter of taste; what
+is not a matter of taste is that a design decision with a security consequence —
+the audience arriving before the code that enforces it, and the public body
+arriving empty — is recorded rather than discovered by the next reader.
 
 ### M3 commit sequence
 

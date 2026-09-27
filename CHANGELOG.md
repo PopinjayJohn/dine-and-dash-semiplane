@@ -23,7 +23,6 @@ House rules:
 ## [Unreleased]
 
 ### Added
-
 - **The sync keeps both search indexes in step.** A page is indexed from its file
   on the same pass that writes its row, and the settled check asks whether the
   index already holds what the file derives — so a page whose search rows were
@@ -79,161 +78,28 @@ House rules:
   0.09ms with no database in the process. The numbers are a baseline to compare
   against, not a target.
 
-### Fixed
+### Changed
 
-- A `tag:` filter asked whichever index the query was reading for a `tags`
-  column, and the private index has no `tags` column — so `tag:hub` was a SQL
-  error on every secret search. Tags are a property of the *page*, and the public
-  index is where a page's tags are indexed, so `tag:` is now a subquery against
-  the public index in both queries. It was found by the benchmark above, which is
-  the argument for having one.
-- `type:`, `is:` and now `tag:` are all SQL rather than FTS5 column filters,
-  because an FTS5 column filter is itself a *match*: `type:homebrew-thing` would
-  be the phrase "homebrew thing", and a filter that quietly means something
-  adjacent to what was asked for cannot be debugged from the results.
+- The migration names in the spec were wrong, and §5 now says which is which:
+  `body_public` is in `0003_search` and `visibility` in `0004_visibility`, both
+  earlier than the `0002_access.sql` the spec planned, and `0004_access.sql` is
+  left with the owner column and the bindings. The reasons are in
+  [ADR 0015](docs/adr/0015-search-records-the-audience.md): a read predicate
+  filters on an audience, M4 was already reading and discarding one, and the
+  public index is fed from a column that has to exist before the index does.
+- [ADR 0009](docs/adr/0009-two-index-search-with-rrf.md) claimed the public
+  search path has "no ACL in it at all". That is about secret *text* and it
+  stands; it is not about pages, and a `dm-only` page's title is in that index.
+  Both indexes now go through the read predicate, as invariant 3 names search,
+  and the ADR says so rather than being left to be misread.
+- The store's package comment now says which queries filter and which do not,
+  rather than saying there is no access control at all. A commit that adds a
+  page query must not ship with that comment removed and nothing in its place.
+- The query language is written down once, in `docs/search.md`, which is where
+  ADR 0009 said it would be. It is a user-facing language with sharp edges and
+  reimplementing it in prose would be how it drifts.
 
-- `render.SecretText` lifts a page's **unrevealed `[!SECRET]` text off the parse
-  tree**, which is what the private search index is fed. It is in `render` rather
-  than in the indexer because the `[!SECRET]` grammar has to be read the same way
-  twice — the renderer strips a secret and the indexer has to decide which side of
-  the split it belongs on — and two implementations of the same syntax is two
-  answers waiting for a DM to write the callout that separates them.
-- What goes in and what does not: a **revealed secret is public body, not secret
-  text**, and the walk carries on *into* it because a revealed block can contain a
-  secret that is not revealed. A blockquote with a secret's shape that the parser
-  could not read is included, for the same fail-closed reason the stripper removes
-  it — a secret that cannot be found is a secret the DM has lost. A secret inside
-  a secret is counted once, because the outer one already carries the inner one's
-  text.
-- Two things the first version of it got wrong, both found by the tests: goldmark
-  keeps a **code block's lines off the child nodes**, so a secret whose credential
-  is in a code block indexed as an empty string; and a **soft-wrapped line** —
-  which is every line a DM writes — arrives as two text nodes with the newline and
-  the `> ` marker between them and nothing to say so, so a two-line secret was
-  indexed as one run-on line whose phrases matched nothing. The boundary is now
-  recovered from the source offsets.
-
-- **Search runs against the public index**, filtered by the audience scope in
-  SQL. It finds pages by title, alias, tag and page type, ranks a title match
-  above a tag, an alias or a body match, and returns hits with a rank and an
-  excerpt rather than a score — because a BM25 number from one index means
-  nothing next to one from the other, and the fusion only uses the order.
-- **The private index is reachable only through the stricter scope**, and a
-  secret's excerpt is built from the private index. A DM can find their own
-  secret by content, which is a real need: the DM forgets which page they wrote a
-  name on. A player gets nothing, and the reason is not that the page is
-  unreadable — the town page is perfectly readable — but that the secret inside it
-  is not theirs to see.
-- `TestSecretNeverAppearsInAResult` is the named test, and it is blunt: a
-  forbidden-substring assertion over every field a hit carries, run for the
-  canary, for fragments of the canary, and for the three ways a `dm-only` page
-  could otherwise be listed. It also asserts the DM *does* find it, because a
-  test that only checks the canary is absent also passes against an index holding
-  no secret text at all.
-- **A player sees a subset of what the DM sees, for every query in the
-  language**, checked pairwise over the whole language rather than over chosen
-  cases. The audience scope is one-directional, and this is what says so.
-- **The FTS5 injection corpus.** FTS5 has a query language of its own and a
-  search box is a second one layered on top, so a hostile query is a security
-  problem before it is a relevance one. Every clause is quoted with FTS5's own
-  string quoting — an inner quote doubled, which is FTS5's rule and the reason a
-  naive quote breaks — and the whole expression is a bound parameter. A test
-  strips the literals back out and asserts nothing but this builder's own
-  operators are left, so `AND`, `NEAR/2`, `tags : "hub"`, `^toll`, `"*` and a
-  hand-written column filter all arrive as words. A fuzzer runs the same
-  assertion over arbitrary bytes.
-- `type:` and `is:` are SQL rather than FTS5 column filters, because an FTS5
-  column filter is itself a *match*: `type:homebrew-thing` would be the phrase
-  "homebrew thing", and a filter that quietly means something adjacent to what was
-  asked for cannot be debugged from the results. `is:` landing in the same
-  `WHERE` clause as the audience scope is also what makes it a filter rather than
-  a bypass.
-- An **empty search box asks for nothing.** "Show me everything" is a legitimate
-  question with a legitimate answer, but a search with an empty box in it is a
-  request for every title in the campaign, and that list is as disclosing as the
-  pages themselves. A caller that wants a listing asks for a listing.
-- The four search statements are **pinned by a test that prints them**, so a
-  change to how one is built shows up as a diff in the test rather than as a
-  change in what a search returns, and so a reviewer can read all the SQL this
-  package runs in one place.
-- Excerpts come back as **plain text with no markers**. FTS5's markers would have
-  to be HTML, and an excerpt of a DM's own markdown going into a response with a
-  `<script>` in it is a sanitiser decision the search package should not be making
-  silently. Highlighting is the view's, and it has the query terms in hand.
-
-- **A page's audience is now recorded on its row.** M4's sync already read every
-  `visibility` key, refused a value it did not recognise, and then threw the
-  readable ones away — a security-relevant field validated and discarded, which
-  left `visibility: dm-only` pages indexed as pages anyone could read. A read
-  predicate has to filter on something, and the `visibility` column is that
-  something. A blank audience is `players`, which is both the frontmatter default
-  and the column default, and an audience the application does not recognise is
-  refused rather than defaulted.
-- **The read predicate, written once in SQL** (`internal/store/acl.go`) and used
-  by both search indexes. A DM reads every page in the campaign; a player reads
-  the `players` pages and nothing else; a principal with no role reads the
-  `players` pages and nothing else, because a caller that forgot to look a
-  principal up gets the safe answer rather than a panic.
-- The ownership test is present, explicit and **false** for now (`1 = 0`),
-  because the table that answers it does not exist yet. That is the fail-closed
-  direction: leaving the branch out would silently widen every `dm-and-owner`
-  page, and admitting every player to one would be a disclosure the moment a DM
-  wrote one. A test asserts the branch is still there, which is what stops it
-  being "tidied away" by somebody who has not noticed the table is missing.
-- The audience test names the two levels that admit somebody and **does not name
-  `dm-only` at all**, because that is the one level no clause of it may admit and
-  the only way to write it down would be to exclude it — and an exclusion
-  somebody can delete is not a control.
-- A change to a page's audience re-indexes it. The audience is compared by name
-  alongside the other derived fields rather than being left to the content hash,
-  because it is a security field and a hash that happens to change when the file
-  does is not the same promise.
-
-- Two FTS5 indexes and the store methods that keep them in step with the pages
-  table, so search reads a projection rather than scanning bodies: `pages_fts`
-  for text nobody is barred from seeing, and `pages_secrets_fts` holding only
-  `[!SECRET]` text. A page is findable by its title, aliases, tags and public
-  body; a DM is additionally findable by what they wrote inside a secret.
-- `pages.body_public` — the single place to look when asking "is this text safe
-  to be findable?". **It is empty and stays empty until access control can
-  compute it**, because the only safe value before then is the empty string: a
-  body that reached the public index with a secret in it is a disclosure, and a
-  body that did not is a missing feature. `wiki reindex --full` rebuilds both
-  indexes from the files.
-- A page's search rows are **settled, not merely written**: `PageIndexMatches`
-  answers whether the index already holds what the file derives, so the sync
-  engine can leave a page alone. An index that could be written but not compared
-  would rot in place, and nothing in a wiki notices that for months.
-- The public body is recorded on the page row as well as in the index, in the
-  same transaction, so the column and the index row cannot disagree about what
-  the public half was built from.
-- Both index rows are part of the store contract suite, so a second `Store`
-  implementation is held to the same split and the same settled check.
-- The tokenizer clause in the migration is asserted by matching rather than by
-  reading the schema back: `Rivergate` finds `Rivergåte`, because the failure
-  mode of getting this wrong is an empty result set, which is indistinguishable
-  from a page that does not exist.
-
-- A search **query language**: bare words are ANDed, `"exact phrase"` is a
-  phrase, and `tag:`, `type:` and `is:` are filters. It is a pure value with no
-  database handle, so the relevance tests need no database and the parser can be
-  fuzzed on its own. Whatever the language does not recognise is searched for as
-  a word, because a search box that refuses input is worse than one that looks
-  for a strange word.
-- Every clause is quoted before it reaches FTS5 and the whole expression is
-  bound as a parameter, so a query cannot become a query *language*: `AND`,
-  `NOT`, `-`, `(`, `*` and a bare `"` are words, and `http://example.com` is a
-  word rather than a filter on its second colon.
-- `is:` is the one filter that is validated, and refusing `is:plyers` rather
-  than returning nothing is deliberate: a search that finds nothing looks exactly
-  like an index that has nothing to say, and a player cannot tell the two apart.
-  A player who searches `is:dm-only` gets no results, not a page.
-- A fuzzer for the language, which found two things worth fixing and kept both
-  as seeds: a byte that is not valid UTF-8 was riding through into a clause (and
-  would have made any response echoing the query invalid JSON), and a NUL inside
-  a term ended it as far as the tokenizer was concerned while not ending it as
-  far as the string was concerned. A filter value beginning with a colon is now
-  quoted on the way out as well, so `tag: :00` survives a round trip.
+### Added
 
 - A `page_targets` table and three store methods, so a wiki link can resolve the
   way it does in Obsidian: the exact path, then an alias, then a case-insensitive
