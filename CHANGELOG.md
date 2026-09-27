@@ -449,6 +449,32 @@
   **nothing**, which is the safe direction: a limit applied per proxy is unfair to
   nobody in a campaign of five, and a limit a stranger removes by sending a header is
   not a limit.
+- **`wiki users new` / `revoke` / `list`.** M9 shipped "New player link" and
+  "Revoke" as buttons in the DM's own browser, which is the right way to do it and
+  the only way it *could* be done: the plaintext token exists once, in the page that
+  mints it. These are for the three cases the buttons cannot reach — a scripted
+  onboarding, a headless box, and a link that has to travel out of band. The warning
+  goes to **stderr** so `wiki users new … > link.txt` writes the link and nothing
+  else, and the token appears in no listing.
+- **Revocation ends the sessions first and the link second.** Doing only the link
+  would leave a revoked player reading for as long as their cookie lasts, which is
+  the failure a DM revoking somebody at the table is actually trying to avoid.
+- **`users new` refuses rather than guessing an origin.** There is no default base
+  URL: a link built with none is a path a player cannot open, and a command that
+  printed one anyway would look like it worked. It is also why the command reads
+  `config.yaml` — the `base_url` setting is what a deployment sets once, and a
+  command that could not read it would be a command with a flag where a setting
+  belongs.
+- **A command against a campaign that does not exist changes nothing.** `wiki sync`
+  creates a row for a folder that is not in the database, because a vault is a thing
+  a DM makes by creating a folder. `wiki users revoke` has the opposite relationship
+  with a missing row: the principal being revoked is in a campaign that exists, and a
+  missing one is a typo. So its lookup refuses rather than creating, and a mistyped
+  slug revokes nobody.
+- **`parseFlagsAllowing` is [parseFlags] with a positional count**, because a
+  command whose whole input is one word cannot be written with a parser that rejects
+  positionals — and "parse then check `NArg`" is two rules in two functions, which is
+  how a command ends up accepting two arguments when it takes one.
 - **The M11 ADR is 0022, not 0021**, because 0021 was already "one reader per
   page". M11 wrote a file called `0021-where-a-plugin-sits.md` and the number was
   only wrong once M10's ADR landed; the fix is in the file name rather than in a

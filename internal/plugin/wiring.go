@@ -129,6 +129,7 @@ var coreCommands = []string{
 	"reindex",
 	"serve",
 	"sync",
+	"users",
 	"version",
 }
 
